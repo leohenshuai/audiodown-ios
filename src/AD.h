@@ -140,5 +140,9 @@ NS_ASSUME_NONNULL_END
 @property (nonatomic, strong) ADAlbum *album;
 @end
 @interface ADPlayerController : UIViewController @end
+@interface ADOptionSheet : NSObject
++ (void)showIn:(UIViewController *)vc title:(NSString *)title options:(NSArray<NSString *> *)options destructive:(NSInteger)destructiveIndex choose:(void (^)(NSInteger index))choose;
+@end
+
 @interface ADHistoryController : UITableViewController @end
 @interface ADDownloadsController : UITableViewController @end

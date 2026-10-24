@@ -4,7 +4,9 @@
 #import <AVFoundation/AVFoundation.h>
 
 // ───────────── 专辑详情 ─────────────
-@interface ADAlbumController () <UITableViewDataSource, UITableViewDelegate>
+@interface ADAlbumController ()
+@property (nonatomic, copy) NSString *errText;
+@property (nonatomic, assign) NSInteger retries; <UITableViewDataSource, UITableViewDelegate>
 @property (nonatomic, strong) UITableView *table;
 @property (nonatomic, strong) UIImageView *cover;
 @property (nonatomic, strong) UILabel *coverLabel;
@@ -159,7 +161,23 @@
     [[ADApi shared] tracksOf:self.album.albumId page:self.page done:^(NSArray<ADTrack *> *list, NSInteger total, BOOL cached, NSString *err) {
         __strong typeof(weakSelf) self = weakSelf; if (!self) return;
         self.loading = NO;
-        if (err) { self.title = err; return; }
+        BOOL empty = (list.count == 0 && self.page == 1);
+        if (err || empty) {
+            if (self.retries < 2) {
+                self.retries += 1;
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    [self loadTracks];
+                });
+            } else {
+                self.errText = err.length ? err : @"播放目录没取到";
+            }
+            [self.table reloadData];
+            [self updateFooter];
+            return;
+        }
+        self.retries = 0;
+        self.errText = nil;
+        [self updateFooter];
         if (total > 0) self.total = total;
         if (list.count) [self.tracks addObjectsFromArray:list];
         if (list.count) self.page += 1;
@@ -171,6 +189,29 @@
             ADPlayer.shared.tracks = self.tracks;
         }
     }];
+}
+
+- (void)updateFooter {
+    if (self.errText.length && self.tracks.count == 0) {
+        UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+        b.frame = CGRectMake(0, 0, self.view.bounds.size.width, 120);
+        b.titleLabel.numberOfLines = 0;
+        b.titleLabel.textAlignment = NSTextAlignmentCenter;
+        b.titleLabel.font = [UIFont systemFontOfSize:14];
+        [b setTitle:[NSString stringWithFormat:@"%@\n点这里重试", self.errText] forState:UIControlStateNormal];
+        [b setTitleColor:[UIColor colorWithWhite:1 alpha:0.55] forState:UIControlStateNormal];
+        [b addTarget:self action:@selector(retryTracks) forControlEvents:UIControlEventTouchUpInside];
+        self.table.tableFooterView = b;
+    } else {
+        self.table.tableFooterView = [UIView new];
+    }
+}
+
+- (void)retryTracks {
+    self.retries = 0;
+    self.errText = nil;
+    [self.table reloadData];
+    [self loadTracks];
 }
 
 - (void)playFrom:(NSInteger)index {
@@ -524,55 +565,56 @@
 }
 
 - (void)showRateMenu {
-    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"播放速度" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
     NSArray *rates = @[@0.5, @0.75, @1.0, @1.25, @1.5, @1.75, @2.0, @2.5, @3.0];
-    for (NSNumber *r in rates) {
-        BOOL on = fabs([r floatValue] - ADPlayer.shared.rate) < 0.001;
-        NSString *t = [NSString stringWithFormat:@"%@%@", [r floatValue] == 1.0 ? @"正常 1x" : [NSString stringWithFormat:@"%gx", [r floatValue]], on ? @"  ✓" : @""];
-        [a addAction:[UIAlertAction actionWithTitle:t style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
-            ADPlayer.shared.rate = [r floatValue];
-            [self sync];
-        }]];
+    NSMutableArray *opts = [NSMutableArray array];
+    NSInteger cur = 0;
+    for (NSInteger i = 0; i < (NSInteger)rates.count; i++) {
+        double v = [rates[i] doubleValue];
+        [opts addObject:[NSString stringWithFormat:@"%@%@", v == 1.0 ? @"正常 1x" : [NSString stringWithFormat:@"%gx", v],
+                         fabs(v - ADPlayer.shared.rate) < 0.001 ? @"  ✓" : @""]];
+        if (fabs(v - ADPlayer.shared.rate) < 0.001) cur = i;
     }
-    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    a.popoverPresentationController.sourceView = self.rateBtn;
-    [self presentViewController:a animated:YES completion:nil];
+    [ADOptionSheet showIn:self title:@"播放速度" options:opts destructive:-1 choose:^(NSInteger i) {
+        ADPlayer.shared.rate = [rates[i] doubleValue];
+        [self sync];
+    }];
 }
 
 - (void)showSleepMenu {
-    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"定时关闭" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+    NSMutableArray *opts = [NSMutableArray arrayWithObjects:@"15 分钟", @"30 分钟", @"45 分钟", @"60 分钟", @"90 分钟", @"自定义时长…", nil];
+    NSInteger n = opts.count;
+    if (ADPlayer.shared.sleepDeadline > 0) [opts addObject:@"取消定时关闭"];
     double now = [NSDate date].timeIntervalSince1970;
-    for (NSNumber *m in @[@15, @30, @45, @60, @90]) {
-        NSString *t = [NSString stringWithFormat:@"%@ 分钟后", m];
-        [a addAction:[UIAlertAction actionWithTitle:t style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
-            ADPlayer.shared.sleepDeadline = now + [m doubleValue] * 60;
+    NSArray *mins = @[@15, @30, @45, @60, @90];
+    [ADOptionSheet showIn:self title:@"定时关闭" options:opts
+              destructive:(ADPlayer.shared.sleepDeadline > 0 ? n : -1)
+                   choose:^(NSInteger i) {
+        if (i < 5) {
+            ADPlayer.shared.sleepDeadline = now + [mins[i] doubleValue] * 60;
             [self sync];
-        }]];
-    }
-    [a addAction:[UIAlertAction actionWithTitle:@"自定义时长…" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
-        UIAlertController *c = [UIAlertController alertControllerWithTitle:@"自定义定时" message:@"输入分钟数，也可写 1h30m、90s" preferredStyle:UIAlertControllerStyleAlert];
-        [c addTextFieldWithConfigurationHandler:^(UITextField *tf) {
-            tf.keyboardType = UIKeyboardTypeDefault;
-            tf.placeholder = @"例如 20";
-        }];
-        [c addAction:[UIAlertAction actionWithTitle:@"开始" style:UIAlertActionStyleDefault handler:^(UIAlertAction *y) {
-            double sec = [ADUtil parseDuration:c.textFields.firstObject.text];
-            if (sec <= 0) return;
-            ADPlayer.shared.sleepDeadline = [NSDate date].timeIntervalSince1970 + sec;
-            [self sync];
-        }]];
-        [c addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-        [self presentViewController:c animated:YES completion:nil];
-    }]];
-    if (ADPlayer.shared.sleepDeadline > 0) {
-        [a addAction:[UIAlertAction actionWithTitle:@"关闭定时" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) {
+        } else if (i == 5) {
+            [self askCustomSleep];
+        } else {
             ADPlayer.shared.sleepDeadline = 0;
             [self sync];
-        }]];
-    }
-    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    a.popoverPresentationController.sourceView = self.sleepBtn;
-    [self presentViewController:a animated:YES completion:nil];
+        }
+    }];
+}
+
+- (void)askCustomSleep {
+    UIAlertController *c = [UIAlertController alertControllerWithTitle:@"自定义定时" message:@"输入分钟数，也可写 1h30m、90s" preferredStyle:UIAlertControllerStyleAlert];
+    [c addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.keyboardType = UIKeyboardTypeDefault;
+        tf.placeholder = @"例如 20";
+    }];
+    [c addAction:[UIAlertAction actionWithTitle:@"开始" style:UIAlertActionStyleDefault handler:^(UIAlertAction *y) {
+        double sec = [ADUtil parseDuration:c.textFields.firstObject.text];
+        if (sec <= 0) return;
+        ADPlayer.shared.sleepDeadline = [NSDate date].timeIntervalSince1970 + sec;
+        [self sync];
+    }]];
+    [c addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:c animated:YES completion:nil];
 }
 
 - (void)showQueueList {
