@@ -1,0 +1,32 @@
+name: Build AudioDown
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build unsigned .app
+        run: |
+          set -e
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          mkdir -p build/Payload
+          xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=14.0 \
+            -isysroot "$SDK" -fobjc-arc -O2 \
+            -framework UIKit -framework Foundation -framework AVFoundation \
+            -framework MediaPlayer -framework CoreMedia -framework Security \
+            -o build/Payload/ADBook.app/ADBook \
+            src/*.m
+          cp src/Info.plist build/Payload/ADBook.app/
+          cp -r src/Assets build/Payload/ADBook.app/ 2>/dev/null || true
+          codesign -s - --force --deep build/Payload/ADBook.app 2>/dev/null || true
+          cd build && zip -qry ../Audiodown-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Audiodown-IPA
+          path: Audiodown-unsigned.ipa
