@@ -298,10 +298,10 @@
     }
 
     // 控制行
-    UIButton *prev = [self iconButton:@"backward.end.fill" size:26 action:@selector(prev)];
-    UIButton *back = [self iconButton:@"gobackward.15" size:30 action:@selector(back15)];
-    UIButton *fwd = [self iconButton:@"goforward.15" size:30 action:@selector(fwd15)];
-    UIButton *next = [self iconButton:@"forward.end.fill" size:26 action:@selector(next)];
+    UIButton *prev = [self iconButton:@"backward.end.fill" size:21 action:@selector(prev)];
+    UIButton *back = [self iconButton:@"gobackward.15" size:25 action:@selector(back15)];
+    UIButton *fwd = [self iconButton:@"goforward.15" size:25 action:@selector(fwd15)];
+    UIButton *next = [self iconButton:@"forward.end.fill" size:21 action:@selector(next)];
     prev.tag = 201; back.tag = 202; fwd.tag = 203; next.tag = 204;
     for (UIButton *b in @[prev, back, fwd, next]) [self.view addSubview:b];
 
@@ -402,11 +402,11 @@
     self.duration.textAlignment = NSTextAlignmentRight;
     y += 30 + gap;
 
-    self.playBtn.frame = CGRectMake(W / 2 - 40, y, 80, 80);
-    [self.view viewWithTag:201].frame = CGRectMake(24, y + 16, 40, 44);
-    [self.view viewWithTag:202].frame = CGRectMake(W / 2 - 118, y + 12, 44, 48);
-    [self.view viewWithTag:203].frame = CGRectMake(W / 2 + 74, y + 12, 44, 48);
-    [self.view viewWithTag:204].frame = CGRectMake(W - 64, y + 16, 40, 44);
+    self.playBtn.frame = CGRectMake(W / 2 - 32, y + 14, 64, 64);
+    [self.view viewWithTag:201].frame = CGRectMake(28, y + 26, 34, 34);
+    [self.view viewWithTag:202].frame = CGRectMake(W / 2 - 104, y + 24, 38, 38);
+    [self.view viewWithTag:203].frame = CGRectMake(W / 2 + 66, y + 24, 38, 38);
+    [self.view viewWithTag:204].frame = CGRectMake(W - 62, y + 26, 34, 34);
     y += 80 + lastGap;
 
     UIButton *rate = (UIButton *)[self.view viewWithTag:301];
@@ -451,12 +451,16 @@
     self.mid.text = mid ?: @"在线播放";
 
     [self.playBtn setImage:[UIImage systemImageNamed:(p.isPlaying ? @"pause.fill" : @"play.fill")
-                                withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:56 weight:UIImageSymbolWeightMedium]]
+                                withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:42 weight:UIImageSymbolWeightMedium]]
                    forState:UIControlStateNormal];
     UIButton *rateBtn = (UIButton *)[self.view viewWithTag:301];
     [rateBtn setTitle:[NSString stringWithFormat:@"%.2gx", p.rate] forState:UIControlStateNormal];
     UIButton *sleepBtn = (UIButton *)[self.view viewWithTag:302];
-    if (p.sleepDeadline > 0) {
+    if (p.stopAfterChapter) {
+        [sleepBtn setImage:[UIImage systemImageNamed:@"moon.zzz.fill"] forState:UIControlStateNormal];
+        sleepBtn.tintColor = [ADUtil brand];
+        self.mid.text = [NSString stringWithFormat:@"%@ · 本集播完停", self.mid.text ?: @""];
+    } else if (p.sleepDeadline > 0) {
         double left = p.sleepDeadline - [NSDate date].timeIntervalSince1970;
         [sleepBtn setImage:[UIImage systemImageNamed:@"moon.zzz.fill"] forState:UIControlStateNormal];
         sleepBtn.tintColor = [ADUtil brand];
@@ -493,13 +497,19 @@
 }
 
 - (void)airplay {
-    MPVolumeView *vv = [MPVolumeView new];
-    vv.showsVolumeSlider = NO;
-    vv.frame = CGRectMake(-1000, -1000, 1, 1);
-    [self.view addSubview:vv];
-    for (UIView *v in vv.subviews) {
-        if ([v isKindOfClass:UIButton.class]) { [(UIButton *)v sendActionsForControlEvents:UIControlEventTouchUpInside]; break; }
+    MPVolumeView *vv = [self.view viewWithTag:901];
+    if (!vv) {
+        vv = [[MPVolumeView alloc] initWithFrame:CGRectMake(-2000, -2000, 40, 40)];
+        vv.tag = 901;
+        vv.showsVolumeSlider = NO;
+        vv.tintColor = UIColor.whiteColor;
+        [self.view addSubview:vv];
     }
+    UIButton *routeButton = nil;
+    for (UIView *v in vv.subviews) {
+        if ([v isKindOfClass:UIButton.class]) { routeButton = (UIButton *)v; break; }
+    }
+    if (routeButton) [routeButton sendActionsForControlEvents:UIControlEventTouchUpInside];
 }
 
 - (void)sliderBegin { self.dragging = YES; }
@@ -514,23 +524,51 @@
 - (void)cycleRate {
     NSArray *rates = @[@0.75, @1.0, @1.25, @1.5, @1.75, @2.0, @2.5, @3.0];
     float cur = ADPlayer.shared.rate;
-    NSUInteger idx = 0;
-    for (NSUInteger i = 0; i < rates.count; i++) if (fabs([rates[i] floatValue] - cur) < 0.001) { idx = i; break; }
-    idx = (idx + 1) % rates.count;
-    ADPlayer.shared.rate = [rates[idx] floatValue];
-    [self sync];
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"播放速度" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+    for (NSNumber *n in rates) {
+        BOOL on = fabs([n floatValue] - cur) < 0.001;
+        NSString *t = [NSString stringWithFormat:@"%@%@x", on ? @"✓ " : @"", n];
+        [a addAction:[UIAlertAction actionWithTitle:t style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+            ADPlayer.shared.rate = [n floatValue];
+            [self sync];
+        }]];
+    }
+    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    a.popoverPresentationController.sourceView = [self.view viewWithTag:301];
+    [self presentViewController:a animated:YES completion:nil];
 }
 
 - (void)cycleSleep {
     NSArray *mins = @[@0, @15, @30, @45, @60, @90];
     double now = [NSDate date].timeIntervalSince1970;
     double left = ADPlayer.shared.sleepDeadline > 0 ? (ADPlayer.shared.sleepDeadline - now) / 60.0 : 0;
-    NSInteger idx = 0;
-    for (NSUInteger i = 0; i < mins.count; i++) if (fabs([mins[i] doubleValue] - left) < 1.5) { idx = i; break; }
-    idx = (idx + 1) % mins.count;
-    double m = [mins[idx] doubleValue];
-    ADPlayer.shared.sleepDeadline = m > 0 ? now + m * 60 : 0;
-    [self sync];
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"睡眠定时" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+    if (ADPlayer.shared.stopAfterChapter) {
+        [a addAction:[UIAlertAction actionWithTitle:@"✓ 本集播完停止" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+            ADPlayer.shared.stopAfterChapter = NO;
+            [self sync];
+        }]];
+    } else {
+        [a addAction:[UIAlertAction actionWithTitle:@"本集播完停止" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+            ADPlayer.shared.stopAfterChapter = YES;
+            ADPlayer.shared.sleepDeadline = 0;
+            [self sync];
+        }]];
+    }
+    for (NSNumber *n in mins) {
+        double m = [n doubleValue];
+        BOOL on = (m == 0) ? (ADPlayer.shared.sleepDeadline <= 0 && !ADPlayer.shared.stopAfterChapter) : (fabs(left - m) < 1.5);
+        NSString *t = m == 0 ? [NSString stringWithFormat:@"%@关闭定时", on ? @"✓ " : @""]
+                             : [NSString stringWithFormat:@"%@%ld 分钟", on ? @"✓ " : @"", (long)m];
+        [a addAction:[UIAlertAction actionWithTitle:t style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+            ADPlayer.shared.stopAfterChapter = NO;
+            ADPlayer.shared.sleepDeadline = m > 0 ? [NSDate date].timeIntervalSince1970 + m * 60 : 0;
+            [self sync];
+        }]];
+    }
+    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    a.popoverPresentationController.sourceView = [self.view viewWithTag:302];
+    [self presentViewController:a animated:YES completion:nil];
 }
 
 - (void)openQueue {

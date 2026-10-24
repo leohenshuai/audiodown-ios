@@ -151,6 +151,13 @@
 }
 
 - (void)itemEnded:(NSNotification *)n {
+    if (self.stopAfterChapter) {
+        self.stopAfterChapter = NO;
+        [_player pause];
+        [self nowPlaying];
+        [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
+        return;
+    }
     if (_index + 1 < (NSInteger)_tracks.count) [self next];
     else { [_player pause]; [self nowPlaying]; }
 }

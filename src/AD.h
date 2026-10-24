@@ -96,7 +96,8 @@ typedef NS_ENUM(NSInteger, ADTaskState) {
 @property (nonatomic, strong) NSArray<ADTrack *> *tracks;
 @property (nonatomic, assign) NSInteger index;
 @property (nonatomic, assign) float rate;
-@property (nonatomic, assign) double sleepDeadline;   // 0 关闭
+@property (nonatomic, assign) double sleepDeadline;
+@property (nonatomic, assign) BOOL stopAfterChapter;   // 0 关闭
 @property (nonatomic, copy, nullable) NSString *statusText;
 + (instancetype)shared;
 - (AVPlayer *)player;

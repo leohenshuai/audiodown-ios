@@ -37,6 +37,10 @@ Base:`https://audio.959935291.xyz:899`,认证 `Authorization: Bearer <token>`(`x
 - **本机下载**(自己实现,`ADDownloader.m`):专辑页「缓存到本机」→ 逐集调 cdn/play 取地址→带 headers 下载到 `Documents/audio/<trackId>.m4a`;设置页可查看进度、点击暂停/继续、左滑删除、全部暂停/继续;已缓存的集直接本地播放
 - **服务端下载任务**:开放 API 只有 `GET /open-api/v1/downloads` 与 `/downloads/{id}`,实测 POST/DELETE/PATCH `/downloads/{id}/stop|cancel|pause|resume` 全部 404,无法从客户端控制,只能去网页后台操作
 
+## 版本记录
+- v1.0(2026-10-24):首页/搜索/书架/专辑/播放器/设置全部完成;本机下载;本地 JSON 缓存;下拉刷新;token 遮罩;播放页按「听见有声」1:1 重排(封面 min(宽-24,高52%),间隙 ≤22,控制行与底部工具行固定 18)
+- 产物:`听书-1.0-unsigned.ipa`(bundle com.leo.audiodown)
+
 ## 待办
 - 分类浏览(需服务端支持)
 - 离线下载
