@@ -442,19 +442,19 @@
 
     self.status = [ADUtil label:nil size:12 color:[UIColor colorWithWhite:1 alpha:0.5]];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:@"ADDownloadChanged" object:nil];
-    [self loadServerTasks];
 }
 
 - (void)refresh { [self.table reloadData]; }
 
 - (void)toggleToken {
     self.tokenShown = !self.tokenShown;
-    self.tokenField.secureTextEntry = !self.tokenShown;
     UIButton *eye = (UIButton *)self.tokenField.rightView;
     [eye setImage:[UIImage systemImageNamed:self.tokenShown ? @"eye" : @"eye.slash"] forState:UIControlStateNormal];
     NSString *t = self.tokenField.text;
-    self.tokenField.text = @" ";
+    self.tokenField.secureTextEntry = !self.tokenShown;
+    self.tokenField.text = nil;
     self.tokenField.text = t;
+    [self.tokenField becomeFirstResponder];
 }
 
 - (UITextField *)field:(NSString *)text placeholder:(NSString *)ph keyboard:(UIKeyboardType)kb {
@@ -502,7 +502,7 @@
     }];
 }
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)t { return 3; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)t { return 2; }
 - (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)s {
     if (s == 0) return @"服务";
     if (s == 1) return @"本机下载";
@@ -539,10 +539,17 @@
             name.frame = CGRectMake(16, 12, 76, 20);
             [c.contentView addSubview:name];
             UITextField *f = ip.row == 0 ? self.baseField : self.tokenField;
-            CGFloat x = 96, w = t.bounds.size.width - x - 40;
-            f.frame = CGRectMake(x, 6, w, 32);
+            CGFloat cw = c.contentView.bounds.size.width > 0 ? c.contentView.bounds.size.width : (t.bounds.size.width - 40);
+            CGFloat x = 86, w = cw - x - 34;
+            f.frame = CGRectMake(x, 6, MAX(80, w), 32);
             f.autoresizingMask = UIViewAutoresizingFlexibleWidth;
             [c.contentView addSubview:f];
+            if (ip.row == 1) {
+                NSString *t0 = self.tokenField.text;
+                self.tokenField.secureTextEntry = !self.tokenShown;
+                self.tokenField.text = nil;
+                self.tokenField.text = t0;
+            }
         } else {
             c.textLabel.text = @"测试连接";
             c.textLabel.textColor = [ADUtil brand];

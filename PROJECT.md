@@ -33,6 +33,10 @@ Base:`https://audio.959935291.xyz:899`,认证 `Authorization: Bearer <token>`(`x
 - 开放 API 没有进度同步接口,进度只存本地(Documents 下归档)
 - `POST /open-api/v1/downloads` 会真的在服务端排队下载,调试时别碰
 
+## 下载
+- **本机下载**(自己实现,`ADDownloader.m`):专辑页「缓存到本机」→ 逐集调 cdn/play 取地址→带 headers 下载到 `Documents/audio/<trackId>.m4a`;设置页可查看进度、点击暂停/继续、左滑删除、全部暂停/继续;已缓存的集直接本地播放
+- **服务端下载任务**:开放 API 只有 `GET /open-api/v1/downloads` 与 `/downloads/{id}`,实测 POST/DELETE/PATCH `/downloads/{id}/stop|cancel|pause|resume` 全部 404,无法从客户端控制,只能去网页后台操作
+
 ## 待办
 - 分类浏览(需服务端支持)
 - 离线下载

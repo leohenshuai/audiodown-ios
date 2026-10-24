@@ -338,7 +338,8 @@
     for (UIView *v in self.scroll.subviews) [v removeFromSuperview];
     [self.cards removeAllObjects];
     CGFloat W = self.view.bounds.size.width;
-    CGFloat y = 8;
+    CGFloat safeTop = MAX(self.view.safeAreaInsets.top, 47);
+    CGFloat y = safeTop;
 
     // 顶部标题
     UILabel *logo = [ADUtil label:@"PingFangSC-Semibold" size:34 color:UIColor.whiteColor];
@@ -519,12 +520,13 @@
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor colorWithRed:0.043 green:0.035 blue:0.035 alpha:1];
     self.navigationController.navigationBar.hidden = YES;
-    self.bar = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 56, self.view.bounds.size.width, 52)];
+    self.bar = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 52)];
     self.bar.placeholder = @"书名 / 作者 / 主播";
     self.bar.searchBarStyle = UISearchBarStyleMinimal;
     self.bar.delegate = self;
     self.bar.tintColor = [ADUtil brand];
     [self.view addSubview:self.bar];
+    [self layoutChrome];
     CGFloat w = (self.view.bounds.size.width - 16 * 2 - 12 * 2) / 3;
     UICollectionViewFlowLayout *lo = [UICollectionViewFlowLayout new];
     lo.itemSize = CGSizeMake(w, w + 40);
@@ -541,7 +543,12 @@
     [self.view addSubview:self.hint];
     self.list = [NSMutableArray array];
 }
-- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; self.navigationController.navigationBar.hidden = YES; }
+- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; self.navigationController.navigationBar.hidden = YES; [self layoutChrome]; }
+- (void)layoutChrome {
+    CGFloat top = MAX(self.view.safeAreaInsets.top, 47);
+    self.bar.frame = CGRectMake(0, top - 6, self.view.bounds.size.width, 52);
+    self.cv.frame = CGRectMake(0, top + 46, self.view.bounds.size.width, self.view.bounds.size.height - top - 46);
+}
 - (void)viewWillLayoutSubviews {
     [super viewWillLayoutSubviews];
     self.hint.frame = CGRectMake(30, self.view.bounds.size.height / 2, self.view.bounds.size.width - 60, 40);
@@ -613,12 +620,12 @@
     self.view.backgroundColor = [UIColor colorWithRed:0.043 green:0.035 blue:0.035 alpha:1];
     self.navigationController.navigationBar.hidden = YES;
     UILabel *t = [ADUtil label:@"PingFangSC-Semibold" size:34 color:UIColor.whiteColor];
-    t.frame = CGRectMake(16, 56, 200, 40);
+    t.frame = CGRectMake(16, MAX(self.view.safeAreaInsets.top, 47), 200, 40);
     t.text = @"书架";
     t.tag = 99;
     [self.view addSubview:t];
     UIButton *gear = [UIButton buttonWithType:UIButtonTypeSystem];
-    gear.frame = CGRectMake(self.view.bounds.size.width - 60, 60, 44, 44);
+    gear.frame = CGRectMake(self.view.bounds.size.width - 60, MAX(self.view.safeAreaInsets.top, 47) + 4, 44, 44);
     gear.backgroundColor = [UIColor colorWithWhite:1 alpha:0.14];
     gear.layer.cornerRadius = 22;
     gear.tintColor = UIColor.whiteColor;
@@ -664,6 +671,17 @@
     if (!m.superview) [self.view addSubview:m];
     [m refresh];
 }
+- (void)viewSafeAreaInsetsDidChange {
+    [super viewSafeAreaInsetsDidChange];
+    CGFloat top = MAX(self.view.safeAreaInsets.top, 47);
+    UILabel *t = [self.view viewWithTag:99];
+    t.frame = CGRectMake(16, top, 200, 40);
+    UIButton *g = nil;
+    for (UIView *v in self.view.subviews) if ([v isKindOfClass:UIButton.class]) g = (UIButton *)v;
+    g.frame = CGRectMake(self.view.bounds.size.width - 60, top + 4, 44, 44);
+    self.cv.frame = CGRectMake(0, top + 52, self.view.bounds.size.width, self.view.bounds.size.height - top - 52);
+}
+
 - (void)goSettings { [self.navigationController pushViewController:[ADSettingsController new] animated:YES]; }
 - (NSInteger)collectionView:(UICollectionView *)cv numberOfItemsInSection:(NSInteger)s { return self.items.count; }
 - (UICollectionViewCell *)collectionView:(UICollectionView *)cv cellForItemAtIndexPath:(NSIndexPath *)ip {
