@@ -22,7 +22,7 @@ jobs:
             -o build/Payload/ADBook.app/ADBook \
             src/*.m
           cp src/Info.plist build/Payload/ADBook.app/
-          cp -r src/Assets build/Payload/ADBook.app/ 2>/dev/null || true
+          cp src/Assets/* build/Payload/ADBook.app/ 2>/dev/null || true
           codesign -s - --force --deep build/Payload/ADBook.app 2>/dev/null || true
           cd build && zip -qry ../Audiodown-unsigned.ipa Payload
 
