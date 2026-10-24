@@ -368,17 +368,18 @@
     CGFloat safeBottom = self.view.safeAreaInsets.bottom;
 
     // 各块固定高度：标题 70 / 进度 28 / 时间 30 / 控制 80 / 底部 40
-    CGFloat top = safeTop + 8;
-    CGFloat bottomPad = safeBottom + 14;
+    CGFloat top = safeTop + 16;
+    CGFloat bottomPad = safeBottom + 16;
     CGFloat blockH = 70 + 28 + 30 + 80 + 40;
-    CGFloat coverMax = MIN(W - 30, H * 0.52);
-    CGFloat leftover = H - top - bottomPad - blockH - coverMax;
+    CGFloat lastGap = 18;                 // 控制行与底部工具行固定贴近
+    CGFloat coverMax = MIN(W - 24, H * 0.52);
+    CGFloat leftover = H - top - bottomPad - blockH - coverMax - lastGap;
     CGFloat coverH = coverMax;
     if (leftover < 0) { coverH = MAX(140, coverMax + leftover); leftover = 0; }
-    CGFloat gap = MIN(26.0, MAX(8.0, leftover / 5.0));
-    CGFloat extra = MAX(0, leftover - gap * 5.0);
-    top += extra * 0.45;          // 多出来的空间一半给顶部留白，另一半留给底部
-    bottomPad += extra * 0.55;
+    CGFloat gap = MIN(22.0, MAX(6.0, leftover / 4.0));
+    CGFloat extra = MAX(0, leftover - gap * 4.0);
+    top += extra * 0.55;                  // 多出来的空间主要给顶部（封面与标题之间）
+    bottomPad += extra * 0.45;
 
     CGFloat y = top;
     self.cover.frame = CGRectMake((W - coverH) / 2, y, coverH, coverH);
@@ -406,7 +407,7 @@
     [self.view viewWithTag:202].frame = CGRectMake(W / 2 - 118, y + 12, 44, 48);
     [self.view viewWithTag:203].frame = CGRectMake(W / 2 + 74, y + 12, 44, 48);
     [self.view viewWithTag:204].frame = CGRectMake(W - 64, y + 16, 40, 44);
-    y += 80 + gap;
+    y += 80 + lastGap;
 
     UIButton *rate = (UIButton *)[self.view viewWithTag:301];
     rate.frame = CGRectMake(W / 2 - 150, y + 2, 58, 36);
