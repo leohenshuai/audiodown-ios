@@ -371,11 +371,14 @@
     CGFloat top = safeTop + 8;
     CGFloat bottomPad = safeBottom + 14;
     CGFloat blockH = 70 + 28 + 30 + 80 + 40;
-    CGFloat coverMax = MIN(W - 48, H * 0.46);
+    CGFloat coverMax = MIN(W - 30, H * 0.52);
     CGFloat leftover = H - top - bottomPad - blockH - coverMax;
     CGFloat coverH = coverMax;
     if (leftover < 0) { coverH = MAX(140, coverMax + leftover); leftover = 0; }
-    CGFloat gap = MAX(10, leftover / 5.0);
+    CGFloat gap = MIN(26.0, MAX(8.0, leftover / 5.0));
+    CGFloat extra = MAX(0, leftover - gap * 5.0);
+    top += extra * 0.45;          // 多出来的空间一半给顶部留白，另一半留给底部
+    bottomPad += extra * 0.55;
 
     CGFloat y = top;
     self.cover.frame = CGRectMake((W - coverH) / 2, y, coverH, coverH);
