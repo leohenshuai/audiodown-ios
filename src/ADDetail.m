@@ -1,4 +1,5 @@
 #import "AD.h"
+#import <MediaPlayer/MediaPlayer.h>
 #import <AVFoundation/AVFoundation.h>
 
 // ───────────── 专辑详情 ─────────────
@@ -219,9 +220,9 @@
 // ───────────── 播放器 ─────────────
 @interface ADPlayerController () <UITableViewDataSource, UITableViewDelegate>
 @property (nonatomic, strong) UIImageView *cover;
-@property (nonatomic, strong) UILabel *titleLabel, *subLabel, *elapsed, *duration, *status;
+@property (nonatomic, strong) UILabel *titleLabel, *subLabel, *elapsed, *mid, *duration, *status;
 @property (nonatomic, strong) UISlider *slider;
-@property (nonatomic, strong) UIButton *playBtn, *rateBtn, *sleepBtn;
+@property (nonatomic, strong) UIButton *playBtn, *starBtn, *moreBtn;
 @property (nonatomic, assign) BOOL dragging;
 @property (nonatomic, strong) UITableView *queue;
 @property (nonatomic, assign) BOOL showQueue;
@@ -229,72 +230,96 @@
 
 @implementation ADPlayerController
 
+- (instancetype)init {
+    if ((self = [super init])) {
+        if (@available(iOS 15.0, *)) {
+            self.modalPresentationStyle = UIModalPresentationPageSheet;
+        } else {
+            self.modalPresentationStyle = UIModalPresentationFullScreen;
+        }
+    }
+    return self;
+}
+
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithRed:0.06 green:0.04 blue:0.03 alpha:1];
-    CGFloat w = self.view.bounds.size.width;
+    self.view.backgroundColor = [UIColor colorWithRed:0.16 green:0.15 blue:0.15 alpha:1];
 
-    self.cover = [[UIImageView alloc] initWithFrame:CGRectMake(w / 2 - 115, 80, 230, 230)];
-    self.cover.layer.cornerRadius = 16;
+    if (@available(iOS 15.0, *)) {
+        UISheetPresentationController *sheet = self.sheetPresentationController;
+        if (sheet) {
+            sheet.detents = @[UISheetPresentationControllerDetent.largeDetent];
+            sheet.prefersGrabberVisible = YES;
+            sheet.preferredCornerRadius = 28;
+        }
+    }
+
+    UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterialDark];
+    UIVisualEffectView *bg = [[UIVisualEffectView alloc] initWithEffect:blur];
+    bg.frame = self.view.bounds;
+    bg.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [self.view addSubview:bg];
+
+    self.cover = [UIImageView new];
+    self.cover.layer.cornerRadius = 20;
     self.cover.clipsToBounds = YES;
-    self.titleLabel = [ADUtil label:@"PingFangSC-Semibold" size:18 color:UIColor.whiteColor];
-    self.titleLabel.textAlignment = NSTextAlignmentCenter;
-    self.subLabel = [ADUtil label:nil size:13 color:[ADUtil dim]];
-    self.subLabel.textAlignment = NSTextAlignmentCenter;
-    self.status = [ADUtil label:nil size:12 color:[ADUtil brand]];
-    self.status.textAlignment = NSTextAlignmentCenter;
+    self.cover.contentMode = UIViewContentModeScaleAspectFill;
+    self.cover.backgroundColor = [UIColor colorWithWhite:0 alpha:0.5];
+
+    self.titleLabel = [ADUtil label:@"PingFangSC-Semibold" size:26 color:UIColor.whiteColor];
+    self.titleLabel.numberOfLines = 2;
+    self.subLabel = [ADUtil label:nil size:17 color:[UIColor colorWithWhite:1 alpha:0.62]];
+
+    self.starBtn = [self circleButton:@"star" action:@selector(toggleFav)];
+    self.moreBtn = [self circleButton:@"ellipsis" action:@selector(showMore)];
+    UIButton *more = self.moreBtn;
 
     self.slider = [UISlider new];
-    self.slider.minimumTrackTintColor = [ADUtil brand];
-    self.slider.maximumTrackTintColor = [UIColor colorWithWhite:1 alpha:0.18];
+    self.slider.minimumTrackTintColor = [UIColor colorWithWhite:1 alpha:0.95];
+    self.slider.maximumTrackTintColor = [UIColor colorWithWhite:1 alpha:0.28];
+    [self.slider setThumbImage:[self dot:16] forState:UIControlStateNormal];
     [self.slider addTarget:self action:@selector(sliderBegin) forControlEvents:UIControlEventTouchDown];
     [self.slider addTarget:self action:@selector(sliderMoving) forControlEvents:UIControlEventValueChanged];
     [self.slider addTarget:self action:@selector(sliderEnd) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
 
-    self.elapsed = [ADUtil label:nil size:11 color:[ADUtil dim]];
-    self.duration = [ADUtil label:nil size:11 color:[ADUtil dim]];
-    self.duration.textAlignment = NSTextAlignmentRight;
+    self.elapsed = [ADUtil label:nil size:14 color:[UIColor colorWithWhite:1 alpha:0.75]];
+    self.mid = [ADUtil label:nil size:14 color:[UIColor colorWithWhite:1 alpha:0.55]];
+    self.duration = [ADUtil label:nil size:14 color:[UIColor colorWithWhite:1 alpha:0.55]];
+    self.status = [ADUtil label:nil size:12 color:[ADUtil brand]];
+    self.status.textAlignment = NSTextAlignmentCenter;
 
     self.playBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     self.playBtn.tintColor = UIColor.whiteColor;
-    [self.playBtn setImage:[UIImage systemImageNamed:@"play.fill" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:62 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
     [self.playBtn addTarget:self action:@selector(toggle) forControlEvents:UIControlEventTouchUpInside];
 
-    UIButton *prev = [self icon:@"backward.end.fill" size:30 action:@selector(prev)];
-    UIButton *next = [self icon:@"forward.end.fill" size:30 action:@selector(next)];
-    UIButton *back = [self icon:@"gobackward.15" size:24 action:@selector(back15)];
-    UIButton *fwd = [self icon:@"goforward.30" size:24 action:@selector(fwd30)];
+    for (UIView *v in @[self.cover, self.titleLabel, self.subLabel, self.starBtn, more, self.slider,
+                        self.elapsed, self.mid, self.duration, self.status, self.playBtn]) {
+        [self.view addSubview:v];
+    }
 
-    self.rateBtn = [self pill:@"1.0x" action:@selector(cycleRate)];
-    self.sleepBtn = [self pill:@"定时" action:@selector(cycleSleep)];
-    UIButton *close = [self icon:@"chevron.down" size:20 action:@selector(closeMe)];
-    UIButton *list = [self icon:@"list.bullet" size:20 action:@selector(openQueue)];
+    // 控制行
+    UIButton *prev = [self iconButton:@"backward.end.fill" size:26 action:@selector(prev)];
+    UIButton *back = [self iconButton:@"gobackward.15" size:30 action:@selector(back15)];
+    UIButton *fwd = [self iconButton:@"goforward.15" size:30 action:@selector(fwd15)];
+    UIButton *next = [self iconButton:@"forward.end.fill" size:26 action:@selector(next)];
+    prev.tag = 201; back.tag = 202; fwd.tag = 203; next.tag = 204;
+    for (UIButton *b in @[prev, back, fwd, next]) [self.view addSubview:b];
 
-    NSArray *all = @[self.cover, self.titleLabel, self.subLabel, self.status, self.slider, self.elapsed, self.duration, self.playBtn, prev, next, back, fwd, self.rateBtn, self.sleepBtn, close, list];
-    for (UIView *v in all) [self.view addSubview:v];
+    // 底部工具行
+    UIButton *rate = [self textButton:@"1.0x" action:@selector(cycleRate)];
+    UIButton *sleep = [self iconButton:@"moon.zzz.fill" size:22 action:@selector(cycleSleep)];
+    UIButton *air = [self iconButton:@"airplayaudio" size:24 action:@selector(airplay)];
+    UIButton *list = [self iconButton:@"list.bullet" size:22 action:@selector(openQueue)];
+    rate.tag = 301; sleep.tag = 302; air.tag = 303; list.tag = 304;
+    for (UIButton *b in @[rate, sleep, air, list]) [self.view addSubview:b];
 
-    self.cover.frame = CGRectMake(w / 2 - 115, 90, 230, 230);
-    self.titleLabel.frame = CGRectMake(24, 338, w - 48, 24);
-    self.subLabel.frame = CGRectMake(24, 366, w - 48, 20);
-    self.status.frame = CGRectMake(24, 388, w - 48, 18);
-    self.slider.frame = CGRectMake(24, 418, w - 48, 28);
-    self.elapsed.frame = CGRectMake(24, 448, 90, 16);
-    self.duration.frame = CGRectMake(w - 114, 448, 90, 16);
-    self.playBtn.frame = CGRectMake(w / 2 - 34, 480, 68, 68);
-    prev.frame = CGRectMake(w / 2 - 112, 496, 40, 36);
-    next.frame = CGRectMake(w / 2 + 72, 496, 40, 36);
-    back.frame = CGRectMake(w / 2 - 168, 500, 34, 28);
-    fwd.frame = CGRectMake(w / 2 + 134, 500, 34, 28);
-    self.rateBtn.frame = CGRectMake(w / 2 - 120, 580, 100, 34);
-    self.sleepBtn.frame = CGRectMake(w / 2 + 20, 580, 100, 34);
-    close.frame = CGRectMake(16, 50, 36, 36);
-    list.frame = CGRectMake(w - 52, 50, 36, 36);
-
-    self.queue = [[UITableView alloc] initWithFrame:CGRectMake(0, self.view.bounds.size.height, w, self.view.bounds.size.height * 0.6) style:UITableViewStylePlain];
-    self.queue.backgroundColor = [UIColor colorWithWhite:0.1 alpha:1];
+    self.queue = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
+    self.queue.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.98];
     self.queue.dataSource = self;
     self.queue.delegate = self;
     self.queue.hidden = YES;
+    self.queue.layer.cornerRadius = 18;
+    self.queue.clipsToBounds = YES;
     [self.view addSubview:self.queue];
 
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(sync) name:@"ADPlayerTick" object:nil];
@@ -302,23 +327,81 @@
     [self sync];
 }
 
-- (UIButton *)icon:(NSString *)name size:(CGFloat)size action:(SEL)sel {
+- (UIImage *)dot:(CGFloat)d {
+    UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(d, d)];
+    return [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        [UIColor.whiteColor setFill];
+        [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(0, 0, d, d)] fill];
+    }];
+}
+
+- (UIButton *)circleButton:(NSString *)icon action:(SEL)sel {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-    [b setImage:[UIImage systemImageNamed:name withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:size weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
+    b.backgroundColor = [UIColor colorWithWhite:1 alpha:0.12];
+    b.layer.cornerRadius = 22;
+    b.tintColor = UIColor.whiteColor;
+    [b setImage:[UIImage systemImageNamed:icon withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
+    [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
+    return b;
+}
+- (UIButton *)iconButton:(NSString *)icon size:(CGFloat)size action:(SEL)sel {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    [b setImage:[UIImage systemImageNamed:icon withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:size weight:UIImageSymbolWeightRegular]] forState:UIControlStateNormal];
     b.tintColor = UIColor.whiteColor;
     [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
     return b;
 }
-- (UIButton *)pill:(NSString *)t action:(SEL)sel {
+- (UIButton *)textButton:(NSString *)text action:(SEL)sel {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-    [b setTitle:t forState:UIControlStateNormal];
-    [b setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    b.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
-    b.layer.borderWidth = 1;
-    b.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.25].CGColor;
-    b.layer.cornerRadius = 17;
+    [b setTitle:text forState:UIControlStateNormal];
+    [b setTitleColor:[UIColor colorWithWhite:1 alpha:0.85] forState:UIControlStateNormal];
+    b.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightRegular];
     [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
     return b;
+}
+
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    CGFloat W = self.view.bounds.size.width;
+    CGFloat H = self.view.bounds.size.height;
+    CGFloat top = self.view.safeAreaInsets.top + 10;
+
+    CGFloat cw = MIN(W - 96, H * 0.34);
+    self.cover.frame = CGRectMake((W - cw) / 2, top, cw, cw);
+
+    CGFloat y = CGRectGetMaxY(self.cover.frame) + 46;
+    self.titleLabel.frame = CGRectMake(24, y, W - 24 - 130, 70);
+    self.subLabel.frame = CGRectMake(24, y + 38, W - 24 - 130, 24);
+    self.starBtn.frame = CGRectMake(W - 24 - 96, y + 4, 44, 44);
+    self.moreBtn.frame = CGRectMake(W - 24 - 44, y + 4, 44, 44);
+    self.slider.frame = CGRectMake(24, y + 110, W - 48, 28);
+    self.elapsed.frame = CGRectMake(24, y + 144, 90, 18);
+    self.mid.frame = CGRectMake(W / 2 - 60, y + 144, 120, 18);
+    self.mid.textAlignment = NSTextAlignmentCenter;
+    self.duration.frame = CGRectMake(W - 114, y + 144, 90, 18);
+    self.duration.textAlignment = NSTextAlignmentRight;
+    self.status.frame = CGRectMake(24, y + 84, W - 48, 16);
+
+    CGFloat cy = y + 200;
+    self.playBtn.frame = CGRectMake(W / 2 - 40, cy - 12, 80, 80);
+    [self.view viewWithTag:201].frame = CGRectMake(24, cy + 4, 40, 44);
+    [self.view viewWithTag:202].frame = CGRectMake(W / 2 - 118, cy, 44, 48);
+    [self.view viewWithTag:203].frame = CGRectMake(W / 2 + 74, cy, 44, 48);
+    [self.view viewWithTag:204].frame = CGRectMake(W - 64, cy + 4, 40, 44);
+
+    CGFloat by = cy + 104;
+    UIButton *rate = (UIButton *)[self.view viewWithTag:301];
+    [rate sizeToFit];
+    rate.frame = CGRectMake(W / 2 - 150, by, 58, 36);
+    [self.view viewWithTag:302].frame = CGRectMake(W / 2 - 62, by, 44, 36);
+    [self.view viewWithTag:303].frame = CGRectMake(W / 2 + 18, by, 44, 36);
+    [self.view viewWithTag:304].frame = CGRectMake(W / 2 + 106, by, 44, 36);
+
+    if (self.showQueue) {
+        self.queue.frame = CGRectMake(16, H - 320, W - 32, 300);
+    } else {
+        self.queue.frame = CGRectMake(16, H, W - 32, 300);
+    }
 }
 
 - (void)sync {
@@ -326,9 +409,10 @@
     ADTrack *t = p.current;
     if (!t) return;
     self.titleLabel.text = t.title;
-    self.subLabel.text = p.album.title;
+    self.subLabel.text = p.album.anchor.length ? p.album.anchor : (p.album.title ?: @"");
     self.status.text = p.statusText ?: @"";
     [ADUtil cover:self.cover url:p.album.cover];
+
     double cur = p.player ? CMTimeGetSeconds(p.player.currentTime) : 0;
     double dur = p.player.currentItem ? CMTimeGetSeconds(p.player.currentItem.duration) : 0;
     if (!self.dragging && dur > 0 && !isnan(dur)) {
@@ -336,16 +420,68 @@
         self.slider.value = cur;
     }
     self.elapsed.text = [ADUtil time:cur];
-    self.duration.text = (dur > 0 && !isnan(dur)) ? [ADUtil time:dur] : @"--:--";
-    [self.playBtn setImage:[UIImage systemImageNamed:(p.isPlaying ? @"pause.fill" : @"play.fill") withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:62 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
-    [self.rateBtn setTitle:[NSString stringWithFormat:@"%.2gx", p.rate] forState:UIControlStateNormal];
+    self.duration.text = (dur > 0 && !isnan(dur)) ? [NSString stringWithFormat:@"-%@", [ADUtil time:dur - cur]] : @"--:--";
+
+    // 中间：码率 / 状态
+    NSString *mid = nil;
+    if ([[ADDownloader shared] hasLocal:t.trackId]) mid = @"本地缓存";
+    if (!mid && p.player.currentItem) {
+        AVPlayerItemAccessLog *log = p.player.currentItem.accessLog;
+        AVPlayerItemAccessLogEvent *ev = log.events.lastObject;
+        if (ev.observedBitrate > 0) mid = [NSString stringWithFormat:@"%.0f kbps", ev.observedBitrate / 1000.0];
+    }
+    self.mid.text = mid ?: @"在线播放";
+
+    [self.playBtn setImage:[UIImage systemImageNamed:(p.isPlaying ? @"pause.fill" : @"play.fill")
+                                withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:56 weight:UIImageSymbolWeightMedium]]
+                   forState:UIControlStateNormal];
+    UIButton *rateBtn = (UIButton *)[self.view viewWithTag:301];
+    [rateBtn setTitle:[NSString stringWithFormat:@"%.2gx", p.rate] forState:UIControlStateNormal];
+    UIButton *sleepBtn = (UIButton *)[self.view viewWithTag:302];
     if (p.sleepDeadline > 0) {
         double left = p.sleepDeadline - [NSDate date].timeIntervalSince1970;
-        [self.sleepBtn setTitle:[NSString stringWithFormat:@"%@后停", [ADUtil time:MAX(0, left)]] forState:UIControlStateNormal];
+        [sleepBtn setImage:[UIImage systemImageNamed:@"moon.zzz.fill"] forState:UIControlStateNormal];
+        sleepBtn.tintColor = [ADUtil brand];
+        self.mid.text = [NSString stringWithFormat:@"%@ · %@后停", self.mid.text ?: @"", [ADUtil time:left]];
     } else {
-        [self.sleepBtn setTitle:@"定时" forState:UIControlStateNormal];
+        sleepBtn.tintColor = UIColor.whiteColor;
     }
+    BOOL fav = [[ADStore shared] isFavorite:p.album.albumId];
+    [self.starBtn setImage:[UIImage systemImageNamed:(fav ? @"star.fill" : @"star") withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
+    self.starBtn.tintColor = fav ? [ADUtil brand] : UIColor.whiteColor;
     if (self.showQueue) [self.queue reloadData];
+}
+
+- (void)toggleFav {
+    ADPlayer *p = ADPlayer.shared;
+    if (!p.album) return;
+    [[ADStore shared] toggleFavorite:p.album];
+    [self sync];
+}
+
+- (void)showMore {
+    ADPlayer *p = ADPlayer.shared;
+    if (!p.album) return;
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:p.album.title message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+    [a addAction:[UIAlertAction actionWithTitle:@"从头播放" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+        [p playAt:0];
+    }]];
+    [a addAction:[UIAlertAction actionWithTitle:@"缓存整本到本机" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+        [[ADDownloader shared] addAlbum:p.album tracks:p.tracks];
+    }]];
+    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    a.popoverPresentationController.sourceView = self.view;
+    [self presentViewController:a animated:YES completion:nil];
+}
+
+- (void)airplay {
+    MPVolumeView *vv = [MPVolumeView new];
+    vv.showsVolumeSlider = NO;
+    vv.frame = CGRectMake(-1000, -1000, 1, 1);
+    [self.view addSubview:vv];
+    for (UIView *v in vv.subviews) {
+        if ([v isKindOfClass:UIButton.class]) { [(UIButton *)v sendActionsForControlEvents:UIControlEventTouchUpInside]; break; }
+    }
 }
 
 - (void)sliderBegin { self.dragging = YES; }
@@ -355,7 +491,7 @@
 - (void)prev { [ADPlayer.shared prev]; [self sync]; }
 - (void)next { [ADPlayer.shared next]; [self sync]; }
 - (void)back15 { [ADPlayer.shared seekBy:-15]; }
-- (void)fwd30 { [ADPlayer.shared seekBy:30]; }
+- (void)fwd15 { [ADPlayer.shared seekBy:15]; }
 
 - (void)cycleRate {
     NSArray *rates = @[@0.75, @1.0, @1.25, @1.5, @1.75, @2.0, @2.5, @3.0];
@@ -382,17 +518,17 @@
 - (void)openQueue {
     self.showQueue = !self.showQueue;
     self.queue.hidden = !self.showQueue;
-    CGRect f = self.queue.frame;
-    f.origin.y = self.showQueue ? self.view.bounds.size.height * 0.4 : self.view.bounds.size.height;
-    [UIView animateWithDuration:0.25 animations:^{ self.queue.frame = f; }];
+    [UIView animateWithDuration:0.25 animations:^{
+        CGFloat W = self.view.bounds.size.width, H = self.view.bounds.size.height;
+        self.queue.frame = self.showQueue ? CGRectMake(16, H - 320, W - 32, 300) : CGRectMake(16, H, W - 32, 300);
+    }];
     [self.queue reloadData];
     if (self.showQueue) {
         NSIndexPath *ip = [NSIndexPath indexPathForRow:ADPlayer.shared.index inSection:0];
-        if (ip.row < (NSInteger)ADPlayer.shared.tracks.count) [self.queue scrollToRowAtIndexPath:ip atScrollPosition:UITableViewScrollPositionMiddle animated:YES];
+        if (ip.row < (NSInteger)ADPlayer.shared.tracks.count)
+            [self.queue scrollToRowAtIndexPath:ip atScrollPosition:UITableViewScrollPositionMiddle animated:YES];
     }
 }
-
-- (void)closeMe { [self dismissViewControllerAnimated:YES completion:nil]; }
 
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { return ADPlayer.shared.tracks.count; }
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {
