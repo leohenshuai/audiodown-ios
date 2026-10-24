@@ -54,6 +54,11 @@
     if (index < 0 || index >= (NSInteger)_tracks.count) return;
     _index = index;
     ADTrack *t = _tracks[index];
+    NSURL *local = [[ADDownloader shared] localURL:t.trackId];
+    if (local) {
+        [self startWithURL:local.absoluteString headers:@{} track:t];
+        return;
+    }
     self.statusText = @"正在获取音频…";
     [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
     [self resolveAndPlay:t attempt:0];

@@ -59,6 +59,37 @@ typedef void (^ADErr)(NSString * _Nullable err);
 - (void)downloads:(void (^)(NSArray<NSDictionary *> *items, NSString * _Nullable err))cb;
 @end
 
+
+// ───────────────── 下载任务 ─────────────────
+typedef NS_ENUM(NSInteger, ADTaskState) {
+    ADTaskStateQueued = 0,
+    ADTaskStateRunning,
+    ADTaskStatePaused,
+    ADTaskStateDone,
+    ADTaskStateFailed
+};
+
+@interface ADTask : NSObject <NSCoding>
+@property (nonatomic, copy) NSString *albumId, *title, *cover, *anchor, *provider;
+@property (nonatomic, strong) NSArray<ADTrack *> *tracks;
+@property (nonatomic, assign) NSInteger done, failed, state, cursor;
+@property (nonatomic, assign) double bytes;
+@end
+
+@interface ADDownloader : NSObject
++ (instancetype)shared;
+- (NSArray<ADTask *> *)tasks;
+- (nullable ADTask *)taskForAlbum:(NSString *)albumId;
+- (void)addAlbum:(ADAlbum *)a tracks:(NSArray<ADTrack *> *)tracks;
+- (void)pauseTask:(ADTask *)t;
+- (void)resumeTask:(ADTask *)t;
+- (void)deleteTask:(ADTask *)t;
+- (void)pauseAll;
+- (void)resumeAll;
+- (BOOL)hasLocal:(nullable NSString *)trackId;
+- (nullable NSURL *)localURL:(nullable NSString *)trackId;
+@end
+
 // ───────────────── 播放器 ─────────────────
 @interface ADPlayer : NSObject
 @property (nonatomic, strong, nullable) ADAlbum *album;

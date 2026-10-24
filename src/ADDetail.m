@@ -10,6 +10,7 @@
 @property (nonatomic, strong) NSMutableArray<ADTrack *> *tracks;
 @property (nonatomic, assign) NSInteger page, total;
 @property (nonatomic, assign) BOOL loading;
+@property (nonatomic, strong) UIButton *dlBtn;
 @end
 
 @implementation ADAlbumController
@@ -42,7 +43,16 @@
     self.meta = [ADUtil label:nil size:12 color:[ADUtil dim]];
     self.meta.frame = CGRectMake(140, 64, w - 156, 20);
     self.intro = [ADUtil label:nil size:12 color:[ADUtil dim]];
-    self.intro.frame = CGRectMake(16, 140, w - 32, 0);
+    self.intro.frame = CGRectMake(16, 170, w - 32, 0);
+    self.dlBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.dlBtn.frame = CGRectMake(140, 92, 130, 30);
+    self.dlBtn.backgroundColor = [UIColor colorWithWhite:1 alpha:0.12];
+    self.dlBtn.layer.cornerRadius = 15;
+    [self.dlBtn setTitle:@"缓存到本机" forState:UIControlStateNormal];
+    [self.dlBtn setTitleColor:[ADUtil brand] forState:UIControlStateNormal];
+    self.dlBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+    [self.dlBtn addTarget:self action:@selector(downloadAll) forControlEvents:UIControlEventTouchUpInside];
+    [head addSubview:self.dlBtn];
     [head addSubview:self.cover];
     [head addSubview:self.titleLabel];
     [head addSubview:self.meta];
@@ -51,6 +61,7 @@
 
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"heart"] style:UIBarButtonItemStylePlain target:self action:@selector(toggleFav)];
 
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(fillHeader) name:@"ADDownloadChanged" object:nil];
     [self fillHeader];
     __weak typeof(self) weakSelf = self;
     [[ADApi shared] albumDetail:self.album.albumId done:^(ADAlbum *a, NSString *err) {
@@ -91,15 +102,33 @@
     CGFloat w = self.view.bounds.size.width;
     self.intro.text = self.album.intro.length > 200 ? [[self.album.intro substringToIndex:200] stringByAppendingString:@"…"] : self.album.intro;
     CGSize sz = [self.intro sizeThatFits:CGSizeMake(w - 32, 400)];
-    self.intro.frame = CGRectMake(16, 136, w - 32, sz.height);
+    self.intro.frame = CGRectMake(16, 170, w - 32, sz.height);
     UIView *head = self.table.tableHeaderView;
-    CGFloat h = 136 + sz.height + 12;
+    CGFloat h = 170 + sz.height + 12;
     head.frame = CGRectMake(0, 0, w, h);
     self.table.tableHeaderView = head;
 
+    ADTask *task = [[ADDownloader shared] taskForAlbum:self.album.albumId];
+    if (task) {
+        NSString *t2 = task.state == ADTaskStateDone ? @"已缓存"
+                    : (task.state == ADTaskStatePaused ? [NSString stringWithFormat:@"已暂停 %ld/%ld", (long)task.done, (long)task.tracks.count]
+                    : [NSString stringWithFormat:@"缓存中 %ld/%ld", (long)task.done, (long)task.tracks.count]);
+        [self.dlBtn setTitle:t2 forState:UIControlStateNormal];
+    } else {
+        [self.dlBtn setTitle:@"缓存到本机" forState:UIControlStateNormal];
+    }
     BOOL fav = [[ADStore shared] isFavorite:self.album.albumId];
     [self.navigationItem.rightBarButtonItem setImage:[UIImage systemImageNamed:fav ? @"heart.fill" : @"heart"]];
     self.navigationItem.rightBarButtonItem.tintColor = fav ? [ADUtil brand] : UIColor.whiteColor;
+}
+
+- (void)downloadAll {
+    ADTask *task = [[ADDownloader shared] taskForAlbum:self.album.albumId];
+    if (task && task.state == ADTaskStateRunning) { [[ADDownloader shared] pauseTask:task]; [self fillHeader]; return; }
+    if (task && task.state == ADTaskStatePaused) { [[ADDownloader shared] resumeTask:task]; [self fillHeader]; return; }
+    if (!self.tracks.count) return;
+    [[ADDownloader shared] addAlbum:self.album tracks:self.tracks];
+    [self fillHeader];
 }
 
 - (void)toggleFav {
@@ -156,6 +185,10 @@
     c.textLabel.font = [UIFont systemFontOfSize:15];
     c.textLabel.text = tr.title;
     double pos = [[ADStore shared] positionFor:tr.trackId];
+    if ([[ADDownloader shared] hasLocal:tr.trackId]) {
+        c.detailTextLabel.text = @"已缓存 · 离线可听";
+        c.detailTextLabel.textColor = [ADUtil brand];
+    } else
     c.detailTextLabel.text = pos > 0
         ? [NSString stringWithFormat:@"听到 %@ / %@", [ADUtil time:pos], [ADUtil time:tr.duration]]
         : (tr.duration > 0 ? [ADUtil time:tr.duration] : @"");
@@ -374,15 +407,15 @@
 @property (nonatomic, strong) UITableView *table;
 @property (nonatomic, strong) UITextField *baseField, *tokenField;
 @property (nonatomic, strong) UILabel *status;
-@property (nonatomic, strong) NSArray<NSDictionary *> *downloads;
-@property (nonatomic, copy) void (^onSaved)(BOOL ok);
+@property (nonatomic, strong) NSArray<NSDictionary *> *serverTasks;
+@property (nonatomic, assign) BOOL tokenShown;
 @end
 
 @implementation ADSettingsController
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [ADUtil bg];
+    self.view.backgroundColor = [UIColor colorWithRed:0.075 green:0.075 blue:0.082 alpha:1];
     self.title = @"设置";
     self.navigationController.navigationBar.tintColor = UIColor.whiteColor;
     self.navigationController.navigationBar.barStyle = UIBarStyleBlack;
@@ -394,24 +427,48 @@
     self.table.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
     [self.view addSubview:self.table];
 
-    self.baseField = [self field:[ADConfig shared].baseURL placeholder:@"https://服务器地址:端口"];
-    self.tokenField = [self field:[ADConfig shared].token placeholder:@"粘贴 token"];
+    self.baseField = [self field:[ADConfig shared].baseURL placeholder:@"https://服务器地址:端口" keyboard:UIKeyboardTypeURL];
+    self.tokenField = [self field:[ADConfig shared].token placeholder:@"粘贴 token" keyboard:UIKeyboardTypeASCIICapable];
+    self.tokenField.secureTextEntry = YES;
+    UIButton *eye = [UIButton buttonWithType:UIButtonTypeSystem];
+    eye.frame = CGRectMake(0, 0, 32, 30);
+    eye.tintColor = [UIColor colorWithWhite:1 alpha:0.5];
+    [eye setImage:[UIImage systemImageNamed:@"eye.slash"] forState:UIControlStateNormal];
+    [eye addTarget:self action:@selector(toggleToken) forControlEvents:UIControlEventTouchUpInside];
+    self.tokenField.rightView = eye;
+    self.tokenField.rightViewMode = UITextFieldViewModeAlways;
+
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"保存" style:UIBarButtonItemStyleDone target:self action:@selector(save)];
 
-    self.status = [ADUtil label:nil size:12 color:[ADUtil dim]];
-    [self loadDownloads];
+    self.status = [ADUtil label:nil size:12 color:[UIColor colorWithWhite:1 alpha:0.5]];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:@"ADDownloadChanged" object:nil];
+    [self loadServerTasks];
 }
 
-- (UITextField *)field:(NSString *)text placeholder:(NSString *)ph {
+- (void)refresh { [self.table reloadData]; }
+
+- (void)toggleToken {
+    self.tokenShown = !self.tokenShown;
+    self.tokenField.secureTextEntry = !self.tokenShown;
+    UIButton *eye = (UIButton *)self.tokenField.rightView;
+    [eye setImage:[UIImage systemImageNamed:self.tokenShown ? @"eye" : @"eye.slash"] forState:UIControlStateNormal];
+    NSString *t = self.tokenField.text;
+    self.tokenField.text = @" ";
+    self.tokenField.text = t;
+}
+
+- (UITextField *)field:(NSString *)text placeholder:(NSString *)ph keyboard:(UIKeyboardType)kb {
     UITextField *f = [UITextField new];
     f.text = text;
     f.placeholder = ph;
     f.textColor = UIColor.whiteColor;
-    f.font = [UIFont systemFontOfSize:14];
+    f.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightRegular];
     f.autocapitalizationType = UITextAutocapitalizationTypeNone;
     f.autocorrectionType = UITextAutocorrectionTypeNo;
-    f.keyboardType = UIKeyboardTypeURL;
+    f.spellCheckingType = UITextSpellCheckingTypeNo;
+    f.keyboardType = kb;
     f.clearButtonMode = UITextFieldViewModeWhileEditing;
+    f.textAlignment = NSTextAlignmentRight;
     f.delegate = self;
     return f;
 }
@@ -427,72 +484,158 @@
 
 - (void)test {
     self.status.text = @"正在测试连接…";
+    [self.table reloadData];
     __weak typeof(self) w = self;
     [[ADApi shared] albumDetail:@"XMID59325711" done:^(ADAlbum *a, NSString *err) {
         __strong typeof(w) self = w; if (!self) return;
-        self.status.text = err ? [@"连接失败：" stringByAppendingString:err] : [NSString stringWithFormat:@"连接正常 · %@", a.title];
-        if (self.onSaved) self.onSaved(err == nil);
+        self.status.text = err ? [@"连接失败：" stringByAppendingString:err] : @"连接正常，可以搜索和播放";
+        [self.table reloadData];
     }];
 }
 
-- (void)loadDownloads {
+- (void)loadServerTasks {
     __weak typeof(self) w = self;
     [[ADApi shared] downloads:^(NSArray<NSDictionary *> *items, NSString *err) {
         __strong typeof(w) self = w; if (!self) return;
-        self.downloads = items;
+        self.serverTasks = items;
         [self.table reloadData];
     }];
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)t { return 3; }
 - (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)s {
-    return @[@"服务", @"下载任务", @""][s];
+    if (s == 0) return @"服务";
+    if (s == 1) return @"本机下载";
+    return @"服务端下载任务（只读）";
+}
+- (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
+    if (s == 0) return self.status.text ?: @"粘贴服务端给你的 token，保存后自动测试连接";
+    if (s == 1) {
+        if (![ADDownloader shared].tasks.count)
+            return @"在专辑页点「缓存到本机」，音频会存进手机，离线也能听";
+        return @"左滑删除或暂停，点击行可暂停/继续；本机下载不占用服务器";
+    }
+    return @"开放 API 只提供查询，没有暂停或删除接口";
 }
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s {
     if (s == 0) return 3;
-    if (s == 1) return MAX(1, (NSInteger)self.downloads.count);
-    return 1;
+    if (s == 1) return MAX(1, (NSInteger)[ADDownloader shared].tasks.count) + 1;
+    return MAX(1, (NSInteger)self.serverTasks.count) + 1;
 }
+
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {
     UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
-    c.backgroundColor = [ADUtil card];
+    c.backgroundColor = [UIColor colorWithWhite:0.12 alpha:1];
     c.textLabel.textColor = UIColor.whiteColor;
-    c.detailTextLabel.textColor = [ADUtil dim];
-    c.textLabel.font = [UIFont systemFontOfSize:14];
+    c.detailTextLabel.textColor = [UIColor colorWithWhite:1 alpha:0.5];
+    c.textLabel.font = [UIFont systemFontOfSize:15];
     c.detailTextLabel.font = [UIFont systemFontOfSize:11];
     c.selectionStyle = UITableViewCellSelectionStyleNone;
+
     if (ip.section == 0) {
-        UITextField *f = ip.row == 0 ? self.baseField : self.tokenField;
         if (ip.row < 2) {
-            c.textLabel.text = ip.row == 0 ? @"服务地址" : @"Token";
-            f.frame = CGRectMake(t.bounds.size.width - 230, 8, 214, 30);
-            f.textAlignment = NSTextAlignmentRight;
-            f.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+            UILabel *name = [ADUtil label:nil size:15 color:UIColor.whiteColor];
+            name.text = ip.row == 0 ? @"服务地址" : @"Token";
+            name.frame = CGRectMake(16, 12, 76, 20);
+            [c.contentView addSubview:name];
+            UITextField *f = ip.row == 0 ? self.baseField : self.tokenField;
+            CGFloat x = 96, w = t.bounds.size.width - x - 40;
+            f.frame = CGRectMake(x, 6, w, 32);
+            f.autoresizingMask = UIViewAutoresizingFlexibleWidth;
             [c.contentView addSubview:f];
         } else {
             c.textLabel.text = @"测试连接";
             c.textLabel.textColor = [ADUtil brand];
+            c.selectionStyle = UITableViewCellSelectionStyleDefault;
         }
-    } else if (ip.section == 1) {
-        if (!self.downloads.count) {
-            c.textLabel.text = @"暂无任务";
-            c.textLabel.textColor = [ADUtil dim];
+        return c;
+    }
+
+    if (ip.section == 1) {
+        NSArray<ADTask *> *tasks = [ADDownloader shared].tasks;
+        if (ip.row == 0) {
+            BOOL anyRunning = NO;
+            for (ADTask *x in tasks) if (x.state == ADTaskStateRunning || x.state == ADTaskStateQueued) anyRunning = YES;
+            c.textLabel.text = anyRunning ? @"全部暂停" : @"全部继续";
+            c.textLabel.textColor = [ADUtil brand];
+            c.selectionStyle = UITableViewCellSelectionStyleDefault;
+        } else if (!tasks.count) {
+            c.textLabel.text = @"暂无本机下载";
+            c.textLabel.textColor = [UIColor colorWithWhite:1 alpha:0.45];
         } else {
-            NSDictionary *d = self.downloads[ip.row];
-            c.textLabel.text = d[@"albumTitle"] ?: d[@"albumId"] ?: @"任务";
-            c.detailTextLabel.text = [NSString stringWithFormat:@"%@ · %@/%@", d[@"status"] ?: @"", d[@"done"] ?: @0, d[@"total"] ?: @0];
+            ADTask *task = tasks[ip.row - 1];
+            c.textLabel.text = task.title.length ? task.title : task.albumId;
+            NSString *st = task.state == ADTaskStateRunning ? @"下载中"
+                         : (task.state == ADTaskStatePaused ? @"已暂停"
+                         : (task.state == ADTaskStateDone ? @"已完成"
+                         : (task.state == ADTaskStateFailed ? @"有失败" : @"排队中")));
+            NSString *bytes = task.bytes > 0 ? [NSString stringWithFormat:@" · %.1fMB", task.bytes / 1048576.0] : @"";
+            c.detailTextLabel.text = [NSString stringWithFormat:@"%@ · %ld/%ld%@", st, (long)task.done, (long)task.tracks.count, bytes];
         }
+        return c;
+    }
+
+    if (ip.row < (NSInteger)self.serverTasks.count) {
+        NSDictionary *d = self.serverTasks[ip.row];
+        c.textLabel.text = d[@"albumTitle"] ?: d[@"albumId"] ?: @"任务";
+        NSString *st = d[@"status"] ?: @"";
+        c.detailTextLabel.text = [NSString stringWithFormat:@"%@ · %@/%@", st, d[@"done"] ?: @0, d[@"total"] ?: @0];
+        c.textLabel.textColor = [UIColor colorWithWhite:1 alpha:0.8];
     } else {
-        c.textLabel.text = @"刷新下载任务";
+        c.textLabel.text = @"刷新服务端任务";
         c.textLabel.textColor = [ADUtil brand];
         c.selectionStyle = UITableViewCellSelectionStyleDefault;
     }
     return c;
 }
+
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [t deselectRowAtIndexPath:ip animated:YES];
-    if (ip.section == 0 && ip.row == 2) [self save];
-    if (ip.section == 2) [self loadDownloads];
+    if (ip.section == 0 && ip.row == 2) { [self save]; return; }
+    if (ip.section == 1) {
+        NSArray<ADTask *> *tasks = [ADDownloader shared].tasks;
+        if (ip.row == 0) {
+            BOOL anyRunning = NO;
+            for (ADTask *x in tasks) if (x.state == ADTaskStateRunning || x.state == ADTaskStateQueued) anyRunning = YES;
+            if (anyRunning) [[ADDownloader shared] pauseAll]; else [[ADDownloader shared] resumeAll];
+            [t reloadData];
+            return;
+        }
+        if (tasks.count) {
+            ADTask *task = tasks[ip.row - 1];
+            if (task.state == ADTaskStateRunning || task.state == ADTaskStateQueued) [[ADDownloader shared] pauseTask:task];
+            else [[ADDownloader shared] resumeTask:task];
+            [t reloadData];
+        }
+        return;
+    }
+    if (ip.section == 2 && ip.row >= (NSInteger)self.serverTasks.count) [self loadServerTasks];
 }
+
+- (UISwipeActionsConfiguration *)tableView:(UITableView *)t trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)ip {
+    if (ip.section != 1 || ip.row == 0) return nil;
+    NSArray<ADTask *> *tasks = [ADDownloader shared].tasks;
+    if ((NSInteger)ip.row - 1 >= (NSInteger)tasks.count) return nil;
+    ADTask *task = tasks[ip.row - 1];
+    UIContextualAction *del = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive title:@"删除" handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
+        UIAlertController *q = [UIAlertController alertControllerWithTitle:@"删除下载" message:@"音频文件会一起删掉" preferredStyle:UIAlertControllerStyleAlert];
+        [q addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:^(UIAlertAction *x) { done(NO); }]];
+        [q addAction:[UIAlertAction actionWithTitle:@"删除" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) {
+            [[ADDownloader shared] deleteTask:task];
+            [t reloadData];
+            done(YES);
+        }]];
+        [self presentViewController:q animated:YES completion:nil];
+    }];
+    UIContextualAction *pause = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal title:(task.state == ADTaskStateRunning ? @"暂停" : @"继续") handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
+        if (task.state == ADTaskStateRunning || task.state == ADTaskStateQueued) [[ADDownloader shared] pauseTask:task];
+        else [[ADDownloader shared] resumeTask:task];
+        [t reloadData];
+        done(YES);
+    }];
+    pause.backgroundColor = [ADUtil brand];
+    return [UISwipeActionsConfiguration configurationWithActions:@[del, pause]];
+}
+
 - (BOOL)textFieldShouldReturn:(UITextField *)tf { [tf resignFirstResponder]; [self save]; return YES; }
 @end
