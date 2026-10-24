@@ -120,6 +120,12 @@
         if (self.current.trackId && sec > 0) {
             [[ADStore shared] setPosition:sec for:self.current.trackId];
             [[ADStore shared] setLastTrack:self.current.trackId album:self.album.albumId];
+            double d = self.player.currentItem ? CMTimeGetSeconds(self.player.currentItem.duration) : 0;
+            [[ADStore shared] setLastInfo:@{@"trackId": self.current.trackId ?: @"",
+                                            @"index": @(self.index),
+                                            @"title": self.current.title ?: @"",
+                                            @"seconds": @(sec),
+                                            @"duration": @(isnan(d) ? 0 : d)} album:self.album.albumId];
         }
     }];
 

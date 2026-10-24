@@ -41,6 +41,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (double)positionFor:(NSString *)trackId;
 - (void)setPosition:(double)sec for:(NSString *)trackId;
 - (NSString *)lastTrackOf:(NSString *)albumId;
+- (NSDictionary *)lastInfoOf:(NSString *)albumId;
+- (void)setLastInfo:(NSDictionary *)info album:(NSString *)albumId;
 - (void)setLastTrack:(NSString *)trackId album:(NSString *)albumId;
 - (void)save;
 @end

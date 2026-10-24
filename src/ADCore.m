@@ -107,6 +107,7 @@ static double ADNum(id o, NSString *k) {
     NSMutableArray<ADAlbum *> *_hist;
     NSMutableDictionary<NSString *, NSNumber *> *_pos;
     NSMutableDictionary<NSString *, NSString *> *_last;
+    NSMutableDictionary<NSString *, NSDictionary *> *_info;
 }
 + (instancetype)shared {
     static ADStore *s; static dispatch_once_t once;
@@ -128,12 +129,15 @@ static double ADNum(id o, NSString *k) {
     NSSet *setD = [NSSet setWithObjects:NSMutableDictionary.class, NSDictionary.class, NSString.class, NSNumber.class, nil];
     _pos = (d3 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setD fromData:d3 error:nil] : nil) ?: [NSMutableDictionary dictionary];
     _last = (d4 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setD fromData:d4 error:nil] : nil) ?: [NSMutableDictionary dictionary];
+    NSData *d5 = [NSData dataWithContentsOfFile:[self path:@"info.dat"]];
+    _info = (d5 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setD fromData:d5 error:nil] : nil) ?: [NSMutableDictionary dictionary];
 }
 - (void)save {
     [[NSKeyedArchiver archivedDataWithRootObject:_fav requiringSecureCoding:NO error:nil] writeToFile:[self path:@"fav.dat"] atomically:YES];
     [[NSKeyedArchiver archivedDataWithRootObject:_hist requiringSecureCoding:NO error:nil] writeToFile:[self path:@"hist.dat"] atomically:YES];
     [[NSKeyedArchiver archivedDataWithRootObject:_pos requiringSecureCoding:NO error:nil] writeToFile:[self path:@"pos.dat"] atomically:YES];
     [[NSKeyedArchiver archivedDataWithRootObject:_last requiringSecureCoding:NO error:nil] writeToFile:[self path:@"last.dat"] atomically:YES];
+    [[NSKeyedArchiver archivedDataWithRootObject:_info requiringSecureCoding:NO error:nil] writeToFile:[self path:@"info.dat"] atomically:YES];
 }
 - (NSArray<ADAlbum *> *)favorites { return _fav; }
 - (NSArray<ADAlbum *> *)history { return _hist; }
@@ -158,6 +162,14 @@ static double ADNum(id o, NSString *k) {
 - (double)positionFor:(NSString *)trackId { return trackId ? [_pos[trackId] doubleValue] : 0; }
 - (void)setPosition:(double)sec for:(NSString *)trackId { if (trackId) _pos[trackId] = @(sec); [self save]; }
 - (NSString *)lastTrackOf:(NSString *)albumId { return albumId ? _last[albumId] : nil; }
+- (NSDictionary *)lastInfoOf:(NSString *)albumId {
+    id v = albumId ? _info[albumId] : nil;
+    return [v isKindOfClass:NSDictionary.class] ? v : nil;
+}
+- (void)setLastInfo:(NSDictionary *)info album:(NSString *)albumId {
+    if (albumId && info) _info[albumId] = info;
+    [self save];
+}
 - (void)setLastTrack:(NSString *)trackId album:(NSString *)albumId {
     if (albumId && trackId) _last[albumId] = trackId;
     [self save];

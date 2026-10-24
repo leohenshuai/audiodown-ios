@@ -1,40 +1,170 @@
 #import "AD.h"
-#import <CoreMedia/CoreMedia.h>
 #import <AVFoundation/AVFoundation.h>
+#import <CoreMedia/CoreMedia.h>
 
-// ───────────── 专辑卡片 ─────────────
-@protocol ADAlbumTap <NSObject>
-- (void)openAlbum:(ADAlbum *)a;
+// ───────────── 卡片：继续收听 ─────────────
+@interface ADContinueCard : UIView
+@property (nonatomic, strong) ADAlbum *album;
+@property (nonatomic, strong) NSDictionary *info;
+@property (nonatomic, copy) void (^onPlay)(void);
+@property (nonatomic, copy) void (^onMore)(void);
+- (instancetype)initWithFrame:(CGRect)f album:(ADAlbum *)a info:(NSDictionary *)info;
+- (void)refresh;
 @end
 
-@interface ADAlbumCell : UICollectionViewCell
-@property (nonatomic, strong) UIImageView *cover;
-@property (nonatomic, strong) UILabel *title, *sub;
-- (void)fill:(ADAlbum *)a;
-@end
+@implementation ADContinueCard {
+    UIImageView *_bg, *_cover;
+    UILabel *_ep, *_title, *_chapter, *_meta, *_time;
+    UIButton *_play;
+    UIView *_track, *_fill;
+}
 
-@implementation ADAlbumCell
-- (instancetype)initWithFrame:(CGRect)f {
+- (instancetype)initWithFrame:(CGRect)f album:(ADAlbum *)a info:(NSDictionary *)info {
     if ((self = [super initWithFrame:f])) {
+        _album = a; _info = info;
+        self.backgroundColor = [UIColor colorWithWhite:1 alpha:0.05];
+        self.layer.cornerRadius = 22;
+        self.clipsToBounds = YES;
+
+        _bg = [[UIImageView alloc] initWithFrame:self.bounds];
+        _bg.contentMode = UIViewContentModeScaleAspectFill;
+        _bg.clipsToBounds = YES;
+        _bg.alpha = 0.55;
+        [self addSubview:_bg];
+        UIView *shade = [[UIView alloc] initWithFrame:self.bounds];
+        shade.backgroundColor = [UIColor colorWithRed:0.11 green:0.06 blue:0.04 alpha:0.82];
+        [self addSubview:shade];
+
         CGFloat w = f.size.width;
-        _cover = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, w, w)];
-        _cover.layer.cornerRadius = 10;
+        CGFloat cw = 140;
+        _cover = [[UIImageView alloc] initWithFrame:CGRectMake((w - cw) / 2, 14, cw, cw)];
+        _cover.layer.cornerRadius = 14;
         _cover.clipsToBounds = YES;
-        _title = [ADUtil label:@"PingFangSC-Medium" size:13 color:UIColor.whiteColor];
-        _title.frame = CGRectMake(0, w + 6, w, 18);
-        _title.lineBreakMode = NSLineBreakByTruncatingTail;
-        _sub = [ADUtil label:nil size:11 color:[ADUtil dim]];
-        _sub.frame = CGRectMake(0, w + 24, w, 15);
-        [self.contentView addSubview:_cover];
-        [self.contentView addSubview:_title];
-        [self.contentView addSubview:_sub];
+        [self addSubview:_cover];
+
+        _ep = [ADUtil label:nil size:12 color:[UIColor colorWithWhite:1 alpha:0.6]];
+        _ep.frame = CGRectMake(14, 166, w - 28, 16);
+        _title = [ADUtil label:@"PingFangSC-Semibold" size:17 color:UIColor.whiteColor];
+        _title.frame = CGRectMake(14, 186, w - 28, 44);
+        _title.numberOfLines = 2;
+        _chapter = [ADUtil label:nil size:14 color:[UIColor colorWithWhite:1 alpha:0.72]];
+        _chapter.frame = CGRectMake(14, 232, w - 28, 18);
+        _chapter.lineBreakMode = NSLineBreakByTruncatingTail;
+        _meta = [ADUtil label:nil size:12 color:[UIColor colorWithWhite:1 alpha:0.5]];
+        _meta.frame = CGRectMake(14, 254, w - 28, 16);
+        [self addSubview:_ep]; [self addSubview:_title]; [self addSubview:_chapter]; [self addSubview:_meta];
+
+        UIView *pill = [[UIView alloc] initWithFrame:CGRectMake(14, f.size.height - 50, w - 70, 36)];
+        pill.backgroundColor = [UIColor colorWithWhite:1 alpha:0.12];
+        pill.layer.cornerRadius = 18;
+        [self addSubview:pill];
+
+        _play = [UIButton buttonWithType:UIButtonTypeSystem];
+        _play.frame = CGRectMake(6, 2, 32, 32);
+        _play.tintColor = UIColor.whiteColor;
+        [_play setImage:[UIImage systemImageNamed:@"play.fill" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:15 weight:UIImageSymbolWeightSemibold]] forState:UIControlStateNormal];
+        [_play addTarget:self action:@selector(tapPlay) forControlEvents:UIControlEventTouchUpInside];
+        [pill addSubview:_play];
+
+        _track = [[UIView alloc] initWithFrame:CGRectMake(44, 16, w - 70 - 44 - 62, 4)];
+        _track.backgroundColor = [UIColor colorWithWhite:1 alpha:0.25];
+        _track.layer.cornerRadius = 2;
+        [pill addSubview:_track];
+        _fill = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 0, 4)];
+        _fill.backgroundColor = [UIColor colorWithWhite:1 alpha:0.9];
+        _fill.layer.cornerRadius = 2;
+        [_track addSubview:_fill];
+
+        _time = [ADUtil label:@"PingFangSC-Medium" size:13 color:UIColor.whiteColor];
+        _time.frame = CGRectMake(w - 70 - 58, 9, 52, 18);
+        _time.textAlignment = NSTextAlignmentRight;
+        [pill addSubview:_time];
+
+        UIButton *more = [UIButton buttonWithType:UIButtonTypeSystem];
+        more.frame = CGRectMake(w - 52, f.size.height - 50, 40, 36);
+        [more setTitle:@"···" forState:UIControlStateNormal];
+        [more setTitleColor:[UIColor colorWithWhite:1 alpha:0.6] forState:UIControlStateNormal];
+        more.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
+        [more addTarget:self action:@selector(tapMore) forControlEvents:UIControlEventTouchUpInside];
+        [self addSubview:more];
+
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(tapCard)];
+        [self addGestureRecognizer:tap];
+
+        [self refresh];
     }
     return self;
 }
-- (void)fill:(ADAlbum *)a {
-    [ADUtil cover:_cover url:a.cover];
-    _title.text = a.title;
-    _sub.text = a.anchor.length ? a.anchor : (a.trackCount ? [NSString stringWithFormat:@"%ld 集", (long)a.trackCount] : @"");
+
+- (void)refresh {
+    [ADUtil cover:_cover url:_album.cover];
+    _bg.image = _cover.image;
+    NSInteger idx = [_info[@"index"] integerValue];
+    _ep.text = [NSString stringWithFormat:@"第 %ld 集", (long)idx + 1];
+    _title.text = _album.title;
+    NSString *chapter = _info[@"title"];
+    _chapter.text = chapter.length ? chapter : @"";
+    NSInteger left = MAX(0, _album.trackCount - idx - 1);
+    _meta.text = _album.anchor.length
+        ? [NSString stringWithFormat:@"%@ · 剩余 %ld 集", _album.anchor, (long)left]
+        : [NSString stringWithFormat:@"剩余 %ld 集", (long)left];
+    double sec = [_info[@"seconds"] doubleValue];
+    double dur = [_info[@"duration"] doubleValue];
+    _time.text = [NSString stringWithFormat:@"%@", [ADUtil time:sec]];
+    CGFloat full = _track.bounds.size.width;
+    CGFloat p = (dur > 0) ? (sec / dur) : 0;
+    _fill.frame = CGRectMake(0, 0, MAX(4, full * MIN(1, p)), 4);
+
+    BOOL playing = ADPlayer.shared.isPlaying && ADPlayer.shared.album && [ADPlayer.shared.album.albumId isEqualToString:_album.albumId];
+    [_play setImage:[UIImage systemImageNamed:(playing ? @"pause.fill" : @"play.fill") withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:15 weight:UIImageSymbolWeightSemibold]] forState:UIControlStateNormal];
+}
+
+- (void)tapPlay { if (self.onPlay) self.onPlay(); }
+- (void)tapMore { if (self.onMore) self.onMore(); }
+- (void)tapCard {
+    UIWindow *win = UIApplication.sharedApplication.windows.firstObject;
+    UIViewController *top = win.rootViewController;
+    while (top.presentedViewController) top = top.presentedViewController;
+    [top presentViewController:[ADPlayerController new] animated:YES completion:nil];
+}
+@end
+
+// ───────────── 小卡片 ─────────────
+@interface ADSmallCard : UIView
+- (instancetype)initWithFrame:(CGRect)f album:(ADAlbum *)a;
+@end
+
+@implementation ADSmallCard {
+    UIImageView *_cover;
+    UILabel *_title;
+}
+- (instancetype)initWithFrame:(CGRect)f album:(ADAlbum *)a {
+    if ((self = [super initWithFrame:f])) {
+        _cover = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, f.size.width, f.size.width)];
+        _cover.layer.cornerRadius = 12;
+        _cover.clipsToBounds = YES;
+        [ADUtil cover:_cover url:a.cover];
+        [self addSubview:_cover];
+        _title = [ADUtil label:nil size:12 color:[UIColor colorWithWhite:1 alpha:0.85]];
+        _title.frame = CGRectMake(0, f.size.width + 6, f.size.width, 32);
+        _title.numberOfLines = 2;
+        _title.text = a.title;
+        [self addSubview:_title];
+        UITapGestureRecognizer *t = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(open)];
+        [self addGestureRecognizer:t];
+        self.album = a;
+    }
+    return self;
+}
+- (void)open {
+    UIWindow *win = UIApplication.sharedApplication.windows.firstObject;
+    UINavigationController *nav = nil;
+    UIViewController *vc = win.rootViewController;
+    if ([vc isKindOfClass:UITabBarController.class]) vc = ((UITabBarController *)vc).selectedViewController;
+    if ([vc isKindOfClass:UINavigationController.class]) nav = (UINavigationController *)vc;
+    ADAlbumController *a = [ADAlbumController new];
+    a.album = self.album;
+    [nav pushViewController:a animated:YES];
 }
 @end
 
@@ -47,32 +177,40 @@
 @implementation ADMiniBar {
     UIImageView *_cover;
     UILabel *_title, *_sub;
-    UIButton *_btn;
-    UIProgressView *_bar;
+    UIButton *_btn, *_back;
+    UIView *_track, *_fill;
 }
 + (instancetype)shared {
     static ADMiniBar *m; static dispatch_once_t once;
     dispatch_once(&once, ^{
-        m = [[ADMiniBar alloc] initWithFrame:CGRectMake(0, 0, 320, 62)];
+        m = [[ADMiniBar alloc] initWithFrame:CGRectMake(0, 0, 320, 58)];
         [m build];
     });
     return m;
 }
 - (void)build {
-    self.backgroundColor = [UIColor colorWithWhite:0.15 alpha:0.98];
-    self.layer.cornerRadius = 14;
+    self.backgroundColor = [UIColor colorWithWhite:0.16 alpha:0.96];
+    self.layer.cornerRadius = 16;
     self.clipsToBounds = YES;
-    _cover = [[UIImageView alloc] initWithFrame:CGRectMake(8, 8, 46, 46)];
+    self.layer.borderWidth = 0.5;
+    self.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.12].CGColor;
+    _cover = [[UIImageView alloc] initWithFrame:CGRectMake(8, 8, 42, 42)];
     _cover.layer.cornerRadius = 8; _cover.clipsToBounds = YES;
-    _title = [ADUtil label:@"PingFangSC-Semibold" size:13 color:UIColor.whiteColor];
-    _sub = [ADUtil label:nil size:11 color:[ADUtil dim]];
+    _title = [ADUtil label:@"PingFangSC-Semibold" size:14 color:UIColor.whiteColor];
+    _sub = [ADUtil label:nil size:11 color:[UIColor colorWithWhite:1 alpha:0.55]];
     _btn = [UIButton buttonWithType:UIButtonTypeSystem];
     _btn.tintColor = UIColor.whiteColor;
     [_btn addTarget:self action:@selector(tapPlay) forControlEvents:UIControlEventTouchUpInside];
-    _bar = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleBar];
-    _bar.progressTintColor = [ADUtil brand];
-    _bar.trackTintColor = [UIColor colorWithWhite:1 alpha:0.12];
-    [self addSubview:_cover]; [self addSubview:_title]; [self addSubview:_sub]; [self addSubview:_btn]; [self addSubview:_bar];
+    _back = [UIButton buttonWithType:UIButtonTypeSystem];
+    _back.tintColor = UIColor.whiteColor;
+    [_back setImage:[UIImage systemImageNamed:@"gobackward.15" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
+    [_back addTarget:self action:@selector(tapBack) forControlEvents:UIControlEventTouchUpInside];
+    _track = [UIView new];
+    _track.backgroundColor = [UIColor colorWithWhite:1 alpha:0.15];
+    _fill = [UIView new];
+    _fill.backgroundColor = [UIColor colorWithWhite:1 alpha:0.75];
+    [self addSubview:_cover]; [self addSubview:_title]; [self addSubview:_sub];
+    [self addSubview:_btn]; [self addSubview:_back]; [self addSubview:_track]; [self addSubview:_fill];
     [self addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(tapBar)]];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:@"ADPlayerTick" object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:@"ADPlayerChanged" object:nil];
@@ -80,11 +218,13 @@
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGFloat w = self.bounds.size.width, h = self.bounds.size.height;
-    _cover.frame = CGRectMake(8, (h - 46) / 2, 46, 46);
-    _btn.frame = CGRectMake(w - 50, (h - 40) / 2, 40, 40);
-    _title.frame = CGRectMake(62, 10, w - 120, 19);
-    _sub.frame = CGRectMake(62, 30, w - 120, 15);
-    _bar.frame = CGRectMake(0, h - 2, w, 2);
+    _cover.frame = CGRectMake(8, (h - 42) / 2, 42, 42);
+    _btn.frame = CGRectMake(w - 46, (h - 36) / 2, 36, 36);
+    _back.frame = CGRectMake(w - 82, (h - 36) / 2, 32, 36);
+    _title.frame = CGRectMake(58, 10, w - 148, 18);
+    _sub.frame = CGRectMake(58, 29, w - 148, 15);
+    _track.frame = CGRectMake(0, h - 2, w, 2);
+    _fill.frame = CGRectMake(0, h - 2, 0, 2);
 }
 - (void)refresh {
     ADPlayer *p = ADPlayer.shared;
@@ -94,12 +234,14 @@
     _title.text = t.title;
     double cur = p.player ? CMTimeGetSeconds(p.player.currentTime) : 0;
     double dur = p.player.currentItem ? CMTimeGetSeconds(p.player.currentItem.duration) : 0;
-    _sub.text = [NSString stringWithFormat:@"%@ · %@/%@", p.album.title ?: @"", [ADUtil time:cur], (dur > 0 && !isnan(dur)) ? [ADUtil time:dur] : @"--:--"];
+    _sub.text = p.album.anchor.length ? p.album.anchor : (p.album.title ?: @"");
     [ADUtil cover:_cover url:p.album.cover];
-    [_btn setImage:[UIImage systemImageNamed:(p.isPlaying ? @"pause.fill" : @"play.fill")] forState:UIControlStateNormal];
-    if (dur > 0 && !isnan(dur)) _bar.progress = cur / dur;
+    [_btn setImage:[UIImage systemImageNamed:(p.isPlaying ? @"pause.fill" : @"play.fill") withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:20 weight:UIImageSymbolWeightSemibold]] forState:UIControlStateNormal];
+    CGFloat full = self.bounds.size.width;
+    _fill.frame = CGRectMake(0, self.bounds.size.height - 2, (dur > 0 && !isnan(dur)) ? full * cur / dur : 0, 2);
 }
 - (void)tapPlay { [ADPlayer.shared toggle]; [self refresh]; }
+- (void)tapBack { [ADPlayer.shared seekBy:-15]; }
 - (void)tapBar {
     UIWindow *win = UIApplication.sharedApplication.windows.firstObject;
     UIViewController *top = win.rootViewController;
@@ -108,7 +250,7 @@
 }
 @end
 
-// ───────────── 首页（发现） ─────────────
+// ───────────── 首页 ─────────────
 @interface ADDiscoverController () <UICollectionViewDataSource, UICollectionViewDelegate>
 @property (nonatomic, strong) UIScrollView *scroll;
 @property (nonatomic, strong) NSArray<NSDictionary *> *sections;
@@ -116,55 +258,58 @@
 @property (nonatomic, strong) UILabel *hint;
 @property (nonatomic, strong) UIActivityIndicatorView *spin;
 @property (nonatomic, assign) BOOL needsSetup;
+@property (nonatomic, strong) NSMutableArray<ADContinueCard *> *cards;
 @end
 
 @implementation ADDiscoverController
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [ADUtil bg];
-    self.title = @"发现";
-    self.navigationController.navigationBar.prefersLargeTitles = YES;
-    self.navigationController.navigationBar.barStyle = UIBarStyleBlack;
-    self.navigationController.navigationBar.tintColor = UIColor.whiteColor;
+    self.view.backgroundColor = [UIColor colorWithRed:0.043 green:0.035 blue:0.035 alpha:1];
+    self.navigationController.navigationBar.hidden = YES;
 
     self.scroll = [[UIScrollView alloc] initWithFrame:self.view.bounds];
     self.scroll.alwaysBounceVertical = YES;
+    self.scroll.showsVerticalScrollIndicator = NO;
     self.refresh = [UIRefreshControl new];
+    self.refresh.tintColor = [UIColor colorWithWhite:1 alpha:0.5];
     [self.refresh addTarget:self action:@selector(load) forControlEvents:UIControlEventValueChanged];
     if (@available(iOS 10, *)) self.scroll.refreshControl = self.refresh;
     [self.view addSubview:self.scroll];
 
-    self.hint = [ADUtil label:nil size:14 color:[ADUtil dim]];
+    self.hint = [ADUtil label:nil size:14 color:[UIColor colorWithWhite:1 alpha:0.5]];
     self.hint.textAlignment = NSTextAlignmentCenter;
-    self.hint.text = @"";
     self.spin = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     self.spin.color = UIColor.whiteColor;
     [self.view addSubview:self.hint];
     [self.view addSubview:self.spin];
+    self.cards = [NSMutableArray array];
+
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(reloadCards) name:@"ADContinueChanged" object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refreshCards) name:@"ADPlayerTick" object:nil];
+
     [self load];
     self.needsSetup = ([ADConfig shared].token.length == 0);
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    self.navigationController.navigationBar.hidden = YES;
+    [self build];
 }
 
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     if (self.needsSetup) {
         self.needsSetup = NO;
-        [self.navigationController pushViewController:[ADSettingsController new] animated:YES];
+        UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:[ADSettingsController new]];
+        nav.modalPresentationStyle = UIModalPresentationFormSheet;
+        [self presentViewController:nav animated:YES completion:nil];
     }
 }
 
-- (void)viewWillLayoutSubviews {
-    [super viewWillLayoutSubviews];
-    self.scroll.frame = self.view.bounds;
-    self.hint.frame = CGRectMake(30, self.view.bounds.size.height / 2 - 40, self.view.bounds.size.width - 60, 40);
-    self.spin.center = CGPointMake(self.view.bounds.size.width / 2, self.view.bounds.size.height / 2 - 70);
-    [self layoutSections];
-    ADMiniBar *m = [ADMiniBar shared];
-    m.frame = CGRectMake(8, self.view.bounds.size.height - 62 - 8 - self.view.safeAreaInsets.bottom, self.view.bounds.size.width - 16, 62);
-    if (!m.superview) [self.view addSubview:m];
-    [m refresh];
-}
+- (void)reloadCards { [self build]; }
+- (void)refreshCards { for (ADContinueCard *c in self.cards) [c refresh]; }
 
 - (void)load {
     if (!self.sections.count) [self.spin startAnimating];
@@ -174,71 +319,178 @@
         [self.spin stopAnimating];
         [self.refresh endRefreshing];
         if (err) { self.hint.text = err; return; }
-        self.hint.text = sections.count ? @"" : @"没有内容";
         self.sections = sections;
-        [self buildSections];
-        [self layoutSections];
+        self.hint.text = sections.count ? @"" : @"没有内容";
+        [self build];
     }];
 }
 
-- (void)buildSections {
+- (void)build {
     for (UIView *v in self.scroll.subviews) [v removeFromSuperview];
-    CGFloat w = self.view.bounds.size.width;
+    [self.cards removeAllObjects];
+    CGFloat W = self.view.bounds.size.width;
     CGFloat y = 8;
-    for (NSInteger i = 0; i < (NSInteger)self.sections.count; i++) {
-        NSDictionary *sec = self.sections[i];
-        NSArray *items = sec[@"items"];
-        if (![items isKindOfClass:NSArray.class] || !items.count) continue;
-        UILabel *title = [ADUtil label:@"PingFangSC-Semibold" size:17 color:UIColor.whiteColor];
-        title.frame = CGRectMake(16, y, w - 100, 22);
-        title.text = sec[@"title"] ?: @"推荐";
-        [self.scroll addSubview:title];
-        y += 30;
 
-        CGFloat cw = floor((w - 16 * 2 - 12 * 2) / 2.6);
-        UICollectionViewFlowLayout *lo = [UICollectionViewFlowLayout new];
-        lo.scrollDirection = UICollectionViewScrollDirectionHorizontal;
-        lo.itemSize = CGSizeMake(cw, cw + 40);
-        lo.minimumLineSpacing = 12;
-        lo.sectionInset = UIEdgeInsetsMake(0, 16, 0, 16);
-        UICollectionView *cv = [[UICollectionView alloc] initWithFrame:CGRectMake(0, y, w, cw + 40) collectionViewLayout:lo];
-        cv.backgroundColor = UIColor.clearColor;
-        cv.showsHorizontalScrollIndicator = NO;
-        cv.tag = 1000 + i;
-        cv.dataSource = self;
-        cv.delegate = self;
-        [cv registerClass:ADAlbumCell.class forCellWithReuseIdentifier:@"a"];
-        [self.scroll addSubview:cv];
-        y += cw + 40 + 14;
+    // 顶部标题
+    UILabel *logo = [ADUtil label:@"PingFangSC-Semibold" size:34 color:UIColor.whiteColor];
+    logo.frame = CGRectMake(16, y + 6, 130, 40);
+    logo.text = @"听见";
+    [self.scroll addSubview:logo];
+    UILabel *sub = [ADUtil label:nil size:16 color:[UIColor colorWithWhite:1 alpha:0.4]];
+    sub.frame = CGRectMake(104, y + 18, 120, 20);
+    sub.text = @"AudioDown";
+    [self.scroll addSubview:sub];
+
+    NSArray *icons = @[@"clock.arrow.circlepath", @"square.stack.fill"];
+    for (NSInteger i = 0; i < 2; i++) {
+        UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+        b.frame = CGRectMake(W - 16 - 44 - i * 56, y + 4, 44, 44);
+        b.backgroundColor = [UIColor colorWithWhite:1 alpha:0.14];
+        b.layer.cornerRadius = 22;
+        b.tintColor = (i == 1) ? [ADUtil brand] : UIColor.whiteColor;
+        [b setImage:[UIImage systemImageNamed:icons[i] withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
+        [self.scroll addSubview:b];
     }
-    self.scroll.contentSize = CGSizeMake(w, y + 120);
-}
+    y += 62;
 
-- (void)layoutSections { /* 尺寸变化时重建 */ 
-    static CGFloat lastW = 0;
-    if (fabs(lastW - self.view.bounds.size.width) > 1 && self.sections.count) {
-        lastW = self.view.bounds.size.width;
-        [self buildSections];
+    // 继续收听
+    NSArray<ADAlbum *> *hist = [ADStore shared].history;
+    NSMutableArray *items = [NSMutableArray array];
+    for (ADAlbum *a in hist) {
+        NSDictionary *info = [[ADStore shared] lastInfoOf:a.albumId];
+        if (info) [items addObject:@[a, info]];
+        if (items.count >= 8) break;
     }
+    if (items.count) {
+        UILabel *t = [ADUtil label:@"PingFangSC-Semibold" size:24 color:UIColor.whiteColor];
+        t.frame = CGRectMake(16, y, W - 32, 32);
+        t.text = @"继续收听";
+        [self.scroll addSubview:t];
+        y += 40;
+
+        CGFloat cardW = W * 0.61, cardH = 323;
+        UIScrollView *hs = [[UIScrollView alloc] initWithFrame:CGRectMake(0, y, W, cardH)];
+        hs.showsHorizontalScrollIndicator = NO;
+        hs.contentSize = CGSizeMake(16 + items.count * (cardW + 14), cardH);
+        for (NSInteger i = 0; i < (NSInteger)items.count; i++) {
+            ADAlbum *a = items[i][0];
+            NSDictionary *info = items[i][1];
+            ADContinueCard *c = [[ADContinueCard alloc] initWithFrame:CGRectMake(16 + i * (cardW + 14), 0, cardW, cardH) album:a info:info];
+            __weak typeof(self) w = self;
+            c.onPlay = ^{ [w playCard:a]; };
+            c.onMore = ^{ [w moreCard:a]; };
+            [hs addSubview:c];
+            [self.cards addObject:c];
+        }
+        [self.scroll addSubview:hs];
+        y += cardH + 22;
+    }
+
+    // 推荐内容面板
+    UIView *panel = [[UIView alloc] initWithFrame:CGRectMake(0, y, W, 0)];
+    panel.backgroundColor = [UIColor colorWithRed:0.106 green:0.106 blue:0.118 alpha:1];
+    panel.layer.cornerRadius = 20;
+    panel.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner;
+    [self.scroll addSubview:panel];
+    CGFloat py = 24;
+    UILabel *rt = [ADUtil label:@"PingFangSC-Semibold" size:24 color:UIColor.whiteColor];
+    rt.frame = CGRectMake(16, py, W - 32, 32);
+    rt.text = @"推荐内容";
+    [panel addSubview:rt];
+    py += 44;
+
+    // 推荐：两行横向
+    NSMutableArray<ADAlbum *> *rec = [NSMutableArray array];
+    for (NSDictionary *sec in self.sections) {
+        NSArray *its = sec[@"items"];
+        if (![its isKindOfClass:NSArray.class]) continue;
+        for (id o in its) { ADAlbum *a = [ADAlbum fromJSON:o]; if (a) [rec addObject:a]; if (rec.count >= 24) break; }
+        if (rec.count >= 24) break;
+    }
+    if (rec.count) {
+        CGFloat cw = 118, gap = 12;
+        NSInteger perRow = 2;
+        NSUInteger rows = (rec.count + 2) / 3;   // 每列 2 个，横向滚动
+        NSInteger cols = (NSInteger)(rec.count + perRow - 1) / perRow;
+        CGFloat hsH = perRow * (cw + 34) + 4;
+        UIScrollView *hs = [[UIScrollView alloc] initWithFrame:CGRectMake(0, py, W, hsH)];
+        hs.showsHorizontalScrollIndicator = NO;
+        hs.contentSize = CGSizeMake(16 + cols * (cw + gap), hsH);
+        for (NSInteger i = 0; i < (NSInteger)rec.count; i++) {
+            NSInteger col = i / perRow, row = i % perRow;
+            ADSmallCard *c = [[ADSmallCard alloc] initWithFrame:CGRectMake(16 + col * (cw + gap), row * (cw + 34), cw, cw + 34) album:rec[i]];
+            [hs addSubview:c];
+        }
+        [panel addSubview:hs];
+        py += hsH + 16;
+        (void)rows;
+    }
+
+    // 接口板块
+    for (NSDictionary *sec in self.sections) {
+        NSArray *its = sec[@"items"];
+        if (![its isKindOfClass:NSArray.class] || !its.count) continue;
+        UILabel *t = [ADUtil label:@"PingFangSC-Semibold" size:19 color:UIColor.whiteColor];
+        t.frame = CGRectMake(16, py, W - 32, 26);
+        t.text = sec[@"title"] ?: @"推荐";
+        [panel addSubview:t];
+        py += 34;
+
+        CGFloat cw = 104, gap = 10;
+        UIScrollView *hs = [[UIScrollView alloc] initWithFrame:CGRectMake(0, py, W, cw + 34)];
+        hs.showsHorizontalScrollIndicator = NO;
+        hs.contentSize = CGSizeMake(16 + its.count * (cw + gap), cw + 34);
+        for (NSInteger i = 0; i < (NSInteger)its.count; i++) {
+            ADAlbum *a = [ADAlbum fromJSON:its[i]];
+            if (!a) continue;
+            ADSmallCard *c = [[ADSmallCard alloc] initWithFrame:CGRectMake(16 + i * (cw + gap), 0, cw, cw + 34) album:a];
+            [hs addSubview:c];
+        }
+        [panel addSubview:hs];
+        py += cw + 34 + 20;
+    }
+
+    py += 110;
+    CGRect pf = panel.frame;
+    pf.size.height = py;
+    panel.frame = pf;
+    self.scroll.contentSize = CGSizeMake(W, y + py);
+
+    self.hint.frame = CGRectMake(30, self.view.bounds.size.height / 2 - 40, W - 60, 40);
+    self.spin.center = CGPointMake(W / 2, self.view.bounds.size.height / 2 - 70);
+
+    ADMiniBar *m = [ADMiniBar shared];
+    CGFloat bottom = self.view.safeAreaInsets.bottom + 6;
+    m.frame = CGRectMake(8, self.view.bounds.size.height - bottom - 58, W - 16, 58);
+    if (!m.superview) [self.view addSubview:m];
+    [m refresh];
 }
 
-- (NSInteger)collectionView:(UICollectionView *)cv numberOfItemsInSection:(NSInteger)s {
-    NSArray *items = self.sections[cv.tag - 1000][@"items"];
-    return items.count;
+- (void)playCard:(ADAlbum *)a {
+    ADPlayer *p = ADPlayer.shared;
+    if (p.album && [p.album.albumId isEqualToString:a.albumId]) { [p toggle]; [self refreshCards]; return; }
+    NSDictionary *info = [[ADStore shared] lastInfoOf:a.albumId];
+    NSInteger idx = [info[@"index"] integerValue];
+    [[ADApi shared] tracksOf:a.albumId page:1 done:^(NSArray<ADTrack *> *list, NSInteger total, NSString *err) {
+        if (!list.count) return;
+        [ADPlayer.shared playAlbum:a tracks:list at:idx];
+        [self refreshCards];
+    }];
 }
-- (UICollectionViewCell *)collectionView:(UICollectionView *)cv cellForItemAtIndexPath:(NSIndexPath *)ip {
-    ADAlbumCell *c = [cv dequeueReusableCellWithReuseIdentifier:@"a" forIndexPath:ip];
-    NSArray *items = self.sections[cv.tag - 1000][@"items"];
-    [c fill:[ADAlbum fromJSON:items[ip.item]]];
-    return c;
-}
-- (void)collectionView:(UICollectionView *)cv didSelectItemAtIndexPath:(NSIndexPath *)ip {
-    NSArray *items = self.sections[cv.tag - 1000][@"items"];
-    ADAlbum *a = [ADAlbum fromJSON:items[ip.item]];
-    if (!a) return;
-    ADAlbumController *vc = [ADAlbumController new];
-    vc.album = a;
-    [self.navigationController pushViewController:vc animated:YES];
+
+- (void)moreCard:(ADAlbum *)a {
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:a.title message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"从头播放" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+        [[ADApi shared] tracksOf:a.albumId page:1 done:^(NSArray<ADTrack *> *list, NSInteger total, NSString *err) {
+            if (list.count) [ADPlayer.shared playAlbum:a tracks:list at:0];
+        }];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:[[ADStore shared] isFavorite:a.albumId] ? @"取消收藏" : @"加入书架" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+        [[ADStore shared] toggleFavorite:a];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    sheet.popoverPresentationController.sourceView = self.view;
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 @end
 
@@ -256,59 +508,48 @@
 @implementation ADSearchController
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [ADUtil bg];
-    self.title = @"搜索";
-    self.navigationController.navigationBar.prefersLargeTitles = YES;
-    self.navigationController.navigationBar.barStyle = UIBarStyleBlack;
-    self.navigationController.navigationBar.tintColor = UIColor.whiteColor;
-
-    self.bar = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 52)];
+    self.view.backgroundColor = [UIColor colorWithRed:0.043 green:0.035 blue:0.035 alpha:1];
+    self.navigationController.navigationBar.hidden = YES;
+    self.bar = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 56, self.view.bounds.size.width, 52)];
     self.bar.placeholder = @"书名 / 作者 / 主播";
     self.bar.searchBarStyle = UISearchBarStyleMinimal;
     self.bar.delegate = self;
     self.bar.tintColor = [ADUtil brand];
     [self.view addSubview:self.bar];
-
     CGFloat w = (self.view.bounds.size.width - 16 * 2 - 12 * 2) / 3;
     UICollectionViewFlowLayout *lo = [UICollectionViewFlowLayout new];
     lo.itemSize = CGSizeMake(w, w + 40);
     lo.minimumInteritemSpacing = 12;
     lo.minimumLineSpacing = 16;
-    self.cv = [[UICollectionView alloc] initWithFrame:CGRectMake(0, 52, self.view.bounds.size.width, self.view.bounds.size.height - 52) collectionViewLayout:lo];
+    self.cv = [[UICollectionView alloc] initWithFrame:CGRectMake(0, 108, self.view.bounds.size.width, self.view.bounds.size.height - 108) collectionViewLayout:lo];
     self.cv.backgroundColor = UIColor.clearColor;
-    self.cv.contentInset = UIEdgeInsetsMake(8, 16, 100, 16);
+    self.cv.contentInset = UIEdgeInsetsMake(8, 16, 120, 16);
     self.cv.dataSource = self; self.cv.delegate = self;
-    [self.cv registerClass:ADAlbumCell.class forCellWithReuseIdentifier:@"a"];
+    [self.cv registerClass:UICollectionViewCell.class forCellWithReuseIdentifier:@"c"];
     [self.view addSubview:self.cv];
-
-    self.hint = [ADUtil label:nil size:14 color:[ADUtil dim]];
+    self.hint = [ADUtil label:nil size:14 color:[UIColor colorWithWhite:1 alpha:0.5]];
     self.hint.textAlignment = NSTextAlignmentCenter;
     [self.view addSubview:self.hint];
     self.list = [NSMutableArray array];
 }
-
+- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; self.navigationController.navigationBar.hidden = YES; }
 - (void)viewWillLayoutSubviews {
     [super viewWillLayoutSubviews];
     self.hint.frame = CGRectMake(30, self.view.bounds.size.height / 2, self.view.bounds.size.width - 60, 40);
     ADMiniBar *m = [ADMiniBar shared];
-    m.frame = CGRectMake(8, self.view.bounds.size.height - 62 - 8 - self.view.safeAreaInsets.bottom, self.view.bounds.size.width - 16, 62);
+    m.frame = CGRectMake(8, self.view.bounds.size.height - self.view.safeAreaInsets.bottom - 64, self.view.bounds.size.width - 16, 58);
     if (!m.superview) [self.view addSubview:m];
     [m refresh];
 }
-
 - (void)searchBarSearchButtonClicked:(UISearchBar *)b {
     [b resignFirstResponder];
     NSString *q = [b.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
     if (!q.length) return;
-    self.keyword = q;
-    self.page = 1;
-    self.more = YES;
-    [self.list removeAllObjects];
-    [self.cv reloadData];
+    self.keyword = q; self.page = 1; self.more = YES;
+    [self.list removeAllObjects]; [self.cv reloadData];
     self.hint.text = @"搜索中…";
     [self loadPage];
 }
-
 - (void)loadPage {
     if (self.loading || !self.more) return;
     self.loading = YES;
@@ -324,16 +565,24 @@
         [self.cv reloadData];
     }];
 }
-
 - (void)scrollViewDidScroll:(UIScrollView *)s {
     if (s.contentOffset.y + s.bounds.size.height > s.contentSize.height - 300) [self loadPage];
 }
-
 - (NSInteger)collectionView:(UICollectionView *)cv numberOfItemsInSection:(NSInteger)s { return self.list.count; }
 - (UICollectionViewCell *)collectionView:(UICollectionView *)cv cellForItemAtIndexPath:(NSIndexPath *)ip {
-    ADAlbumCell *c = [cv dequeueReusableCellWithReuseIdentifier:@"a" forIndexPath:ip];
-    [c fill:self.list[ip.item]];
-    return c;
+    UICollectionViewCell *cell = [cv dequeueReusableCellWithReuseIdentifier:@"c" forIndexPath:ip];
+    [cell.contentView.subviews makeObjectsPerformSelector:@selector(removeFromSuperview)];
+    ADAlbum *a = self.list[ip.item];
+    CGFloat w = cell.contentView.bounds.size.width;
+    UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, w, w)];
+    iv.layer.cornerRadius = 12; iv.clipsToBounds = YES;
+    [ADUtil cover:iv url:a.cover];
+    UILabel *t = [ADUtil label:nil size:12 color:[UIColor colorWithWhite:1 alpha:0.85]];
+    t.frame = CGRectMake(0, w + 6, w, 32);
+    t.numberOfLines = 2;
+    t.text = a.title;
+    [cell.contentView addSubview:iv]; [cell.contentView addSubview:t];
+    return cell;
 }
 - (void)collectionView:(UICollectionView *)cv didSelectItemAtIndexPath:(NSIndexPath *)ip {
     ADAlbumController *vc = [ADAlbumController new];
@@ -352,36 +601,43 @@
 @implementation ADShelfController
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [ADUtil bg];
-    self.title = @"书架";
-    self.navigationController.navigationBar.prefersLargeTitles = YES;
-    self.navigationController.navigationBar.barStyle = UIBarStyleBlack;
-    self.navigationController.navigationBar.tintColor = UIColor.whiteColor;
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"gearshape"] style:UIBarButtonItemStylePlain target:self action:@selector(goSettings)];
+    self.view.backgroundColor = [UIColor colorWithRed:0.043 green:0.035 blue:0.035 alpha:1];
+    self.navigationController.navigationBar.hidden = YES;
+    UILabel *t = [ADUtil label:@"PingFangSC-Semibold" size:34 color:UIColor.whiteColor];
+    t.frame = CGRectMake(16, 56, 200, 40);
+    t.text = @"书架";
+    t.tag = 99;
+    [self.view addSubview:t];
+    UIButton *gear = [UIButton buttonWithType:UIButtonTypeSystem];
+    gear.frame = CGRectMake(self.view.bounds.size.width - 60, 60, 44, 44);
+    gear.backgroundColor = [UIColor colorWithWhite:1 alpha:0.14];
+    gear.layer.cornerRadius = 22;
+    gear.tintColor = UIColor.whiteColor;
+    [gear setImage:[UIImage systemImageNamed:@"gearshape" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
+    [gear addTarget:self action:@selector(goSettings) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:gear];
 
     CGFloat w = (self.view.bounds.size.width - 16 * 2 - 12 * 2) / 3;
     UICollectionViewFlowLayout *lo = [UICollectionViewFlowLayout new];
     lo.itemSize = CGSizeMake(w, w + 40);
     lo.minimumInteritemSpacing = 12; lo.minimumLineSpacing = 16;
-    lo.headerReferenceSize = CGSizeMake(self.view.bounds.size.width, 44);
-    self.cv = [[UICollectionView alloc] initWithFrame:self.view.bounds collectionViewLayout:lo];
+    self.cv = [[UICollectionView alloc] initWithFrame:CGRectMake(0, 108, self.view.bounds.size.width, self.view.bounds.size.height - 108) collectionViewLayout:lo];
     self.cv.backgroundColor = UIColor.clearColor;
-    self.cv.contentInset = UIEdgeInsetsMake(0, 16, 100, 16);
+    self.cv.contentInset = UIEdgeInsetsMake(8, 16, 120, 16);
     self.cv.dataSource = self; self.cv.delegate = self;
-    [self.cv registerClass:ADAlbumCell.class forCellWithReuseIdentifier:@"a"];
-    [self.cv registerClass:UICollectionReusableView.class forSupplementaryViewOfKind:UICollectionElementKindSectionHeader withReuseIdentifier:@"h"];
+    [self.cv registerClass:UICollectionViewCell.class forCellWithReuseIdentifier:@"c"];
     [self.view addSubview:self.cv];
-
-    self.hint = [ADUtil label:nil size:14 color:[ADUtil dim]];
+    self.hint = [ADUtil label:nil size:14 color:[UIColor colorWithWhite:1 alpha:0.5]];
     self.hint.textAlignment = NSTextAlignmentCenter;
     self.hint.text = @"还没有收藏和收听记录\n在专辑页点右上角收藏";
     [self.view addSubview:self.hint];
 }
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
+    self.navigationController.navigationBar.hidden = YES;
     NSMutableArray *arr = [NSMutableArray array];
-    [arr addObjectsFromArray:[ADStore shared].history];
-    for (ADAlbum *a in [ADStore shared].favorites) {
+    for (ADAlbum *a in [ADStore shared].favorites) [arr addObject:a];
+    for (ADAlbum *a in [ADStore shared].history) {
         BOOL dup = NO;
         for (ADAlbum *b in arr) if ([b.albumId isEqualToString:a.albumId]) { dup = YES; break; }
         if (!dup) [arr addObject:a];
@@ -392,30 +648,29 @@
 }
 - (void)viewWillLayoutSubviews {
     [super viewWillLayoutSubviews];
-    self.cv.frame = self.view.bounds;
-    self.hint.frame = CGRectMake(30, self.view.bounds.size.height / 2 - 60, self.view.bounds.size.width - 60, 60);
+    self.cv.frame = CGRectMake(0, 108, self.view.bounds.size.width, self.view.bounds.size.height - 108);
+    self.hint.frame = CGRectMake(30, self.view.bounds.size.height / 2 - 40, self.view.bounds.size.width - 60, 60);
     ADMiniBar *m = [ADMiniBar shared];
-    m.frame = CGRectMake(8, self.view.bounds.size.height - 62 - 8 - self.view.safeAreaInsets.bottom, self.view.bounds.size.width - 16, 62);
+    m.frame = CGRectMake(8, self.view.bounds.size.height - self.view.safeAreaInsets.bottom - 64, self.view.bounds.size.width - 16, 58);
     if (!m.superview) [self.view addSubview:m];
     [m refresh];
 }
-- (void)goSettings {
-    [self.navigationController pushViewController:[ADSettingsController new] animated:YES];
-}
+- (void)goSettings { [self.navigationController pushViewController:[ADSettingsController new] animated:YES]; }
 - (NSInteger)collectionView:(UICollectionView *)cv numberOfItemsInSection:(NSInteger)s { return self.items.count; }
 - (UICollectionViewCell *)collectionView:(UICollectionView *)cv cellForItemAtIndexPath:(NSIndexPath *)ip {
-    ADAlbumCell *c = [cv dequeueReusableCellWithReuseIdentifier:@"a" forIndexPath:ip];
-    [c fill:self.items[ip.item]];
-    return c;
-}
-- (UICollectionReusableView *)collectionView:(UICollectionView *)cv viewForSupplementaryElementOfKind:(NSString *)kind atIndexPath:(NSIndexPath *)ip {
-    UICollectionReusableView *h = [cv dequeueReusableSupplementaryViewOfKind:kind withReuseIdentifier:@"h" forIndexPath:ip];
-    [h.subviews makeObjectsPerformSelector:@selector(removeFromSuperview)];
-    UILabel *l = [ADUtil label:@"PingFangSC-Semibold" size:15 color:[ADUtil dim]];
-    l.frame = CGRectMake(0, 18, 200, 20);
-    l.text = @"继续收听";
-    [h addSubview:l];
-    return h;
+    UICollectionViewCell *cell = [cv dequeueReusableCellWithReuseIdentifier:@"c" forIndexPath:ip];
+    [cell.contentView.subviews makeObjectsPerformSelector:@selector(removeFromSuperview)];
+    ADAlbum *a = self.items[ip.item];
+    CGFloat w = cell.contentView.bounds.size.width;
+    UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, w, w)];
+    iv.layer.cornerRadius = 12; iv.clipsToBounds = YES;
+    [ADUtil cover:iv url:a.cover];
+    UILabel *t = [ADUtil label:nil size:12 color:[UIColor colorWithWhite:1 alpha:0.85]];
+    t.frame = CGRectMake(0, w + 6, w, 32);
+    t.numberOfLines = 2;
+    t.text = a.title;
+    [cell.contentView addSubview:iv]; [cell.contentView addSubview:t];
+    return cell;
 }
 - (void)collectionView:(UICollectionView *)cv didSelectItemAtIndexPath:(NSIndexPath *)ip {
     ADAlbumController *vc = [ADAlbumController new];
