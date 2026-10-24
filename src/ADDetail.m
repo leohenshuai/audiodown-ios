@@ -368,14 +368,14 @@
     CGFloat safeBottom = self.view.safeAreaInsets.bottom;
 
     // 各块固定高度：标题 70 / 进度 28 / 时间 30 / 控制 80 / 底部 40
-    CGFloat top = safeTop + 12;
-    CGFloat bottomPad = safeBottom + 22;
+    CGFloat top = safeTop + 8;
+    CGFloat bottomPad = safeBottom + 14;
     CGFloat blockH = 70 + 28 + 30 + 80 + 40;
-    CGFloat coverMax = MIN(W - 96, H * 0.36);
+    CGFloat coverMax = MIN(W - 48, H * 0.46);
     CGFloat leftover = H - top - bottomPad - blockH - coverMax;
     CGFloat coverH = coverMax;
     if (leftover < 0) { coverH = MAX(140, coverMax + leftover); leftover = 0; }
-    CGFloat gap = leftover / 5.0;
+    CGFloat gap = MAX(10, leftover / 5.0);
 
     CGFloat y = top;
     self.cover.frame = CGRectMake((W - coverH) / 2, y, coverH, coverH);
