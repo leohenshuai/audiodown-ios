@@ -51,10 +51,10 @@ NS_ASSUME_NONNULL_BEGIN
 typedef void (^ADErr)(NSString * _Nullable err);
 @interface ADApi : NSObject
 + (instancetype)shared;
-- (void)discover:(void (^)(NSArray<NSDictionary *> *sections, NSString * _Nullable err))cb;
-- (void)search:(NSString *)q page:(NSInteger)page done:(void (^)(NSArray<ADAlbum *> *list, BOOL more, NSString * _Nullable err))cb;
-- (void)albumDetail:(NSString *)albumId done:(void (^)(ADAlbum * _Nullable a, NSString * _Nullable err))cb;
-- (void)tracksOf:(NSString *)albumId page:(NSInteger)page done:(void (^)(NSArray<ADTrack *> *list, NSInteger total, NSString * _Nullable err))cb;
+- (void)discover:(void (^)(NSArray<NSDictionary *> *sections, BOOL cached, NSString * _Nullable err))cb;
+- (void)search:(NSString *)q page:(NSInteger)page done:(void (^)(NSArray<ADAlbum *> *list, BOOL more, BOOL cached, NSString * _Nullable err))cb;
+- (void)albumDetail:(NSString *)albumId done:(void (^)(ADAlbum * _Nullable a, BOOL cached, NSString * _Nullable err))cb;
+- (void)tracksOf:(NSString *)albumId page:(NSInteger)page done:(void (^)(NSArray<ADTrack *> *list, NSInteger total, BOOL cached, NSString * _Nullable err))cb;
 - (void)playURLOf:(ADTrack *)t done:(void (^)(NSString * _Nullable url, NSDictionary * _Nullable headers, NSString * _Nullable err))cb;
 - (void)downloads:(void (^)(NSArray<NSDictionary *> *items, NSString * _Nullable err))cb;
 @end

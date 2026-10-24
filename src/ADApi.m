@@ -1,4 +1,35 @@
 #import "AD.h"
+#import <CommonCrypto/CommonDigest.h>
+
+// ───────────── 磁盘缓存 ─────────────
+static NSString *ADCacheDir(void) {
+    NSString *d = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+    d = [d stringByAppendingPathComponent:@"cache"];
+    if (![NSFileManager.defaultManager fileExistsAtPath:d])
+        [NSFileManager.defaultManager createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:nil];
+    return d;
+}
+static NSString *ADCachePath(NSString *key) {
+    NSData *in = [key dataUsingEncoding:NSUTF8StringEncoding];
+    unsigned char out[CC_SHA1_DIGEST_LENGTH];
+    CC_SHA1(in.bytes, (CC_LONG)in.length, out);
+    NSMutableString *hex = [NSMutableString string];
+    for (int i = 0; i < CC_SHA1_DIGEST_LENGTH; i++) [hex appendFormat:@"%02x", out[i]];
+    return [ADCacheDir() stringByAppendingPathComponent:hex];
+}
+static id ADCacheGet(NSString *key, NSTimeInterval *age) {
+    if (!key.length) return nil;
+    NSData *d = [NSData dataWithContentsOfFile:ADCachePath(key)];
+    if (!d.length) return nil;
+    NSDictionary *attr = [NSFileManager.defaultManager attributesOfItemAtPath:ADCachePath(key) error:nil];
+    if (age) *age = -[attr[NSFileModificationDate] timeIntervalSinceNow];
+    return [NSJSONSerialization JSONObjectWithData:d options:NSJSONReadingAllowFragments error:nil];
+}
+static void ADCacheSet(NSString *key, id json) {
+    if (!key.length || !json) return;
+    NSData *d = [NSJSONSerialization isValidJSONObject:json] ? [NSJSONSerialization dataWithJSONObject:json options:0 error:nil] : nil;
+    if (d) [d writeToFile:ADCachePath(key) atomically:YES];
+}
 
 @interface ADApi ()
 @property (nonatomic, strong) NSURLSession *session;
@@ -11,8 +42,9 @@
     dispatch_once(&once, ^{
         a = [ADApi new];
         NSURLSessionConfiguration *c = [NSURLSessionConfiguration defaultSessionConfiguration];
-        c.timeoutIntervalForRequest = 20;
-        c.timeoutIntervalForResource = 40;
+        c.timeoutIntervalForRequest = 12;
+        c.timeoutIntervalForResource = 20;
+        c.waitsForConnectivity = NO;
         a.session = [NSURLSession sessionWithConfiguration:c];
     });
     return a;
@@ -40,8 +72,9 @@
         NSInteger code = [(NSHTTPURLResponse *)resp statusCode];
         id json = data.length ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingAllowFragments error:nil] : nil;
         NSString *message = nil;
-        if (err) message = err.localizedDescription;
-        else if (code >= 400) {
+        if (err) {
+            message = (err.code == NSURLErrorTimedOut) ? @"请求超时，检查网络后重试" : err.localizedDescription;
+        } else if (code >= 400) {
             if ([json isKindOfClass:NSDictionary.class] && [json[@"error"] isKindOfClass:NSString.class]) message = json[@"error"];
             else message = [NSString stringWithFormat:@"HTTP %ld", (long)code];
         }
@@ -49,54 +82,65 @@
     }] resume];
 }
 
-// 发现页：sections[{title, items:[album…]}]
-- (void)discover:(void (^)(NSArray<NSDictionary *> *, NSString *))cb {
-    [self JSON:@"/open-api/v1/discover" method:@"GET" body:nil done:^(id json, NSString *err) {
-        if (err) { cb(@[], err); return; }
-        NSArray *secs = [json isKindOfClass:NSDictionary.class] ? json[@"sections"] : nil;
-        cb([secs isKindOfClass:NSArray.class] ? secs : @[], nil);
+// 带缓存的 GET：先给缓存，再给网络结果
+- (void)cachedGET:(NSString *)path key:(NSString *)key done:(void (^)(id json, BOOL cached, NSString *err))cb {
+    NSTimeInterval age = 0;
+    id cached = ADCacheGet(key, &age);
+    if (cached) cb(cached, YES, nil);
+    [self JSON:path method:@"GET" body:nil done:^(id json, NSString *err) {
+        if (!err && json) { ADCacheSet(key, json); cb(json, NO, nil); return; }
+        if (!cached) cb(nil, NO, err);
+        else cb(cached, YES, err);   // 有缓存时把错误一并带回去，界面可提示离线
     }];
 }
 
-- (void)search:(NSString *)q page:(NSInteger)page done:(void (^)(NSArray<ADAlbum *> *, BOOL, NSString *))cb {
+- (void)discover:(void (^)(NSArray<NSDictionary *> *, BOOL, NSString *))cb {
+    [self cachedGET:@"/open-api/v1/discover" key:@"discover" done:^(id json, BOOL cached, NSString *err) {
+        NSArray *secs = [json isKindOfClass:NSDictionary.class] ? json[@"sections"] : nil;
+        cb([secs isKindOfClass:NSArray.class] ? secs : @[], cached, err);
+    }];
+}
+
+- (void)search:(NSString *)q page:(NSInteger)page done:(void (^)(NSArray<ADAlbum *> *, BOOL, BOOL, NSString *))cb {
     NSString *enc = [q stringByAddingPercentEncodingWithAllowedCharacters:NSCharacterSet.URLQueryAllowedCharacterSet];
     NSString *path = [NSString stringWithFormat:@"/open-api/v1/search?q=%@&page=%ld&pageSize=30", enc, (long)page];
-    [self JSON:path method:@"GET" body:nil done:^(id json, NSString *err) {
-        if (err) { cb(@[], NO, err); return; }
+    NSString *key = [NSString stringWithFormat:@"search:%@:%ld", q, (long)page];
+    [self cachedGET:path key:key done:^(id json, BOOL cached, NSString *err) {
         NSArray *items = nil;
         if ([json isKindOfClass:NSDictionary.class]) {
             id d = json[@"data"];
             if ([d isKindOfClass:NSDictionary.class] && [d[@"items"] isKindOfClass:NSArray.class]) items = d[@"items"];
             else if ([json[@"items"] isKindOfClass:NSArray.class]) items = json[@"items"];
+            NSMutableArray *out = [NSMutableArray array];
+            for (id o in items) { ADAlbum *a = [ADAlbum fromJSON:o]; if (a) [out addObject:a]; }
+            cb(out, out.count >= 15, cached, err);
+            return;
         }
-        NSMutableArray *out = [NSMutableArray array];
-        for (id o in items) { ADAlbum *a = [ADAlbum fromJSON:o]; if (a) [out addObject:a]; }
-        BOOL more = out.count >= 15;
-        cb(out, more, nil);
+        cb(@[], NO, cached, err);
     }];
 }
 
-- (void)albumDetail:(NSString *)albumId done:(void (^)(ADAlbum *, NSString *))cb {
+- (void)albumDetail:(NSString *)albumId done:(void (^)(ADAlbum *, BOOL, NSString *))cb {
     NSString *path = [NSString stringWithFormat:@"/open-api/v1/albums/%@", albumId];
-    [self JSON:path method:@"GET" body:nil done:^(id json, NSString *err) {
-        if (err) { cb(nil, err); return; }
+    [self cachedGET:path key:[@"album:" stringByAppendingString:albumId] done:^(id json, BOOL cached, NSString *err) {
         id d = [json isKindOfClass:NSDictionary.class] ? json[@"data"] : nil;
         ADAlbum *a = [ADAlbum fromJSON:[d isKindOfClass:NSDictionary.class] ? d : json];
-        cb(a, a ? nil : @"返回里没有专辑信息");
+        cb(a, cached, err);
     }];
 }
 
-- (void)tracksOf:(NSString *)albumId page:(NSInteger)page done:(void (^)(NSArray<ADTrack *> *, NSInteger, NSString *))cb {
+- (void)tracksOf:(NSString *)albumId page:(NSInteger)page done:(void (^)(NSArray<ADTrack *> *, NSInteger, BOOL, NSString *))cb {
     NSString *path = [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=%ld&pageSize=50", albumId, (long)page];
-    [self JSON:path method:@"GET" body:nil done:^(id json, NSString *err) {
-        if (err) { cb(@[], 0, err); return; }
+    NSString *key = [NSString stringWithFormat:@"tracks:%@:%ld", albumId, (long)page];
+    [self cachedGET:path key:key done:^(id json, BOOL cached, NSString *err) {
         NSArray *items = [json isKindOfClass:NSDictionary.class] ? json[@"items"] : nil;
         NSInteger total = [json[@"total"] respondsToSelector:@selector(integerValue)] ? [json[@"total"] integerValue] : 0;
         ADAlbum *stub = [ADAlbum new];
-        stub.albumId = albumId; stub.provider = [json[@"provider"] isKindOfClass:NSString.class] ? json[@"provider"] : @"";
+        stub.albumId = albumId;
+        stub.provider = [json[@"provider"] isKindOfClass:NSString.class] ? json[@"provider"] : @"";
         NSMutableArray *out = [NSMutableArray array];
         for (id o in items) { ADTrack *t = [ADTrack fromJSON:o album:stub]; if (t) [out addObject:t]; }
-        cb(out, total, nil);
+        cb(out, total, cached, err);
     }];
 }
 

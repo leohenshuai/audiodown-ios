@@ -1,0 +1,166 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-font-smoothing:antialiased}
+body{background:#151517;font-family:-apple-system,"PingFang SC",sans-serif;color:#fff;padding:24px;display:flex;gap:24px;align-items:flex-start}
+.phone{width:390px;height:844px;background:#0B0909;border-radius:46px;position:relative;overflow:hidden;box-shadow:0 0 0 10px #242427,0 20px 50px rgba(0,0,0,.6)}
+.status{position:absolute;top:0;left:0;right:0;height:47px;display:flex;justify-content:space-between;align-items:center;padding:0 26px;font-size:12px;color:#fff;z-index:20}
+.notch{position:absolute;top:8px;left:50%;transform:translateX(-50%);width:110px;height:30px;background:#000;border-radius:18px;z-index:21}
+/* discover */
+.head{position:absolute;top:47px;left:16px;right:16px;height:56px;display:flex;align-items:center}
+.logo{font-size:34px;font-weight:600;letter-spacing:2px}
+.sub{font-size:16px;color:rgba(255,255,255,.4);margin-left:10px;margin-top:6px}
+.circ{width:44px;height:44px;border-radius:22px;background:rgba(255,255,255,.14);display:flex;align-items:center;justify-content:center;margin-left:12px}
+.circ img{width:20px;height:20px;opacity:.9}
+.sec{position:absolute;left:16px;font-size:24px;font-weight:600}
+.card{position:absolute;left:16px;top:150px;width:238px;height:323px;border-radius:22px;overflow:hidden;
+ background:linear-gradient(150deg,#3a231a,#1a100c);}
+.card .cover{position:absolute;left:49px;top:14px;width:140px;height:140px;border-radius:14px;object-fit:cover;display:block;filter:brightness(.9)}
+.ep{position:absolute;left:14px;top:166px;font-size:12px;color:rgba(255,255,255,.6)}
+.tt{position:absolute;left:14px;top:186px;width:210px;font-size:17px;font-weight:600;line-height:22px;height:44px;overflow:hidden}
+.ch{position:absolute;left:14px;top:234px;font-size:14px;color:rgba(255,255,255,.72);white-space:nowrap;overflow:hidden;width:210px}
+.mt{position:absolute;left:14px;top:258px;font-size:12px;color:rgba(255,255,255,.5)}
+.pill{position:absolute;left:14px;top:273px;width:168px;height:36px;border-radius:18px;background:rgba(255,255,255,.12);display:flex;align-items:center;padding:0 10px;gap:8px}
+.tri{width:0;height:0;border-left:11px solid #fff;border-top:7px solid transparent;border-bottom:7px solid transparent}
+.bar{flex:1;height:4px;border-radius:2px;background:rgba(255,255,255,.25);position:relative}
+.bar i{position:absolute;left:0;top:0;height:4px;width:42%;border-radius:2px;background:rgba(255,255,255,.9)}
+.tm{font-size:13px;font-weight:500}
+.dots{position:absolute;left:196px;top:280px;color:rgba(255,255,255,.55);font-size:18px;letter-spacing:2px}
+.panel{position:absolute;left:0;right:0;top:500px;bottom:0;background:#1B1B1E;border-radius:20px 20px 0 0}
+.pt{position:absolute;left:16px;top:24px;font-size:24px;font-weight:600}
+.row{position:absolute;left:0;display:flex;gap:12px;padding-left:16px;overflow:hidden}
+.small{width:118px;flex:0 0 118px}
+.small img{width:118px;height:118px;border-radius:12px;object-fit:cover;display:block;background:#222}
+.st{font-size:12px;color:rgba(255,255,255,.85);line-height:16px;height:32px;overflow:hidden;margin-top:6px}
+.tabbar{position:absolute;left:14px;right:14px;bottom:12px;height:56px;border-radius:28px;background:rgba(40,40,44,.72);backdrop-filter:blur(20px);display:flex;align-items:center;justify-content:space-around}
+.tab{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10px;color:rgba(255,255,255,.55)}
+.tab.on{color:#F86442}
+.tab svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.6}
+.mini{position:absolute;left:8px;right:8px;bottom:80px;height:58px;border-radius:16px;background:rgba(41,41,45,.96);display:flex;align-items:center;padding:0 10px;gap:10px;border:.5px solid rgba(255,255,255,.12)}
+.mini img{width:42px;height:42px;border-radius:8px;object-fit:cover}
+.mini .mt2{font-size:14px;font-weight:600}
+.mini .ms{font-size:11px;color:rgba(255,255,255,.55);margin-top:2px}
+.mini .ctl{margin-left:auto;display:flex;align-items:center;gap:14px;color:#fff}
+.pbar{position:absolute;left:0;bottom:0;height:2px;background:rgba(255,255,255,.75);width:38%;border-radius:1px}
+/* settings */
+.navt{position:absolute;top:47px;left:0;right:0;height:44px;display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:600}
+.group{position:absolute;left:16px;right:16px;background:#1E1E20;border-radius:12px;padding:0 16px}
+.gt{position:absolute;left:32px;font-size:13px;color:rgba(255,255,255,.45)}
+.row2{display:flex;align-items:center;height:52px;border-bottom:.5px solid rgba(255,255,255,.08)}
+.row2:last-child{border-bottom:none}
+.row2 .k{font-size:16px}
+.row2 .v{margin-left:auto;font-size:11px;color:rgba(255,255,255,.85);font-family:ui-monospace,monospace;max-width:200px;white-space:nowrap;overflow:hidden;position:relative;padding-right:26px}
+.eye{position:absolute;right:0;top:50%;transform:translateY(-50%);width:20px;height:20px;opacity:.6}
+.orange{color:#F86442;font-size:16px}
+.foot{position:absolute;left:32px;right:32px;font-size:12px;color:rgba(255,255,255,.4);line-height:17px}
+/* player */
+.cover2{position:absolute;left:80px;top:104px;width:230px;height:230px;border-radius:16px;object-fit:cover;box-shadow:0 16px 40px rgba(0,0,0,.55)}
+.p-title{position:absolute;left:24px;right:24px;top:352px;text-align:center;font-size:18px;font-weight:600}
+.p-sub{position:absolute;left:24px;right:24px;top:378px;text-align:center;font-size:13px;color:rgba(255,255,255,.5)}
+.slider{position:absolute;left:24px;right:24px;top:424px;height:4px;border-radius:2px;background:rgba(255,255,255,.2)}
+.slider i{position:absolute;left:0;top:0;height:4px;background:#F86442;width:36%;border-radius:2px}
+.slider b{position:absolute;left:36%;top:-5px;width:14px;height:14px;border-radius:7px;background:#fff;margin-left:-7px}
+.ptime{position:absolute;left:24px;top:440px;font-size:11px;color:rgba(255,255,255,.5)}
+.dtime{position:absolute;right:24px;top:440px;font-size:11px;color:rgba(255,255,255,.5)}
+.ctrl{position:absolute;left:0;right:0;top:490px;display:flex;align-items:center;justify-content:center;gap:34px}
+.big{width:68px;height:68px;border-radius:34px;background:#fff;display:flex;align-items:center;justify-content:center}
+.big .tri2{width:0;height:0;border-left:20px solid #111;border-top:12px solid transparent;border-bottom:12px solid transparent;margin-left:5px}
+.ic{opacity:.9}
+.chips{position:absolute;left:0;right:0;top:588px;display:flex;justify-content:center;gap:20px}
+.chip{width:100px;height:34px;border-radius:17px;border:1px solid rgba(255,255,255,.25);display:flex;align-items:center;justify-content:center;font-size:14px}
+</style></head><body>
+
+<div class="phone">
+  <div class="notch"></div>
+  <div class="status"><span>12:57</span><span>ᯤ 5G ▮</span></div>
+  <div class="head"><div class="logo">听见</div><div class="sub">AudioDown</div>
+    <div style="margin-left:auto;display:flex">
+      <div class="circ"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></div>
+      <div class="circ" style="background:rgba(248,100,66,.18)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F86442" stroke-width="1.8"><rect x="4" y="4" width="7" height="16" rx="1.5"/><rect x="13" y="7" width="7" height="13" rx="1.5"/></svg></div>
+    </div>
+  </div>
+  <div class="sec" style="top:118px">继续收听</div>
+  <div class="card">
+    <img class="cover" src="https://imagev2.xmcdn.com/group56/M00/DE/D9/wKgLdlyl6p6By8QcAASN8z088wI700.jpg">
+    <div class="ep">第 1 集</div>
+    <div class="tt">纨绔世子，开局求娶女将军</div>
+    <div class="ch">001 求娶女将军</div>
+    <div class="mt">念萧燃是丶御 · 剩余 459 集</div>
+    <div class="pill"><div class="tri"></div><div class="bar"><i></i></div><div class="tm">3 分钟</div></div>
+    <div class="dots">···</div>
+  </div>
+  <div class="card" style="left:268px;background:linear-gradient(150deg,#4a3418,#171008)">
+    <img class="cover" src="https://imagev2.xmcdn.com/group56/M08/38/7B/wKgLgFxSbpzAP_hXAAFJZ9Vvk_U429.jpg">
+    <div class="ep">第 11 集</div>
+    <div class="tt">世子很凶（全四卷）</div>
+    <div class="ch">世子很凶_010 道</div>
+    <div class="mt">郭金非 · 剩余 961 集</div>
+    <div class="pill"><div class="tri"></div><div class="bar"><i style="width:8%"></i></div><div class="tm">12 分钟</div></div>
+  </div>
+  <div class="panel">
+    <div class="pt">推荐内容</div>
+    <div class="row" style="top:80px"><div class="small"><img src="https://imagev2.xmcdn.com/group81/M0A/F9/63/wKgPEl6qnXGzH_q5AA0_LI5ezkQ165.jpg"><div class="st">独家蜜爱：晚安，莫先生 | 君颜/予彤 | 精品多人剧</div></div><div class="small"><img src="https://imagev2.xmcdn.com/group56/M00/DE/D9/wKgLdlyl6p6By8QcAASN8z088wI700.jpg"><div class="st">纨绔王爷神偷妻|念萧燃&翼夜凌峰</div></div><div class="small"><img src="https://imagev2.xmcdn.com/group56/M08/38/7B/wKgLgFxSbpzAP_hXAAFJZ9Vvk_U429.jpg"><div class="st">穿越之我为正室（尘萱&逝枫双播精品）</div></div><div class="small"><img src="https://imagev2.xmcdn.com/storages/47be-audiofreehighqps/26/7D/CMCoOSMD2WyTAAFo3gB8hEOC.jpg"><div class="st">《神农小飞》桃运小神农爆爽修真</div></div><div class="small"><img src="https://imagev2.xmcdn.com/group55/M06/01/EC/wKgLdVxqYhXToft0AASueiHxuEU970.jpg"><div class="st">最后一个赶尸人（双播精品）|风水秘术|灵异传说</div></div><div class="small"><img src="https://imagev2.xmcdn.com/group58/M00/B3/18/wKgLglzqCZyDvOVOAAUrv0Z-Kk4052.jpg"><div class="st">冷王毒宠医妃|穿越精品有声小说（神隐、思远双播）</div></div></div>
+    <div class="row" style="top:250px"><div class="small"><img src="https://imagev2.xmcdn.com/group81/M0A/F9/63/wKgPEl6qnXGzH_q5AA0_LI5ezkQ165.jpg"><div class="st">独家蜜爱：晚安，莫先生 | 君颜/予彤 | 精品多人剧</div></div><div class="small"><img src="https://imagev2.xmcdn.com/group56/M00/DE/D9/wKgLdlyl6p6By8QcAASN8z088wI700.jpg"><div class="st">纨绔王爷神偷妻|念萧燃&翼夜凌峰</div></div><div class="small"><img src="https://imagev2.xmcdn.com/group56/M08/38/7B/wKgLgFxSbpzAP_hXAAFJZ9Vvk_U429.jpg"><div class="st">穿越之我为正室（尘萱&逝枫双播精品）</div></div><div class="small"><img src="https://imagev2.xmcdn.com/storages/47be-audiofreehighqps/26/7D/CMCoOSMD2WyTAAFo3gB8hEOC.jpg"><div class="st">《神农小飞》桃运小神农爆爽修真</div></div><div class="small"><img src="https://imagev2.xmcdn.com/group55/M06/01/EC/wKgLdVxqYhXToft0AASueiHxuEU970.jpg"><div class="st">最后一个赶尸人（双播精品）|风水秘术|灵异传说</div></div><div class="small"><img src="https://imagev2.xmcdn.com/group58/M00/B3/18/wKgLglzqCZyDvOVOAAUrv0Z-Kk4052.jpg"><div class="st">冷王毒宠医妃|穿越精品有声小说（神隐、思远双播）</div></div></div>
+  </div>
+  <div class="mini"><img src="https://imagev2.xmcdn.com/group56/M00/DE/D9/wKgLdlyl6p6By8QcAASN8z088wI700.jpg"><div><div class="mt2">001 求娶女将军</div><div class="ms">念萧燃是</div></div>
+    <div class="ctl">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8"><path d="M4 10a8 8 0 1 1 1.5 6"/><path d="M4 15v-5h5"/><text x="8" y="16" font-size="7" fill="#fff" stroke="none">15</text></svg>
+      <div style="width:0;height:0;border-left:20px solid #fff;border-top:12px solid transparent;border-bottom:12px solid transparent"></div>
+    </div>
+    <div class="pbar"></div>
+  </div>
+  <div class="tabbar">
+    <div class="tab on"><svg viewBox="0 0 24 24"><path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/></svg>发现</div>
+    <div class="tab"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16 16l5 5"/></svg>搜索</div>
+    <div class="tab"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="16" rx="1"/><rect x="14" y="4" width="6" height="16" rx="1"/></svg>书架</div>
+  </div>
+</div>
+
+<div class="phone">
+  <div class="notch"></div>
+  <div class="status"><span>12:57</span><span>ᯤ 5G ▮</span></div>
+  <div class="navt">设置</div>
+  <div class="gt" style="top:112px">服务</div>
+  <div class="group" style="top:134px;height:156px">
+    <div class="row2"><span class="k">服务地址</span><span class="v">https://audio.959935291.xyz:899</span></div>
+    <div class="row2"><span class="k">Token</span><span class="v">••••••••••••••••••••••••••••••••
+      <svg class="eye" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.6"><path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z"/><circle cx="12" cy="12" r="2.6"/><path d="M4 20L20 4"/></svg></span></div>
+    <div class="row2" style="border-top:.5px solid rgba(255,255,255,.08)"><span class="orange">测试连接</span></div>
+  </div>
+  <div class="foot" style="top:300px">粘贴服务端给你的 token，保存后自动测试连接</div>
+  <div class="gt" style="top:344px">本机下载</div>
+  <div class="group" style="top:366px">
+    <div class="row2"><span class="orange">全部继续</span></div>
+    <div class="row2"><div><div class="k">纨绔世子，开局求娶女将军</div><div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:3px">下载中 · 128/459 · 512MB</div></div></div>
+    <div class="row2"><div><div class="k">世子很凶（全四卷）</div><div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:3px">已暂停 · 302/961</div></div></div>
+    <div class="row2"><div><div class="k">最后一个赶尸人（双播精品）|风水</div><div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:3px">已完成 · 210/210</div></div></div>
+  </div>
+  <div class="foot" style="top:588px">左滑可删除或暂停，点行可切换暂停/继续；缓存后的集离线可听</div>
+  <div class="tabbar">
+    <div class="tab"><svg viewBox="0 0 24 24"><path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/></svg>发现</div>
+    <div class="tab"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16 16l5 5"/></svg>搜索</div>
+    <div class="tab on"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="16" rx="1"/><rect x="14" y="4" width="6" height="16" rx="1"/></svg>书架</div>
+  </div>
+</div>
+
+<div class="phone">
+  <div class="notch"></div>
+  <div class="status"><span>12:57</span><span>ᯤ 5G ▮</span></div>
+  <div style="position:absolute;left:16px;top:52px;opacity:.8"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8"><path d="M6 9l6 6 6-6"/></svg></div>
+  <div style="position:absolute;right:16px;top:52px;opacity:.8"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8"><path d="M8 6h13M8 12h13M8 18h13M3 6h1M3 12h1M3 18h1"/></svg></div>
+  <img class="cover2" src="https://imagev2.xmcdn.com/group56/M00/DE/D9/wKgLdlyl6p6By8QcAASN8z088wI700.jpg">
+  <div class="p-title">001 求娶女将军</div>
+  <div class="p-sub">纨绔世子，开局求娶女将军</div>
+  <div class="slider"><i></i><b></b></div>
+  <div class="ptime">03:12</div><div class="dtime">-18:40</div>
+  <div class="ctrl">
+    <svg class="ic" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.7"><path d="M4 10a8 8 0 1 1 1.5 6"/><path d="M4 15v-5h5"/><text x="7.5" y="16" font-size="6.5" fill="#fff" stroke="none">15</text></svg>
+    <svg class="ic" width="34" height="34" viewBox="0 0 24 24" fill="#fff"><path d="M6 5h2v14H6zM10 12l8-6v12z"/></svg>
+    <div class="big"><div class="tri2"></div></div>
+    <svg class="ic" width="34" height="34" viewBox="0 0 24 24" fill="#fff"><path d="M16 5h2v14h-2zM14 12L6 6v12z"/></svg>
+    <svg class="ic" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.7"><path d="M20 14a8 8 0 1 1-1.5-6"/><path d="M20 9v5h-5"/><text x="8" y="16" font-size="6.5" fill="#fff" stroke="none">30</text></svg>
+  </div>
+  <div class="chips"><div class="chip">1.0x</div><div class="chip">定时</div></div>
+  <div class="mini" style="bottom:24px"><img src="https://imagev2.xmcdn.com/group56/M00/DE/D9/wKgLdlyl6p6By8QcAASN8z088wI700.jpg"><div><div class="mt2">001 求娶女将军</div><div class="ms">第 1 集 / 共 460 集</div></div>
+    <div class="ctl"><div style="width:0;height:0;border-left:20px solid #fff;border-top:12px solid transparent;border-bottom:12px solid transparent"></div></div></div>
+</div>
+
+</body></html>

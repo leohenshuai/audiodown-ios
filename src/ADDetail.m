@@ -31,6 +31,9 @@
     self.table.dataSource = self;
     self.table.delegate = self;
     self.table.contentInset = UIEdgeInsetsMake(0, 0, 90, 0);
+    self.table.refreshControl = [[UIRefreshControl alloc] init];
+    self.table.refreshControl.tintColor = [UIColor colorWithWhite:1 alpha:0.5];
+    [self.table.refreshControl addTarget:self action:@selector(refreshAll) forControlEvents:UIControlEventValueChanged];
     [self.view addSubview:self.table];
 
     CGFloat w = self.view.bounds.size.width;
@@ -64,7 +67,7 @@
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(fillHeader) name:@"ADDownloadChanged" object:nil];
     [self fillHeader];
     __weak typeof(self) weakSelf = self;
-    [[ADApi shared] albumDetail:self.album.albumId done:^(ADAlbum *a, NSString *err) {
+    [[ADApi shared] albumDetail:self.album.albumId done:^(ADAlbum *a, BOOL cached, NSString *err) {
         __strong typeof(weakSelf) self = weakSelf; if (!self) return;
         if (a) {
             self.album.title = a.title.length ? a.title : self.album.title;
@@ -122,6 +125,14 @@
     self.navigationItem.rightBarButtonItem.tintColor = fav ? [ADUtil brand] : UIColor.whiteColor;
 }
 
+- (void)refreshAll {
+    self.page = 1;
+    [self.tracks removeAllObjects];
+    [self.table reloadData];
+    [self loadTracks];
+    [self.table.refreshControl endRefreshing];
+}
+
 - (void)downloadAll {
     ADTask *task = [[ADDownloader shared] taskForAlbum:self.album.albumId];
     if (task && task.state == ADTaskStateRunning) { [[ADDownloader shared] pauseTask:task]; [self fillHeader]; return; }
@@ -142,7 +153,7 @@
     if (self.loading) return;
     self.loading = YES;
     __weak typeof(self) weakSelf = self;
-    [[ADApi shared] tracksOf:self.album.albumId page:self.page done:^(NSArray<ADTrack *> *list, NSInteger total, NSString *err) {
+    [[ADApi shared] tracksOf:self.album.albumId page:self.page done:^(NSArray<ADTrack *> *list, NSInteger total, BOOL cached, NSString *err) {
         __strong typeof(weakSelf) self = weakSelf; if (!self) return;
         self.loading = NO;
         if (err) { self.title = err; return; }
@@ -405,9 +416,9 @@
 // ───────────── 设置 ─────────────
 @interface ADSettingsController () <UITableViewDataSource, UITableViewDelegate, UITextFieldDelegate>
 @property (nonatomic, strong) UITableView *table;
-@property (nonatomic, strong) UITextField *baseField, *tokenField;
+@property (nonatomic, strong) UITextField *baseField;
+@property (nonatomic, copy) NSString *token;
 @property (nonatomic, strong) UILabel *status;
-@property (nonatomic, strong) NSArray<NSDictionary *> *serverTasks;
 @property (nonatomic, assign) BOOL tokenShown;
 @end
 
@@ -419,6 +430,7 @@
     self.title = @"设置";
     self.navigationController.navigationBar.tintColor = UIColor.whiteColor;
     self.navigationController.navigationBar.barStyle = UIBarStyleBlack;
+    self.token = [ADConfig shared].token ?: @"";
 
     self.table = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStyleInsetGrouped];
     self.table.backgroundColor = UIColor.clearColor;
@@ -428,15 +440,6 @@
     [self.view addSubview:self.table];
 
     self.baseField = [self field:[ADConfig shared].baseURL placeholder:@"https://服务器地址:端口" keyboard:UIKeyboardTypeURL];
-    self.tokenField = [self field:[ADConfig shared].token placeholder:@"粘贴 token" keyboard:UIKeyboardTypeASCIICapable];
-    self.tokenField.secureTextEntry = YES;
-    UIButton *eye = [UIButton buttonWithType:UIButtonTypeSystem];
-    eye.frame = CGRectMake(0, 0, 32, 30);
-    eye.tintColor = [UIColor colorWithWhite:1 alpha:0.5];
-    [eye setImage:[UIImage systemImageNamed:@"eye.slash"] forState:UIControlStateNormal];
-    [eye addTarget:self action:@selector(toggleToken) forControlEvents:UIControlEventTouchUpInside];
-    self.tokenField.rightView = eye;
-    self.tokenField.rightViewMode = UITextFieldViewModeAlways;
 
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"保存" style:UIBarButtonItemStyleDone target:self action:@selector(save)];
 
@@ -445,17 +448,6 @@
 }
 
 - (void)refresh { [self.table reloadData]; }
-
-- (void)toggleToken {
-    self.tokenShown = !self.tokenShown;
-    UIButton *eye = (UIButton *)self.tokenField.rightView;
-    [eye setImage:[UIImage systemImageNamed:self.tokenShown ? @"eye" : @"eye.slash"] forState:UIControlStateNormal];
-    NSString *t = self.tokenField.text;
-    self.tokenField.secureTextEntry = !self.tokenShown;
-    self.tokenField.text = nil;
-    self.tokenField.text = t;
-    [self.tokenField becomeFirstResponder];
-}
 
 - (UITextField *)field:(NSString *)text placeholder:(NSString *)ph keyboard:(UIKeyboardType)kb {
     UITextField *f = [UITextField new];
@@ -473,12 +465,47 @@
     return f;
 }
 
+// token 显示：默认只露出前后各 3 位，其余用圆点
+- (NSString *)tokenDisplay {
+    if (!self.token.length) return @"未填写";
+    if (self.tokenShown) return self.token;
+    if (self.token.length <= 10) return @"••••••••";
+    return [NSString stringWithFormat:@"%@••••••%@", [self.token substringToIndex:5], [self.token substringFromIndex:self.token.length - 4]];
+}
+
+- (void)toggleToken {
+    self.tokenShown = !self.tokenShown;
+    [self.table reloadData];
+}
+
+- (void)editToken {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Token" message:@"粘贴服务端给你的 token" preferredStyle:UIAlertControllerStyleAlert];
+    [a addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.text = self.token;
+        tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        tf.autocorrectionType = UITextAutocorrectionTypeNo;
+        tf.font = [UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightRegular];
+        tf.placeholder = @"xmd_…";
+    }];
+    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [a addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+        self.token = [a.textFields.firstObject.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        [self save];
+    }]];
+    [a addAction:[UIAlertAction actionWithTitle:@"从剪贴板粘贴" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+        NSString *p = UIPasteboard.generalPasteboard.string;
+        if (p.length) { self.token = [p stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]; [self save]; }
+    }]];
+    [self presentViewController:a animated:YES completion:nil];
+}
+
 - (void)save {
-    [ADConfig shared].baseURL = self.baseField.text;
-    [ADConfig shared].token = self.tokenField.text;
+    [ADConfig shared].baseURL = self.baseField.text ?: @"";
+    [ADConfig shared].token = self.token ?: @"";
     [[ADConfig shared] save];
     UIImpactFeedbackGenerator *g = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
     [g impactOccurred];
+    [self.table reloadData];
     [self test];
 }
 
@@ -486,41 +513,26 @@
     self.status.text = @"正在测试连接…";
     [self.table reloadData];
     __weak typeof(self) w = self;
-    [[ADApi shared] albumDetail:@"XMID59325711" done:^(ADAlbum *a, NSString *err) {
+    [[ADApi shared] albumDetail:@"XMID59325711" done:^(ADAlbum *a, BOOL cached, NSString *err) {
         __strong typeof(w) self = w; if (!self) return;
         self.status.text = err ? [@"连接失败：" stringByAppendingString:err] : @"连接正常，可以搜索和播放";
         [self.table reloadData];
     }];
 }
 
-- (void)loadServerTasks {
-    __weak typeof(self) w = self;
-    [[ADApi shared] downloads:^(NSArray<NSDictionary *> *items, NSString *err) {
-        __strong typeof(w) self = w; if (!self) return;
-        self.serverTasks = items;
-        [self.table reloadData];
-    }];
-}
-
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)t { return 2; }
 - (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)s {
-    if (s == 0) return @"服务";
-    if (s == 1) return @"本机下载";
-    return @"服务端下载任务（只读）";
+    return s == 0 ? @"服务" : @"本机下载";
 }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
-    if (s == 0) return self.status.text ?: @"粘贴服务端给你的 token，保存后自动测试连接";
-    if (s == 1) {
-        if (![ADDownloader shared].tasks.count)
-            return @"在专辑页点「缓存到本机」，音频会存进手机，离线也能听";
-        return @"左滑删除或暂停，点击行可暂停/继续；本机下载不占用服务器";
-    }
-    return @"开放 API 只提供查询，没有暂停或删除接口";
+    if (s == 0) return self.status.text ?: @"点 Token 那一行可以粘贴或修改";
+    if (![ADDownloader shared].tasks.count)
+        return @"在专辑页点「缓存到本机」，音频会存进手机，离线也能听";
+    return @"左滑删除或暂停，点击行可暂停/继续；本机下载不占用服务器";
 }
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s {
     if (s == 0) return 3;
-    if (s == 1) return MAX(1, (NSInteger)[ADDownloader shared].tasks.count) + 1;
-    return MAX(1, (NSInteger)self.serverTasks.count) + 1;
+    return MAX(1, (NSInteger)[ADDownloader shared].tasks.count) + 1;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {
@@ -533,23 +545,38 @@
     c.selectionStyle = UITableViewCellSelectionStyleNone;
 
     if (ip.section == 0) {
-        if (ip.row < 2) {
+        if (ip.row == 0) {
             UILabel *name = [ADUtil label:nil size:15 color:UIColor.whiteColor];
-            name.text = ip.row == 0 ? @"服务地址" : @"Token";
+            name.text = @"服务地址";
             name.frame = CGRectMake(16, 12, 76, 20);
             [c.contentView addSubview:name];
-            UITextField *f = ip.row == 0 ? self.baseField : self.tokenField;
             CGFloat cw = c.contentView.bounds.size.width > 0 ? c.contentView.bounds.size.width : (t.bounds.size.width - 40);
-            CGFloat x = 86, w = cw - x - 34;
-            f.frame = CGRectMake(x, 6, MAX(80, w), 32);
-            f.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-            [c.contentView addSubview:f];
-            if (ip.row == 1) {
-                NSString *t0 = self.tokenField.text;
-                self.tokenField.secureTextEntry = !self.tokenShown;
-                self.tokenField.text = nil;
-                self.tokenField.text = t0;
-            }
+            self.baseField.frame = CGRectMake(86, 6, MAX(80, cw - 86 - 34), 32);
+            self.baseField.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+            [c.contentView addSubview:self.baseField];
+        } else if (ip.row == 1) {
+            UILabel *name = [ADUtil label:nil size:15 color:UIColor.whiteColor];
+            name.text = @"Token";
+            name.frame = CGRectMake(16, 12, 60, 20);
+            [c.contentView addSubview:name];
+
+            UILabel *v = [ADUtil label:nil size:12 color:[UIColor colorWithWhite:1 alpha:0.85]];
+            v.font = [UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightRegular];
+            v.textAlignment = NSTextAlignmentRight;
+            v.lineBreakMode = NSLineBreakByTruncatingMiddle;
+            v.text = [self tokenDisplay];
+            v.frame = CGRectMake(80, 0, c.contentView.bounds.size.width - 80 - 44, 44);
+            v.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+            [c.contentView addSubview:v];
+
+            UIButton *eye = [UIButton buttonWithType:UIButtonTypeSystem];
+            eye.frame = CGRectMake(c.contentView.bounds.size.width - 40, 2, 34, 40);
+            eye.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+            eye.tintColor = [UIColor colorWithWhite:1 alpha:0.55];
+            [eye setImage:[UIImage systemImageNamed:self.tokenShown ? @"eye" : @"eye.slash"] forState:UIControlStateNormal];
+            [eye addTarget:self action:@selector(toggleToken) forControlEvents:UIControlEventTouchUpInside];
+            [c.contentView addSubview:eye];
+            c.selectionStyle = UITableViewCellSelectionStyleDefault;
         } else {
             c.textLabel.text = @"测试连接";
             c.textLabel.textColor = [ADUtil brand];
@@ -558,65 +585,51 @@
         return c;
     }
 
-    if (ip.section == 1) {
-        NSArray<ADTask *> *tasks = [ADDownloader shared].tasks;
-        if (ip.row == 0) {
-            BOOL anyRunning = NO;
-            for (ADTask *x in tasks) if (x.state == ADTaskStateRunning || x.state == ADTaskStateQueued) anyRunning = YES;
-            c.textLabel.text = anyRunning ? @"全部暂停" : @"全部继续";
-            c.textLabel.textColor = [ADUtil brand];
-            c.selectionStyle = UITableViewCellSelectionStyleDefault;
-        } else if (!tasks.count) {
-            c.textLabel.text = @"暂无本机下载";
-            c.textLabel.textColor = [UIColor colorWithWhite:1 alpha:0.45];
-        } else {
-            ADTask *task = tasks[ip.row - 1];
-            c.textLabel.text = task.title.length ? task.title : task.albumId;
-            NSString *st = task.state == ADTaskStateRunning ? @"下载中"
-                         : (task.state == ADTaskStatePaused ? @"已暂停"
-                         : (task.state == ADTaskStateDone ? @"已完成"
-                         : (task.state == ADTaskStateFailed ? @"有失败" : @"排队中")));
-            NSString *bytes = task.bytes > 0 ? [NSString stringWithFormat:@" · %.1fMB", task.bytes / 1048576.0] : @"";
-            c.detailTextLabel.text = [NSString stringWithFormat:@"%@ · %ld/%ld%@", st, (long)task.done, (long)task.tracks.count, bytes];
-        }
-        return c;
-    }
-
-    if (ip.row < (NSInteger)self.serverTasks.count) {
-        NSDictionary *d = self.serverTasks[ip.row];
-        c.textLabel.text = d[@"albumTitle"] ?: d[@"albumId"] ?: @"任务";
-        NSString *st = d[@"status"] ?: @"";
-        c.detailTextLabel.text = [NSString stringWithFormat:@"%@ · %@/%@", st, d[@"done"] ?: @0, d[@"total"] ?: @0];
-        c.textLabel.textColor = [UIColor colorWithWhite:1 alpha:0.8];
-    } else {
-        c.textLabel.text = @"刷新服务端任务";
+    NSArray<ADTask *> *tasks = [ADDownloader shared].tasks;
+    if (ip.row == 0) {
+        BOOL anyRunning = NO;
+        for (ADTask *x in tasks) if (x.state == ADTaskStateRunning || x.state == ADTaskStateQueued) anyRunning = YES;
+        c.textLabel.text = anyRunning ? @"全部暂停" : @"全部继续";
         c.textLabel.textColor = [ADUtil brand];
         c.selectionStyle = UITableViewCellSelectionStyleDefault;
+    } else if (!tasks.count) {
+        c.textLabel.text = @"暂无本机下载";
+        c.textLabel.textColor = [UIColor colorWithWhite:1 alpha:0.45];
+    } else {
+        ADTask *task = tasks[ip.row - 1];
+        c.textLabel.text = task.title.length ? task.title : task.albumId;
+        NSString *st = task.state == ADTaskStateRunning ? @"下载中"
+                     : (task.state == ADTaskStatePaused ? @"已暂停"
+                     : (task.state == ADTaskStateDone ? @"已完成"
+                     : (task.state == ADTaskStateFailed ? @"有失败" : @"排队中")));
+        NSString *bytes = task.bytes > 0 ? [NSString stringWithFormat:@" · %.1fMB", task.bytes / 1048576.0] : @"";
+        c.detailTextLabel.text = [NSString stringWithFormat:@"%@ · %ld/%ld%@", st, (long)task.done, (long)task.tracks.count, bytes];
     }
     return c;
 }
 
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [t deselectRowAtIndexPath:ip animated:YES];
-    if (ip.section == 0 && ip.row == 2) { [self save]; return; }
-    if (ip.section == 1) {
-        NSArray<ADTask *> *tasks = [ADDownloader shared].tasks;
-        if (ip.row == 0) {
-            BOOL anyRunning = NO;
-            for (ADTask *x in tasks) if (x.state == ADTaskStateRunning || x.state == ADTaskStateQueued) anyRunning = YES;
-            if (anyRunning) [[ADDownloader shared] pauseAll]; else [[ADDownloader shared] resumeAll];
-            [t reloadData];
-            return;
-        }
-        if (tasks.count) {
-            ADTask *task = tasks[ip.row - 1];
-            if (task.state == ADTaskStateRunning || task.state == ADTaskStateQueued) [[ADDownloader shared] pauseTask:task];
-            else [[ADDownloader shared] resumeTask:task];
-            [t reloadData];
-        }
+    if (ip.section == 0) {
+        if (ip.row == 0) [self.baseField becomeFirstResponder];
+        else if (ip.row == 1) [self editToken];
+        else [self save];
         return;
     }
-    if (ip.section == 2 && ip.row >= (NSInteger)self.serverTasks.count) [self loadServerTasks];
+    NSArray<ADTask *> *tasks = [ADDownloader shared].tasks;
+    if (ip.row == 0) {
+        BOOL anyRunning = NO;
+        for (ADTask *x in tasks) if (x.state == ADTaskStateRunning || x.state == ADTaskStateQueued) anyRunning = YES;
+        if (anyRunning) [[ADDownloader shared] pauseAll]; else [[ADDownloader shared] resumeAll];
+        [t reloadData];
+        return;
+    }
+    if (tasks.count) {
+        ADTask *task = tasks[ip.row - 1];
+        if (task.state == ADTaskStateRunning || task.state == ADTaskStateQueued) [[ADDownloader shared] pauseTask:task];
+        else [[ADDownloader shared] resumeTask:task];
+        [t reloadData];
+    }
 }
 
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)t trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)ip {
