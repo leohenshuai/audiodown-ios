@@ -42,7 +42,8 @@ Base:`https://audio.959935291.xyz:899`,认证 `Authorization: Bearer <token>`(`x
 - v1.1(2026-10-24):播放控件缩小,底部四键对齐(倍速菜单/定时菜单/AirPlay 路由/章节),首页右上两键接上历史与本机下载,继续收听卡片与播放页「···」菜单化
 - v1.2(2026-10-24):设置改模态弹出(书架的设置不再赖在 tab 栈里)、封面落盘缓存 Documents/cache/covers、删除"当前离线"提示、定时支持自定义(20 / 1h30m / 90s)、无封面时显示书名首字占位
 - v1.3(2026-10-24):章节面板加遮罩,点面板外任意位置收起(不只是再点 ☰)
-- 产物:`听书-1.3-unsigned.ipa`(bundle com.leo.audiodown,最新)
+- v1.4(2026-10-24):倍速/定时改成自绘底部面板(不再用系统 UIAlertController,避免浮在中间偏上);定时菜单加「取消定时关闭」;专辑目录失败自动重试 2 次 + 底部「点这里重试」;新增 App 图标(src/Assets,workflow 平铺到包根)
+- 产物:`听书-1.4-unsigned.ipa`(bundle com.leo.audiodown,最新)
 
 ## 待办
 - 分类浏览(需服务端支持)
