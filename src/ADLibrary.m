@@ -1,7 +1,7 @@
 #import "AD.h"
 
 // ───────────── 收听历史 ─────────────
-@interface ADHistoryController : UITableViewController
+@interface ADHistoryController ()
 @end
 
 @implementation ADHistoryController
@@ -58,7 +58,7 @@
 @end
 
 // ───────────── 本机下载 ─────────────
-@interface ADDownloadsController : UITableViewController
+@interface ADDownloadsController ()
 @end
 
 @implementation ADDownloadsController
