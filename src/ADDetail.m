@@ -230,6 +230,7 @@
 @property (nonatomic, strong) UIButton *rateBtn, *sleepBtn;
 @property (nonatomic, assign) BOOL dragging;
 @property (nonatomic, strong) UITableView *queue;
+@property (nonatomic, strong) UIView *queueDim;
 @property (nonatomic, assign) BOOL showQueue;
 @end
 
@@ -332,6 +333,11 @@
     self.queue.hidden = YES;
     self.queue.layer.cornerRadius = 18;
     self.queue.clipsToBounds = YES;
+    self.queueDim = [[UIView alloc] initWithFrame:self.view.bounds];
+    self.queueDim.backgroundColor = [UIColor colorWithWhite:0 alpha:0.3];
+    self.queueDim.hidden = YES;
+    [self.queueDim addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(closeQueue)]];
+    [self.view addSubview:self.queueDim];
     [self.view addSubview:self.queue];
 
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(sync) name:@"ADPlayerTick" object:nil];
@@ -426,6 +432,7 @@
     rate.frame = CGRectMake(W / 2 - 150, y + 2, 58, 36);
     [self.view viewWithTag:302].frame = CGRectMake(W / 2 - 62, y + 2, 44, 36);
     self.routeView.frame = CGRectMake(W / 2 + 18, y + 2, 44, 36);
+    self.queueDim.frame = self.view.bounds;
     [self.view viewWithTag:304].frame = CGRectMake(W / 2 + 106, y + 2, 44, 36);
 
     if (self.showQueue) {
@@ -629,13 +636,24 @@
         }]];
     }
     [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    a.popoverPresentationController.sourceView = [self.view viewWithTag:302];
+    a.popoverPresentationController.sourceView = self.sleepBtn;
     [self presentViewController:a animated:YES completion:nil];
+}
+
+- (void)closeQueue {
+    if (!self.showQueue) return;
+    self.showQueue = NO;
+    self.queueDim.hidden = YES;
+    [UIView animateWithDuration:0.25 animations:^{
+        CGFloat W = self.view.bounds.size.width, H = self.view.bounds.size.height;
+        self.queue.frame = CGRectMake(16, H, W - 32, 300);
+    } completion:^(BOOL ok) { self.queue.hidden = YES; }];
 }
 
 - (void)openQueue {
     self.showQueue = !self.showQueue;
     self.queue.hidden = !self.showQueue;
+    self.queueDim.hidden = !self.showQueue;
     [UIView animateWithDuration:0.25 animations:^{
         CGFloat W = self.view.bounds.size.width, H = self.view.bounds.size.height;
         self.queue.frame = self.showQueue ? CGRectMake(16, H - 320, W - 32, 300) : CGRectMake(16, H, W - 32, 300);
