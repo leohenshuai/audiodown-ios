@@ -4,9 +4,9 @@
 #import <AVFoundation/AVFoundation.h>
 
 // ───────────── 专辑详情 ─────────────
-@interface ADAlbumController ()
+@interface ADAlbumController () <UITableViewDataSource, UITableViewDelegate>
 @property (nonatomic, copy) NSString *errText;
-@property (nonatomic, assign) NSInteger retries; <UITableViewDataSource, UITableViewDelegate>
+@property (nonatomic, assign) NSInteger retries;
 @property (nonatomic, strong) UITableView *table;
 @property (nonatomic, strong) UIImageView *cover;
 @property (nonatomic, strong) UILabel *coverLabel;
