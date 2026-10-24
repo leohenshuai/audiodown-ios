@@ -527,6 +527,10 @@
 @property (nonatomic, assign) BOOL loading, more;
 @property (nonatomic, copy) NSString *keyword;
 @property (nonatomic, strong) UILabel *hint;
+@property (nonatomic, strong) UIScrollView *cats;
+@property (nonatomic, assign) NSInteger catIndex;
+@property (nonatomic, assign) NSInteger autoPages;
+@property (nonatomic, strong) NSMutableArray *chips;
 @end
 
 @implementation ADSearchController
@@ -559,12 +563,89 @@
     self.hint.textAlignment = NSTextAlignmentCenter;
     [self.view addSubview:self.hint];
     self.list = [NSMutableArray array];
+    self.cats = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 40)];
+    self.cats.showsHorizontalScrollIndicator = NO;
+    self.cats.contentInset = UIEdgeInsetsMake(0, 12, 0, 12);
+    [self.view addSubview:self.cats];
+    [self buildChips];
+}
+
+- (NSArray *)catTitles {
+    return @[@"全部", @"有声书", @"相声评书", @"音乐", @"儿童", @"历史", @"外语", @"个人成长"];
+}
+
+- (NSArray *)catWords:(NSInteger)i {
+    NSArray *map = @[@[], @[@"小说", @"传", @"故事", @"全集", @"演义", @"仙", @"医", @"明星", @"帝", @"都市", @"剑", @"记"],
+                     @[@"相声", @"评书", @"单口", @"德云", @"郭德纲", @"小品", @"段子", @"说书"],
+                     @[@"音乐", @"钢琴", @"古筝", @"纯音乐", @"轻音乐", @"歌曲", @"助眠", @"白噪音", @"吉他", @"睡眠"],
+                     @[@"儿童", @"宝宝", @"睡前", @"童话", @"儿歌", @"绘本", @"成语", @"幼儿"],
+                     @[@"历史", @"史", @"三国", @"明", @"清", @"唐", @"宋", @"通史", @"春秋", @"帝王"],
+                     @[@"英语", @"日语", @"韩语", @"口语", @"单词", @"雅思", @"托福", @"听力", @"法语"],
+                     @[@"成长", @"职场", @"情商", @"自律", @"思维", @"沟通", @"心理", @"认知"]];
+    return (i >= 0 && i < (NSInteger)map.count) ? map[i] : @[];
+}
+
+- (void)buildChips {
+    for (UIView *v in self.cats.subviews) [v removeFromSuperview];
+    NSArray *titles = [self catTitles];
+    CGFloat x = 12;
+    for (NSInteger i = 0; i < (NSInteger)titles.count; i++) {
+        UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+        b.tag = 100 + i;
+        b.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+        [b setTitle:titles[i] forState:UIControlStateNormal];
+        CGSize sz = [titles[i] sizeWithAttributes:@{NSFontAttributeName: b.titleLabel.font}];
+        CGFloat w = sz.width + 26;
+        b.frame = CGRectMake(x, 6, w, 30);
+        b.layer.cornerRadius = 15;
+        [b addTarget:self action:@selector(tapChip:) forControlEvents:UIControlEventTouchUpInside];
+        [self.cats addSubview:b];
+        x += w + 8;
+    }
+    self.cats.contentSize = CGSizeMake(x + 4, 40);
+    [self paintChips];
+}
+
+- (void)paintChips {
+    NSArray *titles = [self catTitles];
+    for (NSInteger i = 0; i < (NSInteger)titles.count; i++) {
+        UIButton *b = (UIButton *)[self.cats viewWithTag:100 + i];
+        BOOL on = (i == self.catIndex);
+        b.backgroundColor = on ? [ADUtil brand] : [UIColor colorWithWhite:1 alpha:0.1];
+        [b setTitleColor:(on ? UIColor.whiteColor : [UIColor colorWithWhite:1 alpha:0.72]) forState:UIControlStateNormal];
+    }
+}
+
+- (void)tapChip:(UIButton *)b {
+    self.catIndex = b.tag - 100;
+    [self paintChips];
+    [self.cv reloadData];
+    if (self.catIndex != 0 && self.list.count && [self visible].count < 6 && self.more) {
+        self.autoPages = 0;
+        [self loadPage];
+    }
+}
+
+- (BOOL)catMatch:(ADAlbum *)a {
+    if (self.catIndex == 0) return YES;
+    NSArray *words = [self catWords:self.catIndex];
+    NSString *hay = [NSString stringWithFormat:@"%@ %@ %@ %@", a.title ?: @"", a.anchor ?: @"", a.author ?: @"", a.intro ?: @""];
+    for (NSString *w in words) if ([hay rangeOfString:w].location != NSNotFound) return YES;
+    return NO;
+}
+
+- (NSArray<ADAlbum *> *)visible {
+    if (self.catIndex == 0) return self.list;
+    NSMutableArray *arr = [NSMutableArray array];
+    for (ADAlbum *a in self.list) if ([self catMatch:a]) [arr addObject:a];
+    return arr;
 }
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; self.navigationController.navigationBar.hidden = YES; [self layoutChrome]; }
 - (void)layoutChrome {
     CGFloat top = MAX(self.view.safeAreaInsets.top, 47);
     self.bar.frame = CGRectMake(0, top - 6, self.view.bounds.size.width, 52);
-    self.cv.frame = CGRectMake(0, top + 46, self.view.bounds.size.width, self.view.bounds.size.height - top - 46);
+    self.cats.frame = CGRectMake(0, top + 44, self.view.bounds.size.width, 40);
+    self.cv.frame = CGRectMake(0, top + 84, self.view.bounds.size.width, self.view.bounds.size.height - top - 84);
 }
 - (void)viewWillLayoutSubviews {
     [super viewWillLayoutSubviews];
@@ -578,7 +659,8 @@
     [b resignFirstResponder];
     NSString *q = [b.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
     if (!q.length) return;
-    self.keyword = q; self.page = 1; self.more = YES;
+    self.keyword = q; self.page = 1; self.more = YES; self.autoPages = 0;
+    if (self.catIndex != 0) { self.catIndex = 0; [self paintChips]; }
     [self.list removeAllObjects]; [self.cv reloadData];
     self.hint.text = @"搜索中…";
     [self loadPage];
@@ -604,18 +686,23 @@
             [self.list addObjectsFromArray:list];
             self.page += 1;
         }
-        self.hint.text = self.list.count ? @"" : (err ?: @"没有找到");
+        NSArray *shown = [self visible];
+        if (self.catIndex != 0 && shown.count < 6 && self.more && self.autoPages < 3) {
+            self.autoPages += 1;
+            [self loadPage];
+        }
+        self.hint.text = (self.list.count ? (shown.count ? @"" : @"这个分类里没有结果，换个分类或关键词") : (err ?: @"没有找到"));
         [self.cv reloadData];
     }];
 }
 - (void)scrollViewDidScroll:(UIScrollView *)s {
     if (s.contentOffset.y + s.bounds.size.height > s.contentSize.height - 300) [self loadPage];
 }
-- (NSInteger)collectionView:(UICollectionView *)cv numberOfItemsInSection:(NSInteger)s { return self.list.count; }
+- (NSInteger)collectionView:(UICollectionView *)cv numberOfItemsInSection:(NSInteger)s { return [self visible].count; }
 - (UICollectionViewCell *)collectionView:(UICollectionView *)cv cellForItemAtIndexPath:(NSIndexPath *)ip {
     UICollectionViewCell *cell = [cv dequeueReusableCellWithReuseIdentifier:@"c" forIndexPath:ip];
     [cell.contentView.subviews makeObjectsPerformSelector:@selector(removeFromSuperview)];
-    ADAlbum *a = self.list[ip.item];
+    ADAlbum *a = [self visible][ip.item];
     CGFloat w = cell.contentView.bounds.size.width;
     UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, w, w)];
     iv.layer.cornerRadius = 12; iv.clipsToBounds = YES;
@@ -629,7 +716,7 @@
 }
 - (void)collectionView:(UICollectionView *)cv didSelectItemAtIndexPath:(NSIndexPath *)ip {
     ADAlbumController *vc = [ADAlbumController new];
-    vc.album = self.list[ip.item];
+    vc.album = [self visible][ip.item];
     [self.navigationController pushViewController:vc animated:YES];
 }
 @end
