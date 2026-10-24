@@ -367,41 +367,49 @@
     CGFloat safeTop = self.view.safeAreaInsets.top;
     CGFloat safeBottom = self.view.safeAreaInsets.bottom;
 
-    // 从底部往上排，避免下面留一大块空白
-    CGFloat bottomRowY = H - safeBottom - 46;
-    CGFloat ctrlY = bottomRowY - 96;
-    CGFloat timesY = ctrlY - 58;
-    CGFloat sliderY = timesY - 26;
-    CGFloat titleY = sliderY - 112;
-    CGFloat top = safeTop + 14;
-    CGFloat coverMax = titleY - top - 30;
-    CGFloat cw = MIN(W - 96, MAX(150, coverMax));
-    self.cover.frame = CGRectMake((W - cw) / 2, top + (coverMax - cw) / 2, cw, cw);
+    // 各块固定高度：标题 70 / 进度 28 / 时间 30 / 控制 80 / 底部 40
+    CGFloat top = safeTop + 12;
+    CGFloat bottomPad = safeBottom + 22;
+    CGFloat blockH = 70 + 28 + 30 + 80 + 40;
+    CGFloat coverMax = MIN(W - 96, H * 0.36);
+    CGFloat leftover = H - top - bottomPad - blockH - coverMax;
+    CGFloat coverH = coverMax;
+    if (leftover < 0) { coverH = MAX(140, coverMax + leftover); leftover = 0; }
+    CGFloat gap = leftover / 5.0;
 
-    self.titleLabel.frame = CGRectMake(24, titleY, W - 24 - 130, 34);
-    self.subLabel.frame = CGRectMake(24, titleY + 40, W - 24 - 130, 24);
-    self.starBtn.frame = CGRectMake(W - 24 - 96, titleY - 6, 44, 44);
-    self.moreBtn.frame = CGRectMake(W - 24 - 44, titleY - 6, 44, 44);
+    CGFloat y = top;
+    self.cover.frame = CGRectMake((W - coverH) / 2, y, coverH, coverH);
+    y = CGRectGetMaxY(self.cover.frame) + gap;
 
-    self.status.frame = CGRectMake(24, titleY + 68, W - 48, 0);
-    self.slider.frame = CGRectMake(24, sliderY, W - 48, 28);
-    self.elapsed.frame = CGRectMake(24, timesY, 90, 18);
-    self.mid.frame = CGRectMake(W / 2 - 60, timesY, 120, 18);
+    self.titleLabel.frame = CGRectMake(24, y, W - 24 - 130, 34);
+    self.subLabel.frame = CGRectMake(24, y + 38, W - 24 - 130, 24);
+    self.starBtn.frame = CGRectMake(W - 24 - 96, y - 4, 44, 44);
+    self.moreBtn.frame = CGRectMake(W - 24 - 44, y - 4, 44, 44);
+    self.status.frame = CGRectMake(24, y + 64, W - 48, 14);
+    y += 70 + gap;
+
+    self.slider.frame = CGRectMake(24, y + 4, W - 48, 28);
+    y += 28 + gap;
+
+    self.elapsed.frame = CGRectMake(24, y, 90, 18);
+    self.mid.frame = CGRectMake(W / 2 - 60, y, 120, 18);
     self.mid.textAlignment = NSTextAlignmentCenter;
-    self.duration.frame = CGRectMake(W - 114, timesY, 90, 18);
+    self.duration.frame = CGRectMake(W - 114, y, 90, 18);
     self.duration.textAlignment = NSTextAlignmentRight;
+    y += 30 + gap;
 
-    self.playBtn.frame = CGRectMake(W / 2 - 40, ctrlY - 8, 80, 80);
-    [self.view viewWithTag:201].frame = CGRectMake(24, ctrlY + 8, 40, 44);
-    [self.view viewWithTag:202].frame = CGRectMake(W / 2 - 118, ctrlY + 4, 44, 48);
-    [self.view viewWithTag:203].frame = CGRectMake(W / 2 + 74, ctrlY + 4, 44, 48);
-    [self.view viewWithTag:204].frame = CGRectMake(W - 64, ctrlY + 8, 40, 44);
+    self.playBtn.frame = CGRectMake(W / 2 - 40, y, 80, 80);
+    [self.view viewWithTag:201].frame = CGRectMake(24, y + 16, 40, 44);
+    [self.view viewWithTag:202].frame = CGRectMake(W / 2 - 118, y + 12, 44, 48);
+    [self.view viewWithTag:203].frame = CGRectMake(W / 2 + 74, y + 12, 44, 48);
+    [self.view viewWithTag:204].frame = CGRectMake(W - 64, y + 16, 40, 44);
+    y += 80 + gap;
 
     UIButton *rate = (UIButton *)[self.view viewWithTag:301];
-    rate.frame = CGRectMake(W / 2 - 150, bottomRowY, 58, 36);
-    [self.view viewWithTag:302].frame = CGRectMake(W / 2 - 62, bottomRowY, 44, 36);
-    [self.view viewWithTag:303].frame = CGRectMake(W / 2 + 18, bottomRowY, 44, 36);
-    [self.view viewWithTag:304].frame = CGRectMake(W / 2 + 106, bottomRowY, 44, 36);
+    rate.frame = CGRectMake(W / 2 - 150, y + 2, 58, 36);
+    [self.view viewWithTag:302].frame = CGRectMake(W / 2 - 62, y + 2, 44, 36);
+    [self.view viewWithTag:303].frame = CGRectMake(W / 2 + 18, y + 2, 44, 36);
+    [self.view viewWithTag:304].frame = CGRectMake(W / 2 + 106, y + 2, 44, 36);
 
     if (self.showQueue) {
         self.queue.frame = CGRectMake(16, H - 320, W - 32, 300);
