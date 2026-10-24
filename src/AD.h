@@ -125,6 +125,7 @@ typedef NS_ENUM(NSInteger, ADTaskState) {
 + (NSString *)count:(double)n;
 + (void)cover:(UIImageView *)iv url:(nullable NSString *)url;
 + (NSString *)coverDir;
++ (void)togglePlaceholder:(UIImageView *)iv hidden:(BOOL)hidden;
 + (double)parseDuration:(nullable NSString *)text;
 @end
 

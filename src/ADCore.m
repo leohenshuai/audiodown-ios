@@ -219,6 +219,10 @@ static double ADNum(id o, NSString *k) {
     return total;
 }
 
++ (void)togglePlaceholder:(UIImageView *)iv hidden:(BOOL)h {
+    for (UIView *v in iv.subviews) if (v.tag == 8801) v.hidden = h;
+}
+
 + (NSString *)coverDir {
     static NSString *d; static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -239,11 +243,11 @@ static double ADNum(id o, NSString *k) {
     static NSCache *cache; static dispatch_once_t once;
     dispatch_once(&once, ^{ cache = [NSCache new]; cache.countLimit = 400; });
     UIImage *hit = [cache objectForKey:url];
-    if (hit) { iv.image = hit; return; }
+    if (hit) { iv.image = hit; [self togglePlaceholder:iv hidden:YES]; return; }
     NSString *path = [[self coverDir] stringByAppendingPathComponent:
                       [NSString stringWithFormat:@"%lu.jpg", (unsigned long)url.hash]];
     UIImage *disk = [UIImage imageWithContentsOfFile:path];
-    if (disk) {
+    if (disk) { [self togglePlaceholder:iv hidden:YES];
         [cache setObject:disk forKey:url];
         iv.image = disk;
         return;
@@ -253,7 +257,10 @@ static double ADNum(id o, NSString *k) {
         if (!img) return;
         [cache setObject:img forKey:url];
         [data writeToFile:path atomically:YES];
-        dispatch_async(dispatch_get_main_queue(), ^{ iv.image = img; });
+        dispatch_async(dispatch_get_main_queue(), ^{
+            iv.image = img;
+            [self togglePlaceholder:iv hidden:YES];
+        });
     }] resume];
 }
 @end

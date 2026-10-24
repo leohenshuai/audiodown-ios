@@ -395,6 +395,7 @@
 
     CGFloat y = top;
     self.cover.frame = CGRectMake((W - coverH) / 2, y, coverH, coverH);
+    self.coverLabel.frame = self.cover.bounds;
     y = CGRectGetMaxY(self.cover.frame) + gap;
 
     self.titleLabel.frame = CGRectMake(24, y, W - 24 - 130, 34);
