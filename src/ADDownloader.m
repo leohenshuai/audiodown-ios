@@ -23,14 +23,14 @@
 }
 
 - (NSString *)audioDir {
-    NSString *d = [[NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+    NSString *d = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
     d = [d stringByAppendingPathComponent:@"audio"];
     if (![NSFileManager.defaultManager fileExistsAtPath:d])
         [NSFileManager.defaultManager createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:nil];
     return d;
 }
 - (NSString *)listPath {
-    NSString *d = [[NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+    NSString *d = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
     return [d stringByAppendingPathComponent:@"downloads.dat"];
 }
 - (void)load {
