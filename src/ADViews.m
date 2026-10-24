@@ -131,6 +131,7 @@
 
 // ───────────── 小卡片 ─────────────
 @interface ADSmallCard : UIView
+@property (nonatomic, strong) ADAlbum *album;
 - (instancetype)initWithFrame:(CGRect)f album:(ADAlbum *)a;
 @end
 
