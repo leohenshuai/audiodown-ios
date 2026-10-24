@@ -124,6 +124,8 @@ typedef NS_ENUM(NSInteger, ADTaskState) {
 + (NSString *)time:(double)sec;
 + (NSString *)count:(double)n;
 + (void)cover:(UIImageView *)iv url:(nullable NSString *)url;
++ (NSString *)coverDir;
++ (double)parseDuration:(nullable NSString *)text;
 @end
 
 NS_ASSUME_NONNULL_END

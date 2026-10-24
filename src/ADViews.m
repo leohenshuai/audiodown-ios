@@ -333,7 +333,7 @@
             self.sections = sections;
             [self build];
         }
-        self.hint.text = sections.count ? (err ? @"当前离线，显示缓存内容" : @"") : (err ?: @"没有内容");
+        self.hint.text = sections.count ? @"" : (err ?: @"没有内容");
     }];
 }
 
@@ -604,7 +604,7 @@
             [self.list addObjectsFromArray:list];
             self.page += 1;
         }
-        self.hint.text = self.list.count ? (err ? @"当前离线，显示缓存内容" : @"") : (err ?: @"没有找到");
+        self.hint.text = self.list.count ? @"" : (err ?: @"没有找到");
         [self.cv reloadData];
     }];
 }
@@ -717,7 +717,11 @@
     [self viewWillAppear:NO];
 }
 
-- (void)goSettings { [self.navigationController pushViewController:[ADSettingsController new] animated:YES]; }
+- (void)goSettings {
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:[ADSettingsController new]];
+    nav.modalPresentationStyle = UIModalPresentationPageSheet;
+    [self presentViewController:nav animated:YES completion:nil];
+}
 - (NSInteger)collectionView:(UICollectionView *)cv numberOfItemsInSection:(NSInteger)s { return self.items.count; }
 - (UICollectionViewCell *)collectionView:(UICollectionView *)cv cellForItemAtIndexPath:(NSIndexPath *)ip {
     UICollectionViewCell *cell = [cv dequeueReusableCellWithReuseIdentifier:@"c" forIndexPath:ip];

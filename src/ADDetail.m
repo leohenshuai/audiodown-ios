@@ -7,6 +7,7 @@
 @interface ADAlbumController () <UITableViewDataSource, UITableViewDelegate>
 @property (nonatomic, strong) UITableView *table;
 @property (nonatomic, strong) UIImageView *cover;
+@property (nonatomic, strong) UILabel *coverLabel;
 @property (nonatomic, strong) UILabel *titleLabel, *meta, *intro, *tip;
 @property (nonatomic, strong) UIButton *fav;
 @property (nonatomic, strong) NSMutableArray<ADTrack *> *tracks;
@@ -221,6 +222,7 @@
 // ───────────── 播放器 ─────────────
 @interface ADPlayerController () <UITableViewDataSource, UITableViewDelegate>
 @property (nonatomic, strong) UIImageView *cover;
+@property (nonatomic, strong) UILabel *coverLabel;
 @property (nonatomic, strong) UILabel *titleLabel, *subLabel, *elapsed, *mid, *duration, *status;
 @property (nonatomic, strong) UISlider *slider;
 @property (nonatomic, strong) UIButton *playBtn, *starBtn, *moreBtn;
@@ -440,6 +442,13 @@
     self.subLabel.text = p.album.anchor.length ? p.album.anchor : (p.album.title ?: @"");
     self.status.text = p.statusText ?: @"";
     [ADUtil cover:self.cover url:p.album.cover];
+    if (!self.coverLabel) {
+        self.coverLabel = [ADUtil label:@"PingFangSC-Semibold" size:44 color:[UIColor colorWithWhite:1 alpha:0.28]];
+        self.coverLabel.textAlignment = NSTextAlignmentCenter;
+        self.coverLabel.tag = 8801;
+        [self.cover addSubview:self.coverLabel];
+    }
+    self.coverLabel.text = p.album.title.length ? [p.album.title substringToIndex:1] : @"听";
 
     double cur = p.player ? CMTimeGetSeconds(p.player.currentTime) : 0;
     double dur = p.player.currentItem ? CMTimeGetSeconds(p.player.currentItem.duration) : 0;
@@ -532,6 +541,21 @@
             [self sync];
         }]];
     }
+    [a addAction:[UIAlertAction actionWithTitle:@"自定义时长…" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+        UIAlertController *c = [UIAlertController alertControllerWithTitle:@"自定义定时" message:@"输入分钟数，也可写 1h30m、90s" preferredStyle:UIAlertControllerStyleAlert];
+        [c addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+            tf.keyboardType = UIKeyboardTypeDefault;
+            tf.placeholder = @"例如 20";
+        }];
+        [c addAction:[UIAlertAction actionWithTitle:@"开始" style:UIAlertActionStyleDefault handler:^(UIAlertAction *y) {
+            double sec = [ADUtil parseDuration:c.textFields.firstObject.text];
+            if (sec <= 0) return;
+            ADPlayer.shared.sleepDeadline = [NSDate date].timeIntervalSince1970 + sec;
+            [self sync];
+        }]];
+        [c addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+        [self presentViewController:c animated:YES completion:nil];
+    }]];
     if (ADPlayer.shared.sleepDeadline > 0) {
         [a addAction:[UIAlertAction actionWithTitle:@"关闭定时" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) {
             ADPlayer.shared.sleepDeadline = 0;
@@ -671,10 +695,13 @@
     self.baseField = [self field:[ADConfig shared].baseURL placeholder:@"https://服务器地址:端口" keyboard:UIKeyboardTypeURL];
 
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"保存" style:UIBarButtonItemStyleDone target:self action:@selector(save)];
+    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"关闭" style:UIBarButtonItemStylePlain target:self action:@selector(closeSelf)];
 
     self.status = [ADUtil label:nil size:12 color:[UIColor colorWithWhite:1 alpha:0.5]];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:@"ADDownloadChanged" object:nil];
 }
+
+- (void)closeSelf { [self dismissViewControllerAnimated:YES completion:nil]; }
 
 - (void)refresh { [self.table reloadData]; }
 

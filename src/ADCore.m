@@ -201,6 +201,33 @@ static double ADNum(id o, NSString *k) {
     if (n >= 10000) return [NSString stringWithFormat:@"%.1f万", n / 10000];
     return [NSString stringWithFormat:@"%.0f", n];
 }
++ (double)parseDuration:(NSString *)text {
+    if (!text.length) return 0;
+    NSString *t = [[text lowercaseString] stringByReplacingOccurrencesOfString:@" " withString:@""];
+    double total = 0;
+    NSScanner *sc = [NSScanner scannerWithString:t];
+    while (!sc.isAtEnd) {
+        double v = 0;
+        if (![sc scanDouble:&v]) { sc.scanLocation = sc.scanLocation + 1; continue; }
+        NSString *unit = nil;
+        [sc scanCharactersFromSet:[NSCharacterSet letterCharacterSet] intoString:&unit];
+        if (!unit.length) total += v * 60;              // 纯数字按分钟
+        else if ([unit hasPrefix:@"h"]) total += v * 3600;
+        else if ([unit hasPrefix:@"s"]) total += v;
+        else total += v * 60;
+    }
+    return total;
+}
+
++ (NSString *)coverDir {
+    static NSString *d; static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        d = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/cache/covers"];
+        [[NSFileManager defaultManager] createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:nil];
+    });
+    return d;
+}
+
 + (void)cover:(UIImageView *)iv url:(NSString *)url {
     iv.contentMode = UIViewContentModeScaleAspectFill;
     iv.clipsToBounds = YES;
@@ -210,13 +237,22 @@ static double ADNum(id o, NSString *k) {
     NSURL *u = [url hasPrefix:@"http"] ? [NSURL URLWithString:url] : [NSURL URLWithString:[[ADConfig shared] url:url]];
     if (!u) return;
     static NSCache *cache; static dispatch_once_t once;
-    dispatch_once(&once, ^{ cache = [NSCache new]; cache.countLimit = 300; });
+    dispatch_once(&once, ^{ cache = [NSCache new]; cache.countLimit = 400; });
     UIImage *hit = [cache objectForKey:url];
     if (hit) { iv.image = hit; return; }
+    NSString *path = [[self coverDir] stringByAppendingPathComponent:
+                      [NSString stringWithFormat:@"%lu.jpg", (unsigned long)url.hash]];
+    UIImage *disk = [UIImage imageWithContentsOfFile:path];
+    if (disk) {
+        [cache setObject:disk forKey:url];
+        iv.image = disk;
+        return;
+    }
     [[[NSURLSession sharedSession] dataTaskWithURL:u completionHandler:^(NSData *data, NSURLResponse *r, NSError *e) {
         UIImage *img = data.length ? [UIImage imageWithData:data] : nil;
         if (!img) return;
         [cache setObject:img forKey:url];
+        [data writeToFile:path atomically:YES];
         dispatch_async(dispatch_get_main_queue(), ^{ iv.image = img; });
     }] resume];
 }
