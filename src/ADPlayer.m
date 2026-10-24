@@ -98,7 +98,7 @@
     [headers enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *s) {
         if ([v isKindOfClass:NSString.class] && [v length]) h[k] = v;
     }];
-    if (h.count) opts[AVURLAssetHTTPHeaderFieldsKey] = h;
+    if (h.count) opts[@"AVURLAssetHTTPHeaderFieldsKey"] = h;
     NSURL *u = [NSURL URLWithString:url];
     if (!u) { self.statusText = @"音频地址无效"; return; }
     AVURLAsset *asset = [AVURLAsset URLAssetWithURL:u options:opts];

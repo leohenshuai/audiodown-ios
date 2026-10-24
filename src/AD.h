@@ -42,6 +42,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setPosition:(double)sec for:(NSString *)trackId;
 - (NSString *)lastTrackOf:(NSString *)albumId;
 - (void)setLastTrack:(NSString *)trackId album:(NSString *)albumId;
+- (void)save;
 @end
 
 // ───────────────── 网络 ─────────────────

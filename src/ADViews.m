@@ -1,5 +1,6 @@
 #import "AD.h"
 #import <CoreMedia/CoreMedia.h>
+#import <AVFoundation/AVFoundation.h>
 
 // ───────────── 专辑卡片 ─────────────
 @protocol ADAlbumTap <NSObject>
