@@ -299,6 +299,14 @@
     [self build];
 }
 
+- (void)viewWillLayoutSubviews {
+    [super viewWillLayoutSubviews];
+    ADMiniBar *m = [ADMiniBar shared];
+    m.frame = CGRectMake(8, self.view.bounds.size.height - self.view.safeAreaInsets.bottom - 64, self.view.bounds.size.width - 16, 58);
+    if (!m.superview) [self.view addSubview:m];
+    [self.view bringSubviewToFront:m];
+}
+
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     if (self.needsSetup) {
