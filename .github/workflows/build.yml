@@ -14,7 +14,7 @@ jobs:
         run: |
           set -e
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-          mkdir -p build/Payload
+          mkdir -p build/Payload/ADBook.app
           xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=14.0 \
             -isysroot "$SDK" -fobjc-arc -O2 \
             -framework UIKit -framework Foundation -framework AVFoundation \
