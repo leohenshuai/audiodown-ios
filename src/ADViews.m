@@ -115,6 +115,7 @@
 @property (nonatomic, strong) UIRefreshControl *refresh;
 @property (nonatomic, strong) UILabel *hint;
 @property (nonatomic, strong) UIActivityIndicatorView *spin;
+@property (nonatomic, assign) BOOL needsSetup;
 @end
 
 @implementation ADDiscoverController
@@ -142,6 +143,15 @@
     [self.view addSubview:self.hint];
     [self.view addSubview:self.spin];
     [self load];
+    self.needsSetup = ([ADConfig shared].token.length == 0);
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    if (self.needsSetup) {
+        self.needsSetup = NO;
+        [self.navigationController pushViewController:[ADSettingsController new] animated:YES];
+    }
 }
 
 - (void)viewWillLayoutSubviews {

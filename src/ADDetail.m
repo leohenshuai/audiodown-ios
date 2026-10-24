@@ -366,6 +366,7 @@
 @property (nonatomic, strong) UITextField *baseField, *tokenField;
 @property (nonatomic, strong) UILabel *status;
 @property (nonatomic, strong) NSArray<NSDictionary *> *downloads;
+@property (nonatomic, copy) void (^onSaved)(BOOL ok);
 @end
 
 @implementation ADSettingsController
@@ -421,6 +422,7 @@
     [[ADApi shared] albumDetail:@"XMID59325711" done:^(ADAlbum *a, NSString *err) {
         __strong typeof(w) self = w; if (!self) return;
         self.status.text = err ? [@"连接失败：" stringByAppendingString:err] : [NSString stringWithFormat:@"连接正常 · %@", a.title];
+        if (self.onSaved) self.onSaved(err == nil);
     }];
 }
 
