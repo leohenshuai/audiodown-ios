@@ -1,6 +1,29 @@
 #import "AD.h"
 #import <AVFoundation/AVFoundation.h>
 
+
+@implementation ADTask
+- (void)encodeWithCoder:(NSCoder *)c {
+    [c encodeObject:_albumId forKey:@"albumId"]; [c encodeObject:_title forKey:@"title"];
+    [c encodeObject:_cover forKey:@"cover"]; [c encodeObject:_anchor forKey:@"anchor"];
+    [c encodeObject:_provider forKey:@"provider"]; [c encodeObject:_tracks forKey:@"tracks"];
+    [c encodeInteger:_done forKey:@"done"]; [c encodeInteger:_failed forKey:@"failed"];
+    [c encodeInteger:_state forKey:@"state"]; [c encodeInteger:_cursor forKey:@"cursor"];
+    [c encodeDouble:_bytes forKey:@"bytes"];
+}
+- (instancetype)initWithCoder:(NSCoder *)c {
+    if ((self = [super init])) {
+        _albumId = [c decodeObjectForKey:@"albumId"]; _title = [c decodeObjectForKey:@"title"];
+        _cover = [c decodeObjectForKey:@"cover"]; _anchor = [c decodeObjectForKey:@"anchor"];
+        _provider = [c decodeObjectForKey:@"provider"]; _tracks = [c decodeObjectForKey:@"tracks"] ?: @[];
+        _done = [c decodeIntegerForKey:@"done"]; _failed = [c decodeIntegerForKey:@"failed"];
+        _state = [c decodeIntegerForKey:@"state"]; _cursor = [c decodeIntegerForKey:@"cursor"];
+        _bytes = [c decodeDoubleForKey:@"bytes"];
+    }
+    return self;
+}
+@end
+
 @interface ADDownloader () <NSURLSessionDownloadDelegate>
 @property (nonatomic, strong) NSMutableArray<ADTask *> *tasks;
 @property (nonatomic, strong) NSURLSession *session;
