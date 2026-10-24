@@ -1,6 +1,6 @@
 #import "AD.h"
 
-@interface ADShelfController : UIViewController
+@interface ADShelfController : UIViewController <UICollectionViewDataSource, UICollectionViewDelegate, UISearchBarDelegate>
 @end
 
 @interface ADPlayerController : UIViewController

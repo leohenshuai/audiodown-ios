@@ -96,7 +96,7 @@ NSDictionary *ADUnwrapBook(id json) {
 @end
 
 // ───────────────────────── 书架 ─────────────────────────
-@interface ADShelfController : UIViewController <UICollectionViewDataSource, UICollectionViewDelegate, UISearchBarDelegate>
+@interface ADShelfController ()
 @property (nonatomic, strong) UICollectionView *cv;
 @property (nonatomic, strong) NSMutableArray<ADBook *> *books;
 @property (nonatomic, strong) UIRefreshControl *refresh;

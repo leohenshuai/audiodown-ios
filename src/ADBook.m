@@ -132,7 +132,8 @@
     UIImageView *_cover;
     UILabel *_title, *_chapter, *_elapsed, *_remain;
     UISlider *_slider;
-    UIButton *_play, *_prev, *_next, *_back15, *_fwd30, *_rate, *_sleep, *_list;
+    UIButton *_play, *_prev, *_next, *_back15, *_fwd30, *_list;
+    UILabel *_rate, *_sleep;
     NSTimer *_timer;
     BOOL _dragging;
 }

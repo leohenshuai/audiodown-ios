@@ -1,6 +1,8 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
+@class AVPlayer;
+
 NS_ASSUME_NONNULL_BEGIN
 
 // ─────────────────────────── 配置 ───────────────────────────

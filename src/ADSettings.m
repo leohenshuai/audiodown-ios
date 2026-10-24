@@ -39,7 +39,7 @@
     ];
     self.fields = [NSMutableArray array];
     for (NSInteger i = 0; i < (NSInteger)_keys.count; i++)
-        for (NSInteger j = 0; j < (NSInteger)_keys[i].count; j++) [self.fields addObject:[UITextField new]];
+        for (NSInteger j = 0; j < (NSInteger)[(NSArray *)_keys[i] count]; j++) [self.fields addObject:[UITextField new]];
 
     self.tv = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStyleInsetGrouped];
     self.tv.backgroundColor = UIColor.clearColor;
