@@ -355,6 +355,7 @@
     [self.scroll addSubview:sub];
 
     NSArray *icons = @[@"clock.arrow.circlepath", @"square.stack.fill"];
+    NSArray *sels = @[@"openHistory", @"openDownloads"];
     for (NSInteger i = 0; i < 2; i++) {
         UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
         b.frame = CGRectMake(W - 16 - 44 - i * 56, y + 4, 44, 44);
@@ -362,6 +363,8 @@
         b.layer.cornerRadius = 22;
         b.tintColor = (i == 1) ? [ADUtil brand] : UIColor.whiteColor;
         [b setImage:[UIImage systemImageNamed:icons[i] withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
+        SEL sel = NSSelectorFromString(sels[i]);
+        [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
         [self.scroll addSubview:b];
     }
     y += 62;
@@ -477,6 +480,14 @@
     m.frame = CGRectMake(8, self.view.bounds.size.height - bottom - 58, W - 16, 58);
     if (!m.superview) [self.view addSubview:m];
     [m refresh];
+}
+
+- (void)openHistory {
+    [self.navigationController pushViewController:[ADHistoryController new] animated:YES];
+}
+
+- (void)openDownloads {
+    [self.navigationController pushViewController:[ADDownloadsController new] animated:YES];
 }
 
 - (void)playCard:(ADAlbum *)a {

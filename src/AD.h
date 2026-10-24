@@ -137,3 +137,5 @@ NS_ASSUME_NONNULL_END
 @property (nonatomic, strong) ADAlbum *album;
 @end
 @interface ADPlayerController : UIViewController @end
+@interface ADHistoryController : UITableViewController @end
+@interface ADDownloadsController : UITableViewController @end

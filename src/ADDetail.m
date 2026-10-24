@@ -1,5 +1,6 @@
 #import "AD.h"
 #import <MediaPlayer/MediaPlayer.h>
+#import <AVKit/AVKit.h>
 #import <AVFoundation/AVFoundation.h>
 
 // ───────────── 专辑详情 ─────────────
@@ -223,6 +224,8 @@
 @property (nonatomic, strong) UILabel *titleLabel, *subLabel, *elapsed, *mid, *duration, *status;
 @property (nonatomic, strong) UISlider *slider;
 @property (nonatomic, strong) UIButton *playBtn, *starBtn, *moreBtn;
+@property (nonatomic, strong) AVRoutePickerView *routeView;
+@property (nonatomic, strong) UIButton *rateBtn, *sleepBtn;
 @property (nonatomic, assign) BOOL dragging;
 @property (nonatomic, strong) UITableView *queue;
 @property (nonatomic, assign) BOOL showQueue;
@@ -306,12 +309,19 @@
     for (UIButton *b in @[prev, back, fwd, next]) [self.view addSubview:b];
 
     // 底部工具行
-    UIButton *rate = [self textButton:@"1.0x" action:@selector(cycleRate)];
-    UIButton *sleep = [self iconButton:@"moon.zzz.fill" size:22 action:@selector(cycleSleep)];
-    UIButton *air = [self iconButton:@"airplayaudio" size:24 action:@selector(airplay)];
-    UIButton *list = [self iconButton:@"list.bullet" size:22 action:@selector(openQueue)];
-    rate.tag = 301; sleep.tag = 302; air.tag = 303; list.tag = 304;
-    for (UIButton *b in @[rate, sleep, air, list]) [self.view addSubview:b];
+    self.rateBtn = [self textButton:@"1x" action:@selector(showRateMenu)];
+    self.sleepBtn = [self iconButton:@"moon.zzz.fill" size:22 action:@selector(showSleepMenu)];
+    UIButton *list = [self iconButton:@"list.bullet" size:22 action:@selector(showQueueList)];
+    self.rateBtn.tag = 301; self.sleepBtn.tag = 302; list.tag = 304;
+    [self.view addSubview:self.rateBtn];
+    [self.view addSubview:self.sleepBtn];
+    [self.view addSubview:list];
+
+    self.routeView = [[AVRoutePickerView alloc] initWithFrame:CGRectMake(0, 0, 44, 36)];
+    self.routeView.tintColor = [UIColor colorWithWhite:1 alpha:0.85];
+    self.routeView.activeTintColor = [ADUtil brand];
+    self.routeView.prioritizesVideoDevices = NO;
+    [self.view addSubview:self.routeView];
 
     self.queue = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
     self.queue.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.98];
@@ -412,7 +422,7 @@
     UIButton *rate = (UIButton *)[self.view viewWithTag:301];
     rate.frame = CGRectMake(W / 2 - 150, y + 2, 58, 36);
     [self.view viewWithTag:302].frame = CGRectMake(W / 2 - 62, y + 2, 44, 36);
-    [self.view viewWithTag:303].frame = CGRectMake(W / 2 + 18, y + 2, 44, 36);
+    self.routeView.frame = CGRectMake(W / 2 + 18, y + 2, 44, 36);
     [self.view viewWithTag:304].frame = CGRectMake(W / 2 + 106, y + 2, 44, 36);
 
     if (self.showQueue) {
@@ -496,20 +506,47 @@
     [self presentViewController:a animated:YES completion:nil];
 }
 
-- (void)airplay {
-    MPVolumeView *vv = [self.view viewWithTag:901];
-    if (!vv) {
-        vv = [[MPVolumeView alloc] initWithFrame:CGRectMake(-2000, -2000, 40, 40)];
-        vv.tag = 901;
-        vv.showsVolumeSlider = NO;
-        vv.tintColor = UIColor.whiteColor;
-        [self.view addSubview:vv];
+- (void)showRateMenu {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"播放速度" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+    NSArray *rates = @[@0.5, @0.75, @1.0, @1.25, @1.5, @1.75, @2.0, @2.5, @3.0];
+    for (NSNumber *r in rates) {
+        BOOL on = fabs([r floatValue] - ADPlayer.shared.rate) < 0.001;
+        NSString *t = [NSString stringWithFormat:@"%@%@", [r floatValue] == 1.0 ? @"正常 1x" : [NSString stringWithFormat:@"%gx", [r floatValue]], on ? @"  ✓" : @""];
+        [a addAction:[UIAlertAction actionWithTitle:t style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+            ADPlayer.shared.rate = [r floatValue];
+            [self sync];
+        }]];
     }
-    UIButton *routeButton = nil;
-    for (UIView *v in vv.subviews) {
-        if ([v isKindOfClass:UIButton.class]) { routeButton = (UIButton *)v; break; }
+    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    a.popoverPresentationController.sourceView = self.rateBtn;
+    [self presentViewController:a animated:YES completion:nil];
+}
+
+- (void)showSleepMenu {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"定时关闭" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+    double now = [NSDate date].timeIntervalSince1970;
+    for (NSNumber *m in @[@15, @30, @45, @60, @90]) {
+        NSString *t = [NSString stringWithFormat:@"%@ 分钟后", m];
+        [a addAction:[UIAlertAction actionWithTitle:t style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+            ADPlayer.shared.sleepDeadline = now + [m doubleValue] * 60;
+            [self sync];
+        }]];
     }
-    if (routeButton) [routeButton sendActionsForControlEvents:UIControlEventTouchUpInside];
+    if (ADPlayer.shared.sleepDeadline > 0) {
+        [a addAction:[UIAlertAction actionWithTitle:@"关闭定时" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) {
+            ADPlayer.shared.sleepDeadline = 0;
+            [self sync];
+        }]];
+    }
+    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    a.popoverPresentationController.sourceView = self.sleepBtn;
+    [self presentViewController:a animated:YES completion:nil];
+}
+
+- (void)showQueueList {
+    ADPlayer *p = ADPlayer.shared;
+    if (!p.tracks.count) return;
+    [self openQueue];
 }
 
 - (void)sliderBegin { self.dragging = YES; }
@@ -521,7 +558,7 @@
 - (void)back15 { [ADPlayer.shared seekBy:-15]; }
 - (void)fwd15 { [ADPlayer.shared seekBy:15]; }
 
-- (void)cycleRate {
+- (void)cycleRateUnused {
     NSArray *rates = @[@0.75, @1.0, @1.25, @1.5, @1.75, @2.0, @2.5, @3.0];
     float cur = ADPlayer.shared.rate;
     UIAlertController *a = [UIAlertController alertControllerWithTitle:@"播放速度" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
@@ -538,7 +575,7 @@
     [self presentViewController:a animated:YES completion:nil];
 }
 
-- (void)cycleSleep {
+- (void)cycleSleepUnused {
     NSArray *mins = @[@0, @15, @30, @45, @60, @90];
     double now = [NSDate date].timeIntervalSince1970;
     double left = ADPlayer.shared.sleepDeadline > 0 ? (ADPlayer.shared.sleepDeadline - now) / 60.0 : 0;
