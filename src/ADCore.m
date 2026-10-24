@@ -12,119 +12,100 @@ static NSString *ADPref(NSString *k, NSString *d) {
     return c;
 }
 - (void)load {
-    NSUserDefaults *u = [NSUserDefaults standardUserDefaults];
-    _baseURL = ADPref(@"baseURL", @"https://audio.959935291.xyz:899");
-    _token = ADPref(@"token", @"");
-    _authHeader = ADPref(@"authHeader", @"Authorization");
-    _authScheme = ADPref(@"authScheme", @"Bearer");
-    _pathMe = ADPref(@"pathMe", @"/api/me");
-    _pathList = ADPref(@"pathList", @"/api/books");
-    _pathSearch = ADPref(@"pathSearch", @"/api/search?q={q}");
-    _pathBook = ADPref(@"pathBook", @"/api/books/{id}");
-    _pathStream = ADPref(@"pathStream", @"/api/books/{id}/stream");
-    _pathProgress = ADPref(@"pathProgress", @"/api/progress");
-    _listPath = ADPref(@"listPath", @"");
+    _baseURL = ADPref(@"ad.base", @"https://audio.959935291.xyz:899");
+    _token = ADPref(@"ad.token", @"");
 }
 - (void)save {
-    NSUserDefaults *u = [NSUserDefaults standardUserDefaults];
-    [u setObject:_baseURL forKey:@"baseURL"]; [u setObject:_token forKey:@"token"];
-    [u setObject:_authHeader forKey:@"authHeader"]; [u setObject:_authScheme forKey:@"authScheme"];
-    [u setObject:_pathMe forKey:@"pathMe"]; [u setObject:_pathList forKey:@"pathList"];
-    [u setObject:_pathSearch forKey:@"pathSearch"]; [u setObject:_pathBook forKey:@"pathBook"];
-    [u setObject:_pathStream forKey:@"pathStream"]; [u setObject:_pathProgress forKey:@"pathProgress"];
-    [u setObject:_listPath forKey:@"listPath"];
-    [u synchronize];
+    NSUserDefaults *u = NSUserDefaults.standardUserDefaults;
+    [u setObject:_baseURL forKey:@"ad.base"];
+    [u setObject:_token forKey:@"ad.token"];
 }
 - (NSDictionary *)headers {
     NSMutableDictionary *h = [NSMutableDictionary dictionary];
     h[@"Accept"] = @"application/json";
-    if (_token.length) {
-        if (_authScheme.length) {
-            h[_authHeader] = [NSString stringWithFormat:@"%@ %@", _authScheme, _token];
-        } else {
-            h[_authHeader] = _token;
-        }
-        // 兼容网页会话：同时带上 cookie
-        h[@"Cookie"] = [NSString stringWithFormat:@"token=%@; session=%@", _token, _token];
-    }
+    if (_token.length) h[@"Authorization"] = [@"Bearer " stringByAppendingString:_token];
     return h;
 }
-- (NSString *)urlFor:(NSString *)tmpl args:(NSDictionary<NSString *, NSString *> *)args {
-    NSString *t = tmpl;
-    for (NSString *k in args) {
-        t = [t stringByReplacingOccurrencesOfString:[NSString stringWithFormat:@"{%@}", k] withString:args[k]];
-    }
-    if ([t hasPrefix:@"http"]) return t;
-    NSString *base = _baseURL;
-    while (base.length && [base hasSuffix:@"/"]) base = [base substringToIndex:base.length - 1];
-    if (![t hasPrefix:@"/"]) t = [@"/" stringByAppendingString:t];
-    return [base stringByAppendingString:t];
+- (NSString *)url:(NSString *)path {
+    NSString *b = _baseURL;
+    while (b.length && [b hasSuffix:@"/"]) b = [b substringToIndex:b.length - 1];
+    if (![path hasPrefix:@"/"]) path = [@"/" stringByAppendingString:path];
+    return [b stringByAppendingString:path];
 }
 @end
 
-// ─────────────────────────── 模型 ───────────────────────────
-@implementation ADChapter
+// ───────────────── 模型 ─────────────────
+static NSString *ADStr(id o, NSString *k) {
+    if (![o isKindOfClass:NSDictionary.class]) return nil;
+    id v = o[k];
+    if ([v isKindOfClass:NSString.class]) return v;
+    if ([v isKindOfClass:NSNumber.class]) return [v stringValue];
+    return nil;
+}
+static double ADNum(id o, NSString *k) {
+    if (![o isKindOfClass:NSDictionary.class]) return 0;
+    id v = o[k];
+    return [v respondsToSelector:@selector(doubleValue)] ? [v doubleValue] : 0;
+}
+
+@implementation ADAlbum
 + (instancetype)fromJSON:(NSDictionary *)j {
-    if (![j isKindOfClass:[NSDictionary class]]) return nil;
-    ADChapter *c = [ADChapter new];
-    c.fid = [ADAPI stringAt:@"fid" in:j] ?: [ADAPI stringAt:@"id" in:j] ?: [ADAPI stringAt:@"cid" in:j] ?: @"";
-    c.title = [ADAPI stringAt:@"title" in:j] ?: [ADAPI stringAt:@"name" in:j] ?: c.fid;
-    c.streamURL = [ADAPI stringAt:@"url" in:j] ?: [ADAPI stringAt:@"stream_url" in:j] ?: [ADAPI stringAt:@"audio" in:j] ?: @"";
-    c.duration = [ADAPI doubleAt:@"duration" in:j];
-    return c;
+    if (![j isKindOfClass:NSDictionary.class]) return nil;
+    ADAlbum *a = [ADAlbum new];
+    a.albumId = ADStr(j, @"albumId") ?: ADStr(j, @"id") ?: @"";
+    a.title = ADStr(j, @"title") ?: ADStr(j, @"rawTitle") ?: @"未命名";
+    a.cover = ADStr(j, @"cover") ?: @"";
+    a.anchor = ADStr(j, @"anchorName") ?: @"";
+    a.author = ADStr(j, @"author") ?: @"";
+    a.reader = ADStr(j, @"reader") ?: @"";
+    a.intro = ADStr(j, @"intro") ?: @"";
+    a.provider = ADStr(j, @"provider") ?: @"";
+    a.trackCount = (NSInteger)ADNum(j, @"trackCount");
+    a.playCount = ADNum(j, @"playCount");
+    a.isFinished = ADNum(j, @"isFinished") > 0;
+    a.isPaid = ADNum(j, @"isPaid") > 0;
+    return a.albumId.length ? a : nil;
 }
 - (void)encodeWithCoder:(NSCoder *)c {
-    [c encodeObject:_fid forKey:@"fid"]; [c encodeObject:_title forKey:@"title"];
-    [c encodeObject:_streamURL forKey:@"streamURL"]; [c encodeDouble:_duration forKey:@"duration"];
+    for (NSString *k in @[@"albumId", @"title", @"cover", @"anchor", @"author", @"reader", @"intro", @"provider"])
+        [c encodeObject:[self valueForKey:k] forKey:k];
+    [c encodeInteger:_trackCount forKey:@"trackCount"];
+    [c encodeDouble:_playCount forKey:@"playCount"];
+    [c encodeBool:_isFinished forKey:@"isFinished"];
+    [c encodeBool:_isPaid forKey:@"isPaid"];
 }
 - (instancetype)initWithCoder:(NSCoder *)c {
     if ((self = [super init])) {
-        _fid = [c decodeObjectForKey:@"fid"]; _title = [c decodeObjectForKey:@"title"];
-        _streamURL = [c decodeObjectForKey:@"streamURL"]; _duration = [c decodeDoubleForKey:@"duration"];
+        for (NSString *k in @[@"albumId", @"title", @"cover", @"anchor", @"author", @"reader", @"intro", @"provider"])
+            [self setValue:[c decodeObjectForKey:k] forKey:k];
+        _trackCount = [c decodeIntegerForKey:@"trackCount"];
+        _playCount = [c decodeDoubleForKey:@"playCount"];
+        _isFinished = [c decodeBoolForKey:@"isFinished"];
+        _isPaid = [c decodeBoolForKey:@"isPaid"];
     }
     return self;
 }
 @end
 
-@implementation ADBook
-+ (instancetype)fromJSON:(NSDictionary *)j {
-    if (![j isKindOfClass:[NSDictionary class]]) return nil;
-    ADBook *b = [ADBook new];
-    b.bid = [ADAPI stringAt:@"id" in:j] ?: [ADAPI stringAt:@"bid" in:j] ?: [ADAPI stringAt:@"book_id" in:j] ?: @"";
-    b.title = [ADAPI stringAt:@"title" in:j] ?: [ADAPI stringAt:@"name" in:j] ?: @"未命名";
-    b.author = [ADAPI stringAt:@"author" in:j] ?: [ADAPI stringAt:@"authors" in:j] ?: @"";
-    b.narrator = [ADAPI stringAt:@"narrator" in:j] ?: [ADAPI stringAt:@"reader" in:j] ?: @"";
-    b.cover = [ADAPI stringAt:@"cover" in:j] ?: [ADAPI stringAt:@"cover_url" in:j] ?: [ADAPI stringAt:@"image" in:j] ?: @"";
-    b.summary = [ADAPI stringAt:@"summary" in:j] ?: [ADAPI stringAt:@"intro" in:j] ?: [ADAPI stringAt:@"description" in:j] ?: @"";
-    id chs = [ADAPI valueAt:@"chapters" in:j] ?: [ADAPI valueAt:@"tracks" in:j] ?: [ADAPI valueAt:@"items" in:j];
-    NSMutableArray *arr = [NSMutableArray array];
-    if ([chs isKindOfClass:[NSArray class]]) {
-        for (id o in (NSArray *)chs) { ADChapter *c = [ADChapter fromJSON:o]; if (c) [arr addObject:c]; }
-    }
-    b.chapters = arr;
-    return b;
-}
-- (void)encodeWithCoder:(NSCoder *)c {
-    [c encodeObject:_bid forKey:@"bid"]; [c encodeObject:_title forKey:@"title"];
-    [c encodeObject:_author forKey:@"author"]; [c encodeObject:_narrator forKey:@"narrator"];
-    [c encodeObject:_cover forKey:@"cover"]; [c encodeObject:_summary forKey:@"summary"];
-    [c encodeObject:_chapters forKey:@"chapters"];
-}
-- (instancetype)initWithCoder:(NSCoder *)c {
-    if ((self = [super init])) {
-        _bid = [c decodeObjectForKey:@"bid"]; _title = [c decodeObjectForKey:@"title"];
-        _author = [c decodeObjectForKey:@"author"]; _narrator = [c decodeObjectForKey:@"narrator"];
-        _cover = [c decodeObjectForKey:@"cover"]; _summary = [c decodeObjectForKey:@"summary"];
-        _chapters = [c decodeObjectForKey:@"chapters"] ?: @[];
-    }
-    return self;
+@implementation ADTrack
++ (instancetype)fromJSON:(NSDictionary *)j album:(ADAlbum *)a {
+    if (![j isKindOfClass:NSDictionary.class]) return nil;
+    ADTrack *t = [ADTrack new];
+    t.trackId = ADStr(j, @"trackId") ?: ADStr(j, @"id") ?: @"";
+    t.title = ADStr(j, @"title") ?: ADStr(j, @"trackTitle") ?: t.trackId;
+    t.albumId = ADStr(j, @"albumId") ?: a.albumId;
+    t.provider = ADStr(j, @"provider") ?: a.provider;
+    t.index = (NSInteger)ADNum(j, @"index");
+    t.duration = ADNum(j, @"duration");
+    return t.trackId.length ? t : nil;
 }
 @end
 
-// ─────────────────────────── 本地存储 ───────────────────────────
+// ───────────────── 存储 ─────────────────
 @implementation ADStore {
-    NSMutableArray<ADBook *> *_shelf;
-    NSMutableDictionary<NSString *, NSNumber *> *_progress;
+    NSMutableArray<ADAlbum *> *_fav;
+    NSMutableArray<ADAlbum *> *_hist;
+    NSMutableDictionary<NSString *, NSNumber *> *_pos;
     NSMutableDictionary<NSString *, NSString *> *_last;
 }
 + (instancetype)shared {
@@ -137,165 +118,94 @@ static NSString *ADPref(NSString *k, NSString *d) {
     return [d stringByAppendingPathComponent:n];
 }
 - (void)load {
-    _shelf = [NSKeyedUnarchiver unarchivedObjectOfClasses:[NSSet setWithObjects:[NSMutableArray class],[ADBook class],[ADChapter class],[NSArray class],[NSString class],nil] fromData:[NSData dataWithContentsOfFile:[self path:@"shelf.dat"]] error:nil] ?: [NSMutableArray array];
-    _progress = [NSKeyedUnarchiver unarchivedObjectOfClasses:[NSSet setWithObjects:[NSMutableDictionary class],[NSString class],[NSNumber class],nil] fromData:[NSData dataWithContentsOfFile:[self path:@"progress.dat"]] error:nil] ?: [NSMutableDictionary dictionary];
-    _last = [NSKeyedUnarchiver unarchivedObjectOfClasses:[NSSet setWithObjects:[NSMutableDictionary class],[NSString class],nil] fromData:[NSData dataWithContentsOfFile:[self path:@"last.dat"]] error:nil] ?: [NSMutableDictionary dictionary];
+    NSData *d1 = [NSData dataWithContentsOfFile:[self path:@"fav.dat"]];
+    NSData *d2 = [NSData dataWithContentsOfFile:[self path:@"hist.dat"]];
+    NSData *d3 = [NSData dataWithContentsOfFile:[self path:@"pos.dat"]];
+    NSData *d4 = [NSData dataWithContentsOfFile:[self path:@"last.dat"]];
+    NSSet *setA = [NSSet setWithObjects:NSMutableArray.class, NSArray.class, ADAlbum.class, NSString.class, nil];
+    _fav = (d1 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setA fromData:d1 error:nil] : nil) ?: [NSMutableArray array];
+    _hist = (d2 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setA fromData:d2 error:nil] : nil) ?: [NSMutableArray array];
+    NSSet *setD = [NSSet setWithObjects:NSMutableDictionary.class, NSDictionary.class, NSString.class, NSNumber.class, nil];
+    _pos = (d3 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setD fromData:d3 error:nil] : nil) ?: [NSMutableDictionary dictionary];
+    _last = (d4 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setD fromData:d4 error:nil] : nil) ?: [NSMutableDictionary dictionary];
 }
-- (NSMutableArray<ADBook *> *)shelf { return _shelf; }
 - (void)save {
-    [[NSKeyedArchiver archivedDataWithRootObject:_shelf requiringSecureCoding:NO error:nil] writeToFile:[self path:@"shelf.dat"] atomically:YES];
-    [[NSKeyedArchiver archivedDataWithRootObject:_progress requiringSecureCoding:NO error:nil] writeToFile:[self path:@"progress.dat"] atomically:YES];
+    [[NSKeyedArchiver archivedDataWithRootObject:_fav requiringSecureCoding:NO error:nil] writeToFile:[self path:@"fav.dat"] atomically:YES];
+    [[NSKeyedArchiver archivedDataWithRootObject:_hist requiringSecureCoding:NO error:nil] writeToFile:[self path:@"hist.dat"] atomically:YES];
+    [[NSKeyedArchiver archivedDataWithRootObject:_pos requiringSecureCoding:NO error:nil] writeToFile:[self path:@"pos.dat"] atomically:YES];
     [[NSKeyedArchiver archivedDataWithRootObject:_last requiringSecureCoding:NO error:nil] writeToFile:[self path:@"last.dat"] atomically:YES];
 }
-- (void)addBook:(ADBook *)b {
-    if (!b.bid.length) return;
-    for (ADBook *x in _shelf) if ([x.bid isEqualToString:b.bid]) return;
-    [_shelf insertObject:b atIndex:0]; [self save];
+- (NSArray<ADAlbum *> *)favorites { return _fav; }
+- (NSArray<ADAlbum *> *)history { return _hist; }
+- (BOOL)isFavorite:(NSString *)albumId {
+    for (ADAlbum *a in _fav) if ([a.albumId isEqualToString:albumId]) return YES;
+    return NO;
 }
-- (void)removeBook:(ADBook *)b { [_shelf removeObject:b]; [self save]; }
-- (double)progressForChapter:(NSString *)cid { return [_progress[cid] doubleValue]; }
-- (void)setProgress:(double)p forChapter:(NSString *)cid { if (cid.length) _progress[cid] = @(p); [self save]; }
-- (NSString *)lastChapterOfBook:(NSString *)bid { return _last[bid]; }
-- (void)setLastChapter:(NSString *)cid book:(NSString *)bid { if (bid.length) _last[bid] = cid; [self save]; }
+- (void)toggleFavorite:(ADAlbum *)a {
+    ADAlbum *hit = nil;
+    for (ADAlbum *x in _fav) if ([x.albumId isEqualToString:a.albumId]) { hit = x; break; }
+    if (hit) [_fav removeObject:hit]; else [_fav insertObject:a atIndex:0];
+    [self save];
+}
+- (void)touchHistory:(ADAlbum *)a {
+    ADAlbum *hit = nil;
+    for (ADAlbum *x in _hist) if ([x.albumId isEqualToString:a.albumId]) { hit = x; break; }
+    if (hit) [_hist removeObject:hit];
+    [_hist insertObject:a atIndex:0];
+    while (_hist.count > 30) [_hist removeLastObject];
+    [self save];
+}
+- (double)positionFor:(NSString *)trackId { return trackId ? [_pos[trackId] doubleValue] : 0; }
+- (void)setPosition:(double)sec for:(NSString *)trackId { if (trackId) _pos[trackId] = @(sec); [self save]; }
+- (NSString *)lastTrackOf:(NSString *)albumId { return albumId ? _last[albumId] : nil; }
+- (void)setLastTrack:(NSString *)trackId album:(NSString *)albumId {
+    if (albumId && trackId) _last[albumId] = trackId;
+    [self save];
+}
 @end
 
-// ─────────────────────────── 网络 ───────────────────────────
-@implementation ADAPI
-+ (instancetype)shared {
-    static ADAPI *a; static dispatch_once_t once;
-    dispatch_once(&once, ^{ a = [ADAPI new]; });
-    return a;
+// ───────────────── 工具 ─────────────────
+@implementation ADUtil
++ (UIColor *)brand { return [UIColor colorWithRed:0.973 green:0.392 blue:0.26 alpha:1]; }
++ (UIColor *)bg { return [UIColor colorWithRed:0.067 green:0.047 blue:0.035 alpha:1]; }
++ (UIColor *)card { return [UIColor colorWithWhite:1 alpha:0.07]; }
++ (UIColor *)dim { return [UIColor colorWithWhite:1 alpha:0.55]; }
++ (UILabel *)label:(NSString *)font size:(CGFloat)size color:(UIColor *)c {
+    UILabel *l = [UILabel new];
+    UIFont *f = font.length ? [UIFont fontWithName:font size:size] : nil;
+    l.font = f ?: [UIFont systemFontOfSize:size];
+    l.textColor = c;
+    l.numberOfLines = 0;
+    return l;
 }
-
-+ (id)valueAt:(NSString *)path in:(id)obj {
-    if (!path.length) return obj;
-    id cur = obj;
-    for (NSString *part in [path componentsSeparatedByString:@"."]) {
-        NSString *key = part; NSInteger idx = -1;
-        NSRange br = [part rangeOfString:@"["];
-        if (br.location != NSNotFound) {
-            key = [part substringToIndex:br.location];
-            NSString *num = [[part substringFromIndex:br.location] stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"[]"]];
-            idx = num.integerValue;
-        }
-        if (key.length) {
-            if ([cur isKindOfClass:[NSDictionary class]]) cur = cur[key];
-            else return nil;
-        }
-        if (idx >= 0) {
-            if ([cur isKindOfClass:[NSArray class]] && idx < (NSInteger)[cur count]) cur = cur[idx];
-            else return nil;
-        }
-        if (!cur) return nil;
-    }
-    return cur;
++ (NSString *)time:(double)sec {
+    if (isnan(sec) || sec < 0) sec = 0;
+    int s = (int)sec, h = s / 3600, m = (s % 3600) / 60, q = s % 60;
+    if (h > 0) return [NSString stringWithFormat:@"%d:%02d:%02d", h, m, q];
+    return [NSString stringWithFormat:@"%02d:%02d", m, q];
 }
-+ (NSString *)stringAt:(NSString *)path in:(id)obj {
-    id v = [self valueAt:path in:obj];
-    if ([v isKindOfClass:[NSString class]]) return v;
-    if ([v isKindOfClass:[NSNumber class]]) return [v stringValue];
-    return nil;
++ (NSString *)count:(double)n {
+    if (n >= 100000000) return [NSString stringWithFormat:@"%.1f亿", n / 100000000];
+    if (n >= 10000) return [NSString stringWithFormat:@"%.1f万", n / 10000];
+    return [NSString stringWithFormat:@"%.0f", n];
 }
-+ (double)doubleAt:(NSString *)path in:(id)obj {
-    id v = [self valueAt:path in:obj];
-    if ([v respondsToSelector:@selector(doubleValue)]) return [v doubleValue];
-    return 0;
-}
-
-- (NSURLSession *)session {
-    static NSURLSession *s; static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        NSURLSessionConfiguration *c = [NSURLSessionConfiguration defaultSessionConfiguration];
-        c.timeoutIntervalForRequest = 20;
-        s = [NSURLSession sessionWithConfiguration:c delegate:nil delegateQueue:nil];
-    });
-    return s;
-}
-
-- (NSURL *)urlChecked:(NSString *)url {
-    return [NSURL URLWithString:[url stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]]];
-}
-
-- (void)request:(NSString *)pathOrURL method:(NSString *)method body:(id)body completion:(ADJSONBlock)cb {
-    ADConfig *cfg = [ADConfig shared];
-    NSString *full = [pathOrURL hasPrefix:@"http"] ? pathOrURL : [cfg urlFor:pathOrURL args:@{}];
-    NSURL *u = [self urlChecked:full];
-    if (!u) { if (cb) cb(nil, [NSError errorWithDomain:@"ad" code:1 userInfo:@{NSLocalizedDescriptionKey: @"URL 无效"}], 0); return; }
-    NSMutableURLRequest *r = [NSMutableURLRequest requestWithURL:u];
-    r.HTTPMethod = method ?: @"GET";
-    [cfg.headers enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *s) { [r setValue:v forHTTPHeaderField:k]; }];
-    if (body) {
-        r.HTTPBody = [NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
-        [r setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-    }
-    [[self.session dataTaskWithRequest:r completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
-        NSInteger code = [(NSHTTPURLResponse *)resp statusCode];
-        id json = nil;
-        if (data.length) json = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingAllowFragments error:nil];
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (cb) cb(json ?: (data.length ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil), err, code);
-        });
++ (void)cover:(UIImageView *)iv url:(NSString *)url {
+    iv.contentMode = UIViewContentModeScaleAspectFill;
+    iv.clipsToBounds = YES;
+    iv.backgroundColor = [UIColor colorWithWhite:1 alpha:0.08];
+    iv.image = nil;
+    if (!url.length) return;
+    NSURL *u = [url hasPrefix:@"http"] ? [NSURL URLWithString:url] : [NSURL URLWithString:[[ADConfig shared] url:url]];
+    if (!u) return;
+    static NSCache *cache; static dispatch_once_t once;
+    dispatch_once(&once, ^{ cache = [NSCache new]; cache.countLimit = 300; });
+    UIImage *hit = [cache objectForKey:url];
+    if (hit) { iv.image = hit; return; }
+    [[[NSURLSession sharedSession] dataTaskWithURL:u completionHandler:^(NSData *data, NSURLResponse *r, NSError *e) {
+        UIImage *img = data.length ? [UIImage imageWithData:data] : nil;
+        if (!img) return;
+        [cache setObject:img forKey:url];
+        dispatch_async(dispatch_get_main_queue(), ^{ iv.image = img; });
     }] resume];
 }
-
-- (void)me:(ADJSONBlock)cb { [self request:[ADConfig shared].pathMe method:@"GET" body:nil completion:cb]; }
-
-- (void)fetchList:(NSString *)query completion:(ADJSONBlock)cb {
-    ADConfig *cfg = [ADConfig shared];
-    NSString *p = query.length ? cfg.pathSearch : cfg.pathList;
-    p = [p stringByReplacingOccurrencesOfString:@"{q}" withString:[query stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]] ?: @""];
-    [self request:p method:@"GET" body:nil completion:cb];
-}
-
-- (void)fetchBook:(NSString *)bid completion:(ADJSONBlock)cb {
-    NSString *p = [[ADConfig shared].pathBook stringByReplacingOccurrencesOfString:@"{id}" withString:bid];
-    [self request:p method:@"GET" body:nil completion:cb];
-}
-
-- (void)reportProgress:(NSString *)bid chapter:(NSString *)cid seconds:(double)s chapterProgress:(double)p {
-    ADConfig *cfg = [ADConfig shared];
-    if (!cfg.pathProgress.length) return;
-    NSDictionary *body = @{@"book_id": bid ?: @"", @"chapter_id": cid ?: @"", @"position": @(s), @"progress": @(p)};
-    [self request:cfg.pathProgress method:@"POST" body:body completion:^(id j, NSError *e, NSInteger c) {}];
-}
-
-- (NSURL *)streamURLFor:(ADChapter *)ch {
-    if (ch.streamURL.length) {
-        if ([ch.streamURL hasPrefix:@"http"]) return [NSURL URLWithString:ch.streamURL];
-        return [NSURL URLWithString:[[ADConfig shared] urlFor:ch.streamURL args:@{}]];
-    }
-    if (!ch.fid.length) return nil;
-    NSString *p = [[ADConfig shared].pathStream stringByReplacingOccurrencesOfString:@"{id}" withString:ch.fid];
-    return [NSURL URLWithString:[[ADConfig shared] urlFor:p args:@{}]];
-}
-
-- (void)probeAuth:(void (^)(NSString *))cb {
-    ADConfig *cfg = [ADConfig shared];
-    NSString *savedH = cfg.authHeader, *savedS = cfg.authScheme;
-    NSArray *combos = @[@[@"Authorization", @"Bearer"], @[@"Authorization", @"Token"], @[@"Authorization", @""],
-                        @[@"X-Api-Key", @""], @[@"X-Token", @""], @[@"X-Access-Token", @""], @[@"token", @"@"],
-                        @[@"X-Auth-Token", @""], @[@"api-key", @""]];
-    NSMutableArray *tried = [NSMutableArray array];
-    __block NSInteger i = 0;
-    __block void (^step)(void);
-    step = ^{
-        if (i >= (NSInteger)combos.count) {
-            cfg.authHeader = savedH; cfg.authScheme = savedS; [cfg save];
-            cb([tried componentsJoinedByString:@"\n"]);
-            return;
-        }
-        NSArray *c = combos[i];
-        cfg.authHeader = c[0]; cfg.authScheme = [c[1] isEqualToString:@"@"] ? nil : c[1];
-        [[ADAPI shared] me:^(id json, NSError *err, NSInteger code) {
-            [tried addObject:[NSString stringWithFormat:@"%@: %@  →  HTTP %ld", c[0], c[1], (long)code]];
-            if (code == 200) {
-                cfg.authHeader = c[0]; cfg.authScheme = c[1]; [cfg save];
-                [tried addObject:@"\n✅ 命中这一种，已自动保存"];
-                cb([tried componentsJoinedByString:@"\n"]);
-            } else { i++; step(); }
-        }];
-    };
-    step();
-}
-
 @end

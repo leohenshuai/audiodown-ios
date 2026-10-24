@@ -2,107 +2,103 @@
 #import <UIKit/UIKit.h>
 
 @class AVPlayer;
-
 NS_ASSUME_NONNULL_BEGIN
 
-// ─────────────────────────── 配置 ───────────────────────────
+// ───────────────── 配置 ─────────────────
 @interface ADConfig : NSObject
-@property (nonatomic, copy) NSString *baseURL;      // https://audio.959935291.xyz:899
+@property (nonatomic, copy) NSString *baseURL;
 @property (nonatomic, copy) NSString *token;
-@property (nonatomic, copy) NSString *authHeader;   // 例如 Authorization / X-Token / X-Api-Key
-@property (nonatomic, copy) NSString *authScheme;   // 例如 Bearer  / Token / (空)
-// 接口路径，支持 {id} {q} 占位符
-@property (nonatomic, copy) NSString *pathMe;
-@property (nonatomic, copy) NSString *pathList;
-@property (nonatomic, copy) NSString *pathSearch;
-@property (nonatomic, copy) NSString *pathBook;
-@property (nonatomic, copy) NSString *pathStream;
-@property (nonatomic, copy) NSString *pathProgress;
-// JSON 取字段路径，支持 a.b.c 与 a[0]
-@property (nonatomic, copy) NSString *listPath;     // 书籍数组所在位置，空=自动
 + (instancetype)shared;
 - (void)save;
 - (NSDictionary *)headers;
-- (NSString *)urlFor:(NSString *)tmpl args:(NSDictionary<NSString *, NSString *> *)args;
+- (NSString *)url:(NSString *)path;
 @end
 
-// ─────────────────────────── 数据 ───────────────────────────
-@interface ADChapter : NSObject <NSCoding>
-@property (nonatomic, copy) NSString *fid;
-@property (nonatomic, copy) NSString *title;
-@property (nonatomic, copy) NSString *streamURL;
+// ───────────────── 模型 ─────────────────
+@interface ADAlbum : NSObject <NSCoding>
+@property (nonatomic, copy) NSString *albumId, *title, *cover, *anchor, *author, *reader, *intro, *provider;
+@property (nonatomic, assign) NSInteger trackCount;
+@property (nonatomic, assign) double playCount;
+@property (nonatomic, assign) BOOL isFinished, isPaid;
++ (instancetype)fromJSON:(NSDictionary *)j;
+@end
+
+@interface ADTrack : NSObject
+@property (nonatomic, copy) NSString *trackId, *title, *albumId, *provider;
+@property (nonatomic, assign) NSInteger index;
 @property (nonatomic, assign) double duration;
-+ (instancetype)fromJSON:(NSDictionary *)json;
++ (instancetype)fromJSON:(NSDictionary *)j album:(ADAlbum *)a;
 @end
 
-@interface ADBook : NSObject <NSCoding>
-@property (nonatomic, copy) NSString *bid;
-@property (nonatomic, copy) NSString *title;
-@property (nonatomic, copy) NSString *author;
-@property (nonatomic, copy) NSString *narrator;
-@property (nonatomic, copy) NSString *cover;
-@property (nonatomic, copy) NSString *summary;
-@property (nonatomic, strong) NSArray<ADChapter *> *chapters;
-+ (instancetype)fromJSON:(NSDictionary *)json;
-@end
-
+// ───────────────── 本地存储 ─────────────────
 @interface ADStore : NSObject
 + (instancetype)shared;
-@property (nonatomic, strong, readonly) NSMutableArray<ADBook *> *shelf;
-- (void)save;
-- (void)addBook:(ADBook *)b;
-- (void)removeBook:(ADBook *)b;
-- (double)progressForChapter:(NSString *)cid;
-- (void)setProgress:(double)p forChapter:(NSString *)cid;
-- (NSString *)lastChapterOfBook:(NSString *)bid;
-- (void)setLastChapter:(NSString *)cid book:(NSString *)bid;
+- (NSArray<ADAlbum *> *)favorites;
+- (BOOL)isFavorite:(NSString *)albumId;
+- (void)toggleFavorite:(ADAlbum *)a;
+- (NSArray<ADAlbum *> *)history;                    // 最近收听
+- (void)touchHistory:(ADAlbum *)a;
+- (double)positionFor:(NSString *)trackId;
+- (void)setPosition:(double)sec for:(NSString *)trackId;
+- (NSString *)lastTrackOf:(NSString *)albumId;
+- (void)setLastTrack:(NSString *)trackId album:(NSString *)albumId;
 @end
 
-// ─────────────────────────── 网络 ───────────────────────────
-typedef void (^ADJSONBlock)(id _Nullable json, NSError *_Nullable err, NSInteger status);
-@interface ADAPI : NSObject
+// ───────────────── 网络 ─────────────────
+typedef void (^ADErr)(NSString * _Nullable err);
+@interface ADApi : NSObject
 + (instancetype)shared;
-- (void)request:(NSString *)pathOrURL method:(NSString *)method body:(nullable id)body completion:(ADJSONBlock)cb;
-- (void)me:(ADJSONBlock)cb;
-- (void)fetchList:(nullable NSString *)query completion:(ADJSONBlock)cb;
-- (void)fetchBook:(NSString *)bid completion:(ADJSONBlock)cb;
-- (void)reportProgress:(NSString *)bid chapter:(NSString *)cid seconds:(double)s chapterProgress:(double)p;
-- (nullable NSURL *)streamURLFor:(ADChapter *)ch;
-// 认证测试：逐个尝试常见方式，返回命中描述
-- (void)probeAuth:(void (^)(NSString *report))cb;
-+ (nullable id)valueAt:(NSString *)path in:(id)obj;
-+ (NSString *)stringAt:(NSString *)path in:(id)obj;
-+ (double)doubleAt:(NSString *)path in:(id)obj;
+- (void)discover:(void (^)(NSArray<NSDictionary *> *sections, NSString * _Nullable err))cb;
+- (void)search:(NSString *)q page:(NSInteger)page done:(void (^)(NSArray<ADAlbum *> *list, BOOL more, NSString * _Nullable err))cb;
+- (void)albumDetail:(NSString *)albumId done:(void (^)(ADAlbum * _Nullable a, NSString * _Nullable err))cb;
+- (void)tracksOf:(NSString *)albumId page:(NSInteger)page done:(void (^)(NSArray<ADTrack *> *list, NSInteger total, NSString * _Nullable err))cb;
+- (void)playURLOf:(ADTrack *)t done:(void (^)(NSString * _Nullable url, NSDictionary * _Nullable headers, NSString * _Nullable err))cb;
+- (void)downloads:(void (^)(NSArray<NSDictionary *> *items, NSString * _Nullable err))cb;
 @end
 
-// ─────────────────────────── 播放器 ───────────────────────────
+// ───────────────── 播放器 ─────────────────
 @interface ADPlayer : NSObject
-@property (nonatomic, strong, nullable) ADBook *book;
+@property (nonatomic, strong, nullable) ADAlbum *album;
+@property (nonatomic, strong) NSArray<ADTrack *> *tracks;
 @property (nonatomic, assign) NSInteger index;
 @property (nonatomic, assign) float rate;
-@property (nonatomic, assign) double sleepTimerDeadline; // 0 = 关
+@property (nonatomic, assign) double sleepDeadline;   // 0 关闭
+@property (nonatomic, copy, nullable) NSString *statusText;
 + (instancetype)shared;
-- (void)playBook:(ADBook *)book at:(NSInteger)index;
-- (void)playIndex:(NSInteger)index;
+- (AVPlayer *)player;
+- (nullable ADTrack *)current;
+- (BOOL)isPlaying;
+- (void)playAlbum:(ADAlbum *)album tracks:(NSArray<ADTrack *> *)tracks at:(NSInteger)index;
+- (void)playAt:(NSInteger)index;
 - (void)toggle;
 - (void)pause;
-- (void)next; - (void)prev;
+- (void)next;
+- (void)prev;
 - (void)seekTo:(double)sec;
 - (void)seekBy:(double)delta;
-- (AVPlayer *)player;
-- (nullable ADChapter *)currentChapter;
-- (void)setupRemoteCommands;
+- (void)start;
 @end
 
-// ─────────────────────────── 工具 ───────────────────────────
+// ───────────────── 工具 ─────────────────
 @interface ADUtil : NSObject
-+ (NSString *)timeString:(double)sec;
-+ (void)coverInto:(UIImageView *)iv url:(nullable NSString *)url;
-+ (UILabel *)label:(NSString *)font size:(CGFloat)size color:(UIColor *)c;
 + (UIColor *)brand;
 + (UIColor *)bg;
 + (UIColor *)card;
 + (UIColor *)dim;
++ (UILabel *)label:(nullable NSString *)font size:(CGFloat)size color:(UIColor *)c;
++ (NSString *)time:(double)sec;
++ (NSString *)count:(double)n;
++ (void)cover:(UIImageView *)iv url:(nullable NSString *)url;
 @end
 
 NS_ASSUME_NONNULL_END
+
+// 跨文件
+@interface ADDiscoverController : UIViewController @end
+@interface ADSearchController : UIViewController @end
+@interface ADShelfController : UIViewController @end
+@interface ADSettingsController : UIViewController @end
+@interface ADAlbumController : UIViewController
+@property (nonatomic, strong) ADAlbum *album;
+@end
+@interface ADPlayerController : UIViewController @end
