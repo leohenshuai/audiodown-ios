@@ -497,14 +497,15 @@
     c.textLabel.text = tr.title;
     double pos = [[ADStore shared] positionFor:tr.trackId];
     BOOL listened = [[ADStore shared] isDone:tr.trackId];
-    if ([[ADDownloader shared] hasLocal:tr.trackId]) {
-        c.detailTextLabel.text = @"已缓存 · 离线可听";
-        c.detailTextLabel.textColor = [ADUtil brand];
-    } else
     NSString *base = pos > 0
         ? [NSString stringWithFormat:@"听到 %@ / %@", [ADUtil time:pos], [ADUtil time:tr.duration]]
         : (tr.duration > 0 ? [ADUtil time:tr.duration] : @"");
-    c.detailTextLabel.text = listened ? (base.length ? [NSString stringWithFormat:@"已听完 · %@", base] : @"已听完") : base;
+    if ([[ADDownloader shared] hasLocal:tr.trackId]) {
+        c.detailTextLabel.text = listened ? @"已听完 · 已缓存" : @"已缓存 · 离线可听";
+        c.detailTextLabel.textColor = [ADUtil brand];
+    } else {
+        c.detailTextLabel.text = listened ? (base.length ? [NSString stringWithFormat:@"已听完 · %@", base] : @"已听完") : base;
+    }
     ADTrack *cur = ADPlayer.shared.current;
     BOOL playing = cur && [cur.trackId isEqualToString:tr.trackId];
     c.textLabel.textColor = playing ? [ADUtil brand] : UIColor.whiteColor;
