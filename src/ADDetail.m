@@ -23,6 +23,7 @@
 @property (nonatomic, strong) UIView *actionBar;
 @property (nonatomic, strong) UILabel *actionLabel;
 @property (nonatomic, assign) NSInteger jumpTarget;
+@property (nonatomic, assign) BOOL hasMore;
 @end
 
 @implementation ADAlbumController
@@ -207,7 +208,7 @@
         [self.table scrollToRowAtIndexPath:ip atScrollPosition:UITableViewScrollPositionTop animated:YES];
         return;
     }
-    if (!self.more) return;
+    if (!self.hasMore) return;
     self.jumpTarget = idx;
     [self loadTracks];
 }
@@ -287,6 +288,7 @@
 
 - (void)refreshAll {
     self.page = 1;
+    self.hasMore = YES;
     [self.tracks removeAllObjects];
     [self.table reloadData];
     [self loadTracks];
@@ -336,6 +338,7 @@
         if (total > 0) self.total = total;
         if (list.count) [self.tracks addObjectsFromArray:list];
         if (list.count) self.page += 1;
+        self.hasMore = list.count > 0 && (NSInteger)self.tracks.count < MAX(self.total, 1);
         [self.table reloadData];
         [self fillHeader];
         if (self.jumpTarget >= 0 && (NSInteger)self.tracks.count > self.jumpTarget) {

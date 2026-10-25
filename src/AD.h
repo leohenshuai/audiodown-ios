@@ -100,6 +100,9 @@ typedef NS_ENUM(NSInteger, ADTaskState) {
 @property (nonatomic, assign) float rate;
 @property (nonatomic, assign) double sleepDeadline;
 @property (nonatomic, strong) NSMutableSet *prefetching;
+- (void)prefetchAhead;
+- (void)cleanPrefetch;
+- (NSString *)prefetchPath:(NSString *)trackId;
 @property (nonatomic, assign) BOOL stopAfterChapter;   // 0 关闭
 @property (nonatomic, copy, nullable) NSString *statusText;
 + (instancetype)shared;
