@@ -316,13 +316,13 @@
     NSArray<NSString *> *paths = @[
         [NSString stringWithFormat:@"/open-api/v1/albums/%@", aid],
         [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=1&pageSize=50", aid],
-        [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=1&pageSize=20", aid],
-        [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=1&pageSize=10", aid],
-        [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=1&pageSize=5", aid],
-        [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=0&pageSize=50", aid],
-        [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=1&pageSize=50&refresh=1", aid],
-        [NSString stringWithFormat:@"/api/v1/albums/%@/tracks?page=1&pageSize=50", aid],
-        [NSString stringWithFormat:@"/api/v1/books/%@/chapters?page=1&pageSize=50", aid],
+        [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks", aid],
+        [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?pageSize=500", aid],
+        [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=1&pageSize=260", aid],
+        [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=1&pageSize=50&targetChapterIndex=1", aid],
+        [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=1&pageSize=50&full=1", aid],
+        [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=1&pageSize=50&mode=full", aid],
+        [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=1&pageSize=50&provider=xm", aid],
     ];
     NSMutableString *out = [NSMutableString stringWithFormat:@"albumId=%@\nprovider=%@\ntrackCount=%ld\n\n",
                             aid, self.album.provider, (long)self.album.trackCount];
