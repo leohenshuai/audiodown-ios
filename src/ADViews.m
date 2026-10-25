@@ -663,7 +663,7 @@
 }
 
 - (NSArray *)catWords:(NSInteger)i {
-    NSArray *map = @[@[], @[@"小说", @"传", @"故事", @"全集", @"演义", @"仙", @"医", @"明星", @"帝", @"都市", @"剑", @"记"],
+    NSArray *map = @[@[], @[],
                      @[@"相声", @"评书", @"单口", @"德云", @"郭德纲", @"小品", @"段子", @"说书"],
                      @[@"音乐", @"钢琴", @"古筝", @"纯音乐", @"轻音乐", @"歌曲", @"助眠", @"白噪音", @"吉他", @"睡眠"],
                      @[@"儿童", @"宝宝", @"睡前", @"童话", @"儿歌", @"绘本", @"成语", @"幼儿"],
@@ -714,12 +714,28 @@
     }
 }
 
-- (BOOL)catMatch:(ADAlbum *)a {
-    if (self.catIndex == 0) return YES;
-    NSArray *words = [self catWords:self.catIndex];
-    NSString *hay = [NSString stringWithFormat:@"%@ %@ %@ %@", a.title ?: @"", a.anchor ?: @"", a.author ?: @"", a.intro ?: @""];
+- (NSString *)hayOf:(ADAlbum *)a {
+    return [NSString stringWithFormat:@"%@ %@ %@ %@", a.title ?: @"", a.anchor ?: @"", a.author ?: @"", a.intro ?: @""];
+}
+
+- (BOOL)titleMatches:(ADAlbum *)a category:(NSInteger)idx {
+    NSArray *words = [self catWords:idx];
+    if (!words.count) return NO;
+    NSString *hay = [self hayOf:a];
     for (NSString *w in words) if ([hay rangeOfString:w].location != NSNotFound) return YES;
     return NO;
+}
+
+- (BOOL)catMatch:(ADAlbum *)a {
+    if (self.catIndex == 0) return YES;
+    if (self.catIndex == 1) {
+        // 这个服务本身就是有声书库，「有声书」= 不属于其他分类的全部内容
+        for (NSInteger i = 2; i < (NSInteger)[self catTitles].count; i++) {
+            if ([self titleMatches:a category:i]) return NO;
+        }
+        return YES;
+    }
+    return [self titleMatches:a category:self.catIndex];
 }
 
 - (NSArray<ADAlbum *> *)visible {
