@@ -163,6 +163,12 @@
         [self addSubview:_title];
         UITapGestureRecognizer *t = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(open)];
         [self addGestureRecognizer:t];
+        _cover.layer.cornerCurve = kCACornerCurveContinuous;
+        _cover.layer.shadowColor = UIColor.blackColor.CGColor;
+        _cover.layer.shadowOpacity = 0.35;
+        _cover.layer.shadowRadius = 14;
+        _cover.layer.shadowOffset = CGSizeMake(0, 8);
+        [ADLiquid press:self];
         self.album = a;
     }
     return self;
@@ -202,11 +208,9 @@
     return m;
 }
 - (void)build {
-    self.backgroundColor = [UIColor colorWithWhite:0.16 alpha:0.96];
-    self.layer.cornerRadius = 16;
-    self.clipsToBounds = YES;
-    self.layer.borderWidth = 0.5;
-    self.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.12].CGColor;
+    [ADLiquid glass:self radius:16];
+    [ADLiquid float:self];
+    self.layer.shadowOpacity = 0.28;
     _cover = [[UIImageView alloc] initWithFrame:CGRectMake(8, 8, 42, 42)];
     _cover.layer.cornerRadius = 8; _cover.clipsToBounds = YES;
     _title = [ADUtil label:@"PingFangSC-Semibold" size:14 color:UIColor.whiteColor];
@@ -291,7 +295,8 @@
         CGFloat h = _collapsed ? 50 : 58;
         CGFloat w = _collapsed ? 50 : W - 16;
         CGFloat bottom = tab.view.bounds.size.height - tab.view.safeAreaInsets.bottom - 8 - h;
-        CGFloat aboveBar = tab.tabBar.frame.origin.y - 8 - h;
+        ADNavDock *dock = [ADNavDock shared];
+        CGFloat aboveBar = dock.dockVisible ? (dock.topY - 10 - h) : 1e9;
         CGFloat y = MIN(bottom, aboveBar) + (58 - h) / 2.0;
         CGFloat x = _collapsed ? (W - w - 6) : 8;
         target = CGRectMake(x, y, w, h);
@@ -302,12 +307,12 @@
     void (^apply)(void) = ^{
         __strong typeof(wself) me = wself; if (!me) return;
         me.frame = target;
-        me.layer.cornerRadius = me->_collapsed ? 25 : 16;
-        me.clipsToBounds = !me->_collapsed;
+        [ADLiquid corner:(me->_collapsed ? 25 : 16) on:me];
+        me.clipsToBounds = NO;
         me.layer.shadowColor = UIColor.blackColor.CGColor;
-        me.layer.shadowOpacity = me->_collapsed ? 0.35 : 0;
-        me.layer.shadowRadius = me->_collapsed ? 10 : 0;
-        me.layer.shadowOffset = CGSizeMake(0, 3);
+        me.layer.shadowOpacity = me->_collapsed ? 0.45 : 0.30;
+        me.layer.shadowRadius = me->_collapsed ? 14 : 24;
+        me.layer.shadowOffset = CGSizeMake(0, me->_collapsed ? 5 : 12);
     };
     if (CGRectEqualToRect(self.frame, target)) { apply(); return; }
     if (animated) {
@@ -434,7 +439,7 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithRed:0.043 green:0.035 blue:0.035 alpha:1];
+    [ADLiquid canvas:self.view];
     self.navigationController.navigationBar.hidden = YES;
 
     self.scroll = [[UIScrollView alloc] initWithFrame:self.view.bounds];
@@ -522,8 +527,8 @@
     for (NSInteger i = 0; i < 2; i++) {
         UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
         b.frame = CGRectMake(W - 16 - 44 - i * 56, y + 4, 44, 44);
-        b.backgroundColor = [UIColor colorWithWhite:1 alpha:0.14];
-        b.layer.cornerRadius = 22;
+        [ADLiquid glass:b radius:22 alpha:0.07];
+        [ADLiquid float:b];
         b.tintColor = (i == 1) ? [ADUtil brand] : UIColor.whiteColor;
         [b setImage:[UIImage systemImageNamed:icons[i] withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
         SEL sel = NSSelectorFromString(sels[i]);
@@ -568,7 +573,9 @@
 
     // 推荐内容面板
     UIView *panel = [[UIView alloc] initWithFrame:CGRectMake(0, y, W, 0)];
-    panel.backgroundColor = [UIColor colorWithRed:0.106 green:0.106 blue:0.118 alpha:1];
+    panel.backgroundColor = [UIColor colorWithWhite:1 alpha:0.035];
+    panel.layer.borderWidth = 0.65;
+    panel.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.09].CGColor;
     panel.layer.cornerRadius = 20;
     panel.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner;
     [self.scroll addSubview:panel];
@@ -732,7 +739,7 @@
 @implementation ADSearchController
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithRed:0.043 green:0.035 blue:0.035 alpha:1];
+    [ADLiquid canvas:self.view];
     self.navigationController.navigationBar.hidden = YES;
     self.bar = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 52)];
     self.bar.placeholder = @"书名 / 作者 / 主播";
@@ -1331,6 +1338,16 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
     [self.contentView.subviews makeObjectsPerformSelector:@selector(removeFromSuperview)];
     self.contentView.backgroundColor = UIColor.clearColor;
 
+    if (mode != 2) {
+        CGFloat insetY = (mode == 1) ? 4 : 5;
+        UIView *card = [[UIView alloc] initWithFrame:CGRectMake(8, insetY, w - 16, self.contentView.bounds.size.height - insetY * 2)];
+        card.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+        [ADLiquid glass:card radius:22 alpha:0.03];
+        [ADLiquid float:card];
+        card.layer.shadowOpacity = 0.22;
+        [self.contentView insertSubview:card atIndex:0];
+    }
+
     NSInteger listened = 0, total = 0;
     double prog = 0;
     ADAlbumProgress(a, &listened, &total, &prog);
@@ -1441,7 +1458,7 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithRed:0.043 green:0.035 blue:0.035 alpha:1];
+    [ADLiquid canvas:self.view];
     self.navigationController.navigationBar.hidden = YES;
     self.mode = 0;
     self.filter = 0;
@@ -1455,8 +1472,8 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
     [self.view addSubview:self.countLabel];
 
     UIButton *gear = [UIButton buttonWithType:UIButtonTypeSystem];
-    gear.backgroundColor = [UIColor colorWithWhite:1 alpha:0.14];
-    gear.layer.cornerRadius = 22;
+    [ADLiquid glass:gear radius:22 alpha:0.07];
+    [ADLiquid float:gear];
     gear.tag = 98;
     gear.tintColor = UIColor.whiteColor;
     [gear setImage:[UIImage systemImageNamed:@"line.3.horizontal" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];

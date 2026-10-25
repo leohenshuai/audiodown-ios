@@ -49,7 +49,7 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [ADUtil bg];
+    [ADLiquid canvas:self.view];
     self.navigationController.navigationBar.tintColor = UIColor.whiteColor;
     self.navigationController.navigationBar.barStyle = UIBarStyleBlack;
     self.title = @"专辑";
@@ -81,8 +81,9 @@
     self.intro.frame = CGRectMake(16, 170, w - 32, 0);
     self.dlBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     self.dlBtn.frame = CGRectMake(140, 92, 130, 30);
-    self.dlBtn.backgroundColor = [UIColor colorWithWhite:1 alpha:0.12];
-    self.dlBtn.layer.cornerRadius = 15;
+    [ADLiquid glass:self.dlBtn radius:15 alpha:0.06];
+    [ADLiquid float:self.dlBtn];
+    self.dlBtn.layer.shadowOpacity = 0.2;
     [self.dlBtn setTitle:@"缓存到本机" forState:UIControlStateNormal];
     [self.dlBtn setTitleColor:[ADUtil brand] forState:UIControlStateNormal];
     self.dlBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
@@ -230,7 +231,7 @@
         self.floatBar = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 44)];
         self.floatBar.showsHorizontalScrollIndicator = NO;
         self.floatBar.contentInset = UIEdgeInsetsMake(0, 16, 0, 16);
-        self.floatBar.backgroundColor = [ADUtil bg];
+        [ADLiquid glass:self.floatBar radius:18 alpha:0.05];
         self.floatBar.hidden = YES;
         [self.view addSubview:self.floatBar];
     }
@@ -400,7 +401,7 @@
     if (self.actionBar) return;
     CGFloat h = 56;
     self.actionBar = [[UIView alloc] initWithFrame:CGRectMake(0, self.view.bounds.size.height - h, self.view.bounds.size.width, h)];
-    self.actionBar.backgroundColor = [UIColor colorWithWhite:0.14 alpha:0.98];
+    [ADLiquid glass:self.actionBar radius:0 alpha:0.05];
     self.actionLabel = [ADUtil label:nil size:14 color:[UIColor colorWithWhite:1 alpha:0.7]];
     self.actionLabel.frame = CGRectMake(16, 18, 160, 20);
     [self.actionBar addSubview:self.actionLabel];
@@ -914,6 +915,7 @@
     [self.view addSubview:self.routeView];
 
     self.queue = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
+    [ADLiquid glass:self.queue radius:20 alpha:0.035];
     self.queue.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.98];
     self.queue.dataSource = self;
     self.queue.delegate = self;
@@ -929,9 +931,7 @@
 
     self.queueSel = [NSMutableSet set];
     self.queueBar = [[UIView alloc] initWithFrame:CGRectZero];
-    self.queueBar.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.98];
-    self.queueBar.layer.cornerRadius = 14;
-    self.queueBar.clipsToBounds = YES;
+    [ADLiquid glass:self.queueBar radius:16 alpha:0.05];
     self.queueBar.hidden = YES;
     [self.view addSubview:self.queueBar];
     self.sortBtn = [self barButton:@"正序" action:@selector(toggleQueueSort)];
@@ -955,8 +955,9 @@
 
 - (UIButton *)circleButton:(NSString *)icon action:(SEL)sel {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-    b.backgroundColor = [UIColor colorWithWhite:1 alpha:0.12];
-    b.layer.cornerRadius = 22;
+    [ADLiquid glass:b radius:22 alpha:0.07];
+    [ADLiquid float:b];
+    b.layer.shadowOpacity = 0.2;
     b.tintColor = UIColor.whiteColor;
     [b setImage:[UIImage systemImageNamed:icon withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
     [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
@@ -1443,7 +1444,7 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithRed:0.075 green:0.075 blue:0.082 alpha:1];
+    [ADLiquid canvas:self.view];
     self.title = @"设置";
     self.navigationController.navigationBar.tintColor = UIColor.whiteColor;
     self.navigationController.navigationBar.barStyle = UIBarStyleBlack;
@@ -1619,7 +1620,7 @@
 
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {
     UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
-    c.backgroundColor = [UIColor colorWithWhite:0.12 alpha:1];
+    c.backgroundColor = [UIColor colorWithWhite:1 alpha:0.055];
     c.textLabel.textColor = UIColor.whiteColor;
     c.detailTextLabel.textColor = [UIColor colorWithWhite:1 alpha:0.5];
     c.textLabel.font = [UIFont systemFontOfSize:15];

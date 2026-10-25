@@ -36,8 +36,8 @@ static ADSheetView *gSheet;
         [self addSubview:_box];
 
         UIView *list = [[UIView alloc] initWithFrame:CGRectMake(0, 0, W - 16, th + opts.count * rowH)];
-        list.backgroundColor = [UIColor colorWithWhite:0.16 alpha:0.98];
-        list.layer.cornerRadius = 16;
+        [ADLiquid glass:list radius:26 alpha:0.04];
+        [ADLiquid float:list];
         list.clipsToBounds = YES;
         [_box addSubview:list];
 
@@ -64,8 +64,8 @@ static ADSheetView *gSheet;
 
         UIButton *cancel = [UIButton buttonWithType:UIButtonTypeSystem];
         cancel.frame = CGRectMake(0, CGRectGetMaxY(list.frame) + 8, W - 16, 54);
-        cancel.backgroundColor = [UIColor colorWithWhite:0.16 alpha:0.98];
-        cancel.layer.cornerRadius = 16;
+        [ADLiquid glass:cancel radius:24 alpha:0.04];
+        [ADLiquid float:cancel];
         cancel.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
         [cancel setTitle:@"取消" forState:UIControlStateNormal];
         [cancel setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];

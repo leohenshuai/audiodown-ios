@@ -58,6 +58,30 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)save;
 @end
 
+// ───────────────── iOS26 设计系统 ─────────────────
+@interface ADLiquid : NSObject
++ (void)canvas:(UIView *)v;                                  // 背景：渐变 + 双光斑（带缓慢漂移）
++ (void)glass:(UIView *)v radius:(CGFloat)r;                 // 玻璃面
++ (void)glass:(UIView *)v radius:(CGFloat)r alpha:(CGFloat)alpha;
++ (void)corner:(CGFloat)r on:(UIView *)v;
++ (void)float:(UIView *)v;                                   // 悬浮投影
++ (void)press:(UIView *)v;                                   // 按压缩放
++ (void)pulse:(UIView *)v;
++ (void)rise:(UIView *)v delay:(NSTimeInterval)delay;        // 入场
+@end
+
+@interface ADNavDock : UIView
++ (instancetype)shared;
+@property (nonatomic, assign) NSInteger selectedIndex;
+@property (nonatomic, assign) BOOL dockVisible;
+@property (nonatomic, copy) void (^onSelect)(NSInteger index);
+- (void)show:(BOOL)show animated:(BOOL)animated;
+- (CGFloat)topY;
+@end
+
+@interface ADDockController : UITabBarController
+@end
+
 // ───────────────── 触感 / 提示音 ─────────────────
 @interface ADHaptic : NSObject
 + (void)tap;        // 轻点：按钮、行、卡片
