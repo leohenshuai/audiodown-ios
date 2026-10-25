@@ -240,8 +240,39 @@
 - (void)refresh {
     ADPlayer *p = ADPlayer.shared;
     ADTrack *t = p.current;
-    self.hidden = (t == nil);
-    if (!t) return;
+
+    // 迷你条统一挂在标签栏控制器上：任何页面（发现/搜索/书架/专辑）都能实时看到
+    UIWindow *key = UIApplication.sharedApplication.windows.firstObject;
+    UIViewController *root = key.rootViewController;
+    BOOL playerOpen = [root.presentedViewController isKindOfClass:ADPlayerController.class];
+    if (!t || playerOpen) {
+        if (!self.hidden) self.hidden = YES;
+        return;
+    }
+    if (self.hidden) {
+        self.hidden = NO;
+        if (!self.superview) {
+            self.alpha = 0;
+            [UIView animateWithDuration:0.22 animations:^{ self.alpha = 1; }];
+        }
+    }
+    if ([root isKindOfClass:UITabBarController.class]) {
+        UITabBarController *tab = (UITabBarController *)root;
+        if (self.superview != tab.view) {
+            [tab.view addSubview:self];
+            [tab.view bringSubviewToFront:self];
+        }
+        CGFloat h = 58;
+        CGFloat bottom = tab.view.bounds.size.height - tab.view.safeAreaInsets.bottom - 8 - h;
+        CGFloat aboveBar = tab.tabBar.frame.origin.y - 8 - h;
+        CGFloat y = MIN(bottom, aboveBar);
+        CGFloat w = tab.view.bounds.size.width - 16;
+        if (fabs(self.frame.origin.y - y) > 0.5 || fabs(self.frame.size.width - w) > 0.5)
+            self.frame = CGRectMake(8, y, w, h);
+    } else if (!self.superview && key) {
+        [key addSubview:self];
+    }
+
     _title.text = t.title;
     double cur = p.player ? CMTimeGetSeconds(p.player.currentTime) : 0;
     double dur = p.player.currentItem ? CMTimeGetSeconds(p.player.currentItem.duration) : 0;
@@ -312,10 +343,7 @@
 
 - (void)viewWillLayoutSubviews {
     [super viewWillLayoutSubviews];
-    ADMiniBar *m = [ADMiniBar shared];
-    m.frame = CGRectMake(8, self.view.bounds.size.height - self.view.safeAreaInsets.bottom - 64, self.view.bounds.size.width - 16, 58);
-    if (!m.superview) [self.view addSubview:m];
-    [self.view bringSubviewToFront:m];
+    [ADMiniBar.shared refresh];
 }
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -485,11 +513,7 @@
     self.hint.frame = CGRectMake(30, self.view.bounds.size.height / 2 - 40, W - 60, 40);
     self.spin.center = CGPointMake(W / 2, self.view.bounds.size.height / 2 - 70);
 
-    ADMiniBar *m = [ADMiniBar shared];
-    CGFloat bottom = self.view.safeAreaInsets.bottom + 6;
-    m.frame = CGRectMake(8, self.view.bounds.size.height - bottom - 58, W - 16, 58);
-    if (!m.superview) [self.view addSubview:m];
-    [m refresh];
+    [ADMiniBar.shared refresh];
 }
 
 // 继续收听卡片长按菜单
@@ -1045,10 +1069,7 @@
 - (void)viewWillLayoutSubviews {
     [super viewWillLayoutSubviews];
     self.hint.frame = CGRectMake(30, self.view.bounds.size.height / 2, self.view.bounds.size.width - 60, 40);
-    ADMiniBar *m = [ADMiniBar shared];
-    m.frame = CGRectMake(8, self.view.bounds.size.height - self.view.safeAreaInsets.bottom - 64, self.view.bounds.size.width - 16, 58);
-    if (!m.superview) [self.view addSubview:m];
-    [m refresh];
+    [ADMiniBar.shared refresh];
 }
 - (void)searchBarSearchButtonClicked:(UISearchBar *)b {
     [b resignFirstResponder];
@@ -1451,10 +1472,7 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
 - (void)viewWillLayoutSubviews {
     [super viewWillLayoutSubviews];
     [self layoutChrome];
-    ADMiniBar *m = [ADMiniBar shared];
-    m.frame = CGRectMake(8, self.view.bounds.size.height - self.view.safeAreaInsets.bottom - 64, self.view.bounds.size.width - 16, 58);
-    if (!m.superview) [self.view addSubview:m];
-    [m refresh];
+    [ADMiniBar.shared refresh];
 }
 
 - (void)viewSafeAreaInsetsDidChange {

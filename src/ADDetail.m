@@ -1145,6 +1145,12 @@
     }];
 }
 
+- (void)viewDidDisappear:(BOOL)animated {
+    [super viewDidDisappear:animated];
+    // 播放页收起后让迷你条立刻回来
+    [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
+}
+
 - (void)showRateMenu {
     [ADHaptic tap];
     NSArray *rates = @[@0.5, @0.75, @1.0, @1.25, @1.5, @1.75, @2.0, @2.5, @3.0];
