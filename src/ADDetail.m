@@ -87,8 +87,10 @@
     [[ADApi shared] albumDetail:self.album.albumId done:^(ADAlbum *a, BOOL cached, NSString *err) {
         __strong typeof(weakSelf) self = weakSelf; if (!self) return;
         if (a) {
-            self.album.title = a.title.length ? a.title : self.album.title;
-            self.album.cover = a.cover.length ? a.cover : self.album.cover;
+            BOOL titleOK = a.title.length && ![a.title hasPrefix:@"album_"];
+            BOOL coverOK = a.cover.length && [a.cover hasPrefix:@"http"];
+            if (titleOK) self.album.title = a.title;
+            if (coverOK) self.album.cover = a.cover;
             self.album.intro = a.intro.length ? a.intro : self.album.intro;
             self.album.anchor = a.anchor.length ? a.anchor : self.album.anchor;
             self.album.author = a.author.length ? a.author : self.album.author;
@@ -1096,6 +1098,14 @@
             [sw addTarget:self action:@selector(prefetchSwitch:) forControlEvents:UIControlEventValueChanged];
             c.accessoryView = sw;
         } else if (ip.row == 1) {
+            c.textLabel.text = @"仅 Wi-Fi 预加载";
+            c.detailTextLabel.text = @"关掉后用蜂窝网络也会预取，会走流量";
+            UISwitch *wifiSw = [[UISwitch alloc] init];
+            wifiSw.on = [ud boolForKey:@"ad_prefetch_wifi"];
+            wifiSw.onTintColor = [ADUtil brand];
+            [wifiSw addTarget:self action:@selector(prefetchWifi:) forControlEvents:UIControlEventValueChanged];
+            c.accessoryView = wifiSw;
+        } else if (ip.row == 2) {
             c.textLabel.text = @"额外预加载后续集数";
             NSInteger n = [ud integerForKey:@"ad_prefetch_count"];
             if (n <= 0) n = 2;

@@ -627,6 +627,37 @@
     self.hint.text = [self visible].count ? @"" : (t.length ? @"本机没有匹配的内容" : @"本机还没有内容，先在专辑页「缓存到本机」或收藏");
 }
 
+
+- (NSCharacterSet *)noiseChars {
+    static NSCharacterSet *cs; static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        cs = [NSCharacterSet characterSetWithCharactersInString:@" ，,、|｜·•:：;；!！?？.。《》<>「」【】()（）[]-—_/\\\"'’“”\n\t"];
+    });
+    return cs;
+}
+
+- (NSString *)normText:(NSString *)s {
+    if (!s.length) return @"";
+    NSArray *parts = [s componentsSeparatedByCharactersInSet:[self noiseChars]];
+    return [[parts componentsJoinedByString:@""] lowercaseString];
+}
+
+- (NSInteger)relevanceOf:(ADAlbum *)a {
+    NSString *kw = self.keyword ?: @"";
+    NSString *nk = [self normText:kw];
+    if (!nk.length) return 0;
+    NSString *nt = [self normText:a.title ?: @""];
+    if ([nt containsString:nk]) return 0;               // 完整关键词命中（忽略空格标点）
+    NSMutableArray *tokens = [NSMutableArray array];
+    for (NSString *t in [kw componentsSeparatedByCharactersInSet:[self noiseChars]]) {
+        NSString *n = [self normText:t];
+        if (n.length) [tokens addObject:n];
+    }
+    NSInteger miss = 0;
+    for (NSString *t in tokens) if (![nt containsString:t]) miss += 1;
+    return 1 + miss;                                    // 命中词越多越靠前
+}
+
 - (NSArray *)catTitles {
     return @[@"全部", @"有声书", @"相声评书", @"音乐", @"儿童", @"历史", @"外语", @"个人成长"];
 }
@@ -760,20 +791,17 @@
             self.page += 1;
         }
         NSInteger hits = 0;
-        for (ADAlbum *a in self.list)
-            if (self.keyword.length && [a.title rangeOfString:self.keyword].location != NSNotFound) hits += 1;
+        for (ADAlbum *a in self.list) if ([self relevanceOf:a] == 0) hits += 1;
         if (hits == 0 && self.more && self.autoPages < 2) {
             // 第一屏没有标题含关键词的，自动再翻两页
             self.autoPages += 1;
             [self loadPage];
         }
         if (self.keyword.length) {
-            NSString *kw = self.keyword;
             [self.list sortUsingComparator:^NSComparisonResult(ADAlbum *x, ADAlbum *y) {
-                BOOL hx = [x.title rangeOfString:kw].location != NSNotFound;
-                BOOL hy = [y.title rangeOfString:kw].location != NSNotFound;
-                if (hx == hy) return NSOrderedSame;
-                return hx ? NSOrderedAscending : NSOrderedDescending;
+                NSInteger sx = [self relevanceOf:x], sy = [self relevanceOf:y];
+                if (sx == sy) return NSOrderedSame;
+                return sx < sy ? NSOrderedAscending : NSOrderedDescending;
             }];
         }
         NSArray *shown = [self visible];
