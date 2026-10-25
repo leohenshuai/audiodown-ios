@@ -20,13 +20,20 @@
 @property (nonatomic, assign) BOOL sortDesc, selecting;
 @property (nonatomic, strong) NSMutableSet *selected;
 @property (nonatomic, strong) UIScrollView *rangeBar;
+@property (nonatomic, strong) UIScrollView *floatBar;
 @property (nonatomic, strong) UIView *actionBar;
 @property (nonatomic, strong) UILabel *actionLabel;
 @property (nonatomic, assign) NSInteger jumpTarget;
 @property (nonatomic, assign) BOOL hasMore;
+@property (nonatomic, assign) BOOL loadingAll;
 @end
 
 @implementation ADAlbumController
+
+- (instancetype)init {
+    if ((self = [super init])) { self.hidesBottomBarWhenPushed = YES; }
+    return self;
+}
 
 - (void)viewDidLoad {
     [super viewDidLoad];
@@ -154,7 +161,15 @@
     [ADOptionSheet showIn:self title:self.album.title options:@[@"选择剧集下载", @"目录正序", @"目录倒序", @"缓存整本到本机", @"刷新目录"] destructive:-1 choose:^(NSInteger i) {
         if (i == 0) [self beginSelecting];
         else if (i == 1) { self.sortDesc = NO; [self.table reloadData]; }
-        else if (i == 2) { self.sortDesc = YES; [self.table reloadData]; }
+        else if (i == 2) {
+            self.sortDesc = YES;
+            if ((NSInteger)self.tracks.count < MAX(self.total, 1)) {
+                self.loadingAll = YES;
+                self.hasMore = YES;
+                [self loadTracks];
+            }
+            [self.table reloadData];
+        }
         else if (i == 3) [self downloadAll];
         else [self refreshAll];
     }];
@@ -190,17 +205,53 @@
     }
     self.rangeBar.contentSize = CGSizeMake(x + 8, 44);
     UIView *head = self.table.tableHeaderView;
+    if (!self.floatBar) {
+        self.floatBar = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 44)];
+        self.floatBar.showsHorizontalScrollIndicator = NO;
+        self.floatBar.contentInset = UIEdgeInsetsMake(0, 16, 0, 16);
+        self.floatBar.backgroundColor = [ADUtil bg];
+        self.floatBar.hidden = YES;
+        [self.view addSubview:self.floatBar];
+    }
+    for (UIView *v in self.floatBar.subviews) [v removeFromSuperview];
+    for (UIView *src in self.rangeBar.subviews) {
+        if (![src isKindOfClass:UIButton.class]) continue;
+        UIButton *b = (UIButton *)src;
+        UIButton *copy = [UIButton buttonWithType:UIButtonTypeCustom];
+        copy.frame = b.frame;
+        copy.tag = b.tag;
+        copy.titleLabel.font = b.titleLabel.font;
+        copy.layer.cornerRadius = b.layer.cornerRadius;
+        copy.backgroundColor = b.backgroundColor;
+        [copy setTitle:b.title forState:UIControlStateNormal];
+        [copy setTitleColor:[b titleColorForState:UIControlStateNormal] forState:UIControlStateNormal];
+        [copy addTarget:self action:@selector(tapRange:) forControlEvents:UIControlEventTouchUpInside];
+        [self.floatBar addSubview:copy];
+    }
+    self.floatBar.contentSize = self.rangeBar.contentSize;
     if (self.rangeBar.superview != head) [head addSubview:self.rangeBar];
     self.rangeBar.frame = CGRectMake(0, head.bounds.size.height - 44, self.view.bounds.size.width, 44);
 }
 
 - (void)tapRange:(UIButton *)b {
     NSInteger start = b.tag - 2000;
-    for (UIView *v in self.rangeBar.subviews) {
-        v.backgroundColor = [UIColor colorWithWhite:1 alpha:0.1];
+    for (UIScrollView *bar in @[self.rangeBar, self.floatBar]) {
+        for (UIView *v in bar.subviews) {
+            if (![v isKindOfClass:UIButton.class]) continue;
+            UIButton *btn = (UIButton *)v;
+            btn.backgroundColor = [UIColor colorWithWhite:1 alpha:0.1];
+            [btn setTitleColor:[UIColor colorWithWhite:1 alpha:0.85] forState:UIControlStateNormal];
+        }
     }
-    b.backgroundColor = [UIColor whiteColor];
-    [b setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+    for (UIScrollView *bar in @[self.rangeBar, self.floatBar]) {
+        for (UIView *v in bar.subviews) {
+            if ([v isKindOfClass:UIButton.class] && v.tag == b.tag) {
+                UIButton *btn = (UIButton *)v;
+                btn.backgroundColor = UIColor.whiteColor;
+                [btn setTitleColor:UIColor.blackColor forState:UIControlStateNormal];
+            }
+        }
+    }
     [self jumpTo:start];
 }
 
@@ -211,11 +262,29 @@
     return self.sortDesc ? (n - 1 - idx) : idx;
 }
 
+- (void)scrollViewDidScroll:(UIScrollView *)sv {
+    if (sv != self.table) return;
+    UIView *head = self.table.tableHeaderView;
+    CGFloat barTop = head.bounds.size.height - 44 - self.table.contentOffset.y;
+    CGFloat safe = MAX(self.view.safeAreaInsets.top, 44) + 44;
+    if (barTop < safe) {
+        self.floatBar.hidden = NO;
+        self.floatBar.frame = CGRectMake(0, safe - 44, self.view.bounds.size.width, 44);
+    } else {
+        self.floatBar.hidden = YES;
+        self.floatBar.frame = CGRectMake(0, safe - 44, self.view.bounds.size.width, 44);
+    }
+}
+
 - (void)jumpTo:(NSInteger)idx {
     if (idx < (NSInteger)self.tracks.count) {
         NSIndexPath *ip = [NSIndexPath indexPathForRow:[self rowForIndex:idx] inSection:0];
         [self.table scrollToRowAtIndexPath:ip atScrollPosition:UITableViewScrollPositionTop animated:YES];
         return;
+    }
+    if ((NSInteger)self.tracks.count < MAX(self.total, 1)) {
+        self.loadingAll = YES;
+        self.hasMore = YES;
     }
     if (!self.hasMore) return;
     self.jumpTarget = idx;
@@ -356,6 +425,11 @@
             [self.table scrollToRowAtIndexPath:ip atScrollPosition:UITableViewScrollPositionTop animated:YES];
         }
         // 自动恢复上次进度
+        if (self.loadingAll) {
+            if (self.hasMore) [self loadTracks];
+            else { self.loadingAll = NO; [self.table reloadData]; }
+            return;
+        }
         if (self.tracks.count && !ADPlayer.shared.album) {
             ADPlayer.shared.album = self.album;
             ADPlayer.shared.tracks = self.tracks;
@@ -774,6 +848,23 @@
     }]];
     [a addAction:[UIAlertAction actionWithTitle:@"缓存整本到本机" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
         [[ADDownloader shared] addAlbum:p.album tracks:p.tracks];
+    }]];
+    [a addAction:[UIAlertAction actionWithTitle:@"打开专辑（排序 / 快速选集 / 选集下载）" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+        ADAlbum *album = p.album;
+        [self dismissViewControllerAnimated:YES completion:^{
+            UIViewController *root = UIApplication.sharedApplication.keyWindow.rootViewController;
+            UINavigationController *nav = nil;
+            if ([root isKindOfClass:UITabBarController.class]) {
+                UIViewController *sel = ((UITabBarController *)root).selectedViewController;
+                if ([sel isKindOfClass:UINavigationController.class]) nav = (UINavigationController *)sel;
+            } else if ([root isKindOfClass:UINavigationController.class]) {
+                nav = (UINavigationController *)root;
+            }
+            if (!nav) return;
+            ADAlbumController *vc = [ADAlbumController new];
+            vc.album = album;
+            [nav pushViewController:vc animated:YES];
+        }];
     }]];
     [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
     a.popoverPresentationController.sourceView = self.view;
