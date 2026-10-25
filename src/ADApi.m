@@ -52,7 +52,12 @@ static void ADCacheSet(NSString *key, id json) {
 
 - (NSMutableURLRequest *)request:(NSString *)path method:(NSString *)method body:(id)body {
     NSString *full = [[ADConfig shared] url:path];
-    NSURL *u = [NSURL URLWithString:[full stringByAddingPercentEncodingWithAllowedCharacters:NSCharacterSet.URLQueryAllowedCharacterSet]];
+    // 已经是合法 URL（含 %XX 转义）就直接用，避免二次编码把中文变成 %25E7…
+    NSURL *u = [NSURL URLWithString:full];
+    if (!u || !u.host.length) {
+        NSString *enc = [full stringByAddingPercentEncodingWithAllowedCharacters:NSCharacterSet.URLQueryAllowedCharacterSet];
+        u = [NSURL URLWithString:enc];
+    }
     NSMutableURLRequest *r = [NSMutableURLRequest requestWithURL:u];
     r.HTTPMethod = method;
     [[ADConfig shared].headers enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *s) {
@@ -102,7 +107,8 @@ static void ADCacheSet(NSString *key, id json) {
 }
 
 - (void)search:(NSString *)q page:(NSInteger)page done:(void (^)(NSArray<ADAlbum *> *, BOOL, BOOL, NSString *))cb {
-    NSString *enc = [q stringByAddingPercentEncodingWithAllowedCharacters:NSCharacterSet.URLQueryAllowedCharacterSet];
+    NSCharacterSet *strict = [NSCharacterSet characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"];
+    NSString *enc = [q stringByAddingPercentEncodingWithAllowedCharacters:strict] ?: @"";
     NSString *path = [NSString stringWithFormat:@"/open-api/v1/search?q=%@&page=%ld&pageSize=30", enc, (long)page];
     NSString *key = [NSString stringWithFormat:@"search:%@:%ld", q, (long)page];
     [self cachedGET:path key:key done:^(id json, BOOL cached, NSString *err) {
