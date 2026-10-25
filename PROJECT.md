@@ -52,7 +52,8 @@ Base:`https://audio.959935291.xyz:899`,认证 `Authorization: Bearer <token>`(`x
 - v2.1(2026-10-25):修自绘底部菜单面板初始 y=屏高导致整体在屏幕外(点⋯/倍速/定时都没反应);快速选集在倒序下跳转位置修正
 - v2.2(2026-10-25):分段条吸顶(浮动副本+滚动切换)、专辑页 hidesBottomBarWhenPushed、倒序先全量拉取再反转、播放页 ⋯ 可跳专辑
 - v2.3(2026-10-25):播放页队列加工具条(正序/倒序、选集、多选、缓存整本/缓存所选);听完标记(ADStore done.dat/donealbums.dat,自然播完才记),专辑列表/队列显示 ✓,书架显示「已听完」角标
-- 产物:`听书-2.3-unsigned.ipa`(bundle com.leo.audiodown,最新)
+- v2.4(2026-10-25):页头高度留 48pt 给分段条(不再压简介)、关闭队列时工具条同步滑出、播放页 ⋯ 改自绘深色面板
+- 产物:`听书-2.4-unsigned.ipa`(bundle com.leo.audiodown,最新)
 
 ## 待办
 - 分类浏览(需服务端支持)
