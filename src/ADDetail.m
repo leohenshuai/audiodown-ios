@@ -133,7 +133,7 @@
     CGSize sz = [self.intro sizeThatFits:CGSizeMake(w - 32, 400)];
     self.intro.frame = CGRectMake(16, 170, w - 32, sz.height);
     UIView *head = self.table.tableHeaderView;
-    CGFloat h = 170 + sz.height + 12;
+    CGFloat h = 170 + sz.height + 12 + 48;   // 48 给分段条，避免压在简介上
     head.frame = CGRectMake(0, 0, w, h);
     self.table.tableHeaderView = head;
 
@@ -867,14 +867,9 @@
 - (void)showMore {
     ADPlayer *p = ADPlayer.shared;
     if (!p.album) return;
-    UIAlertController *a = [UIAlertController alertControllerWithTitle:p.album.title message:nil preferredStyle:UIAlertControllerStyleActionSheet];
-    [a addAction:[UIAlertAction actionWithTitle:@"从头播放" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
-        [p playAt:0];
-    }]];
-    [a addAction:[UIAlertAction actionWithTitle:@"缓存整本到本机" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
-        [[ADDownloader shared] addAlbum:p.album tracks:p.tracks];
-    }]];
-    [a addAction:[UIAlertAction actionWithTitle:@"打开专辑（排序 / 快速选集 / 选集下载）" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+    [ADOptionSheet showIn:self title:p.album.title options:@[@"从头播放", @"缓存整本到本机", @"打开专辑（排序 / 选集 / 下载）"] destructive:-1 choose:^(NSInteger i) {
+        if (i == 0) { [p playAt:0]; return; }
+        if (i == 1) { [[ADDownloader shared] addAlbum:p.album tracks:p.tracks]; return; }
         ADAlbum *album = p.album;
         [self dismissViewControllerAnimated:YES completion:^{
             UIViewController *root = UIApplication.sharedApplication.keyWindow.rootViewController;
@@ -890,10 +885,7 @@
             vc.album = album;
             [nav pushViewController:vc animated:YES];
         }];
-    }]];
-    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    a.popoverPresentationController.sourceView = self.view;
-    [self presentViewController:a animated:YES completion:nil];
+    }];
 }
 
 - (void)showRateMenu {
@@ -1103,10 +1095,16 @@
     if (!self.showQueue) return;
     self.showQueue = NO;
     self.queueDim.hidden = YES;
-    [UIView animateWithDuration:0.25 animations:^{
+    [UIView animateWithDuration:0.22 animations:^{
         CGFloat W = self.view.bounds.size.width, H = self.view.bounds.size.height;
         self.queue.frame = CGRectMake(16, H, W - 32, 300);
-    } completion:^(BOOL ok) { self.queue.hidden = YES; }];
+        self.queueBar.frame = CGRectMake(16, H, W - 32, 40);
+        self.queueBar.alpha = 0;
+    } completion:^(BOOL ok) {
+        self.queue.hidden = YES;
+        self.queueBar.hidden = YES;
+        self.queueBar.alpha = 1;
+    }];
 }
 
 - (void)openQueue {
