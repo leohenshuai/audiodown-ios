@@ -452,6 +452,7 @@
 
 - (void)loadNextPage {
     if (!self.hasMore) return;
+    if (self.pageLoading.count >= 2) return;   // 同时最多拉两页，避免列表滚动时一口气发一堆请求
     NSInteger p = 1;
     while (([self.pageMap objectForKey:@(p)] || [self.pageLoading containsObject:@(p)]) && p < 500) p++;
     if (self.total > 0 && p > (self.total + 49) / 50) { self.hasMore = NO; return; }
