@@ -164,6 +164,20 @@ static NSArray *ADPickArray(NSDictionary *json) {
     }
     return nil;
 }
+static NSString *ADPickStr(NSDictionary *json, NSArray *keys) {
+    if (![json isKindOfClass:NSDictionary.class]) return nil;
+    NSMutableArray *dicts = [NSMutableArray arrayWithObject:json];
+    for (NSString *k in @[@"data", @"result", @"payload"]) {
+        id v = json[k];
+        if ([v isKindOfClass:NSDictionary.class]) [dicts addObject:v];
+    }
+    for (NSDictionary *d in dicts)
+        for (NSString *k in keys) {
+            id v = d[k];
+            if ([v isKindOfClass:NSString.class] && [v length]) return v;
+        }
+    return nil;
+}
 static NSInteger ADPickInt(NSDictionary *json, NSArray *keys) {
     if (![json isKindOfClass:NSDictionary.class]) return 0;
     NSMutableArray *dicts = [NSMutableArray arrayWithObject:json];
@@ -180,8 +194,13 @@ static NSInteger ADPickInt(NSDictionary *json, NSArray *keys) {
 }
 
 - (void)tracksOf:(NSString *)albumId page:(NSInteger)page done:(void (^)(NSArray<ADTrack *> *, NSInteger, BOOL, NSString *))cb {
-    NSString *path = [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=%ld&pageSize=50", albumId, (long)page];
-    NSString *key = [NSString stringWithFormat:@"tracks:%@:%ld", albumId, (long)page];
+    [self tracksOf:albumId page:page pageSize:50 done:cb];
+}
+
+- (void)tracksOf:(NSString *)albumId page:(NSInteger)page pageSize:(NSInteger)size done:(void (^)(NSArray<ADTrack *> *, NSInteger, BOOL, NSString *))cb {
+    if (size < 1) size = 50;
+    NSString *path = [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=%ld&pageSize=%ld", albumId, (long)page, (long)size];
+    NSString *key = [NSString stringWithFormat:@"tracks:%@:%ld:%ld", albumId, (long)size, (long)page];
     // 目录接口服务端要现场找源，比别的接口慢，给它 30 秒（其它接口仍是 12 秒）
     [self cachedGET:path key:key timeout:30 done:^(id json, BOOL cached, NSString *err) {
         NSArray *items = ADPickArray(json);
@@ -200,7 +219,9 @@ static NSInteger ADPickInt(NSDictionary *json, NSArray *keys) {
             [[NSString stringWithFormat:@"GET %@\n\n%@", path, text] writeToFile:f atomically:YES encoding:NSUTF8StringEncoding error:nil];
             NSLog(@"[AD] 目录为空 %@ -> %@", path, text);
             NSString *snip = text.length > 110 ? [[text substringToIndex:110] stringByAppendingString:@"…"] : text;
-            err = [NSString stringWithFormat:@"服务端返回空目录：%@", snip];
+            NSString *lastError = ADPickStr(json, @[@"lastError", @"error", @"msg", @"message"]);
+            err = lastError.length ? [NSString stringWithFormat:@"服务端没抓到目录：%@", lastError]
+                                   : [NSString stringWithFormat:@"服务端返回空目录：%@", snip];
         }
         cb(out, total, cached, err);
     }];

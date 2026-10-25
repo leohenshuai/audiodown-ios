@@ -35,6 +35,8 @@
 // 目录“到底了”只由事实决定：某页返回 0 条、或整页都是重复的。
 // 不再拿服务端给的 total 当唯一依据——total 缺失或给错会把分页直接卡死。
 @property (nonatomic, assign) BOOL endReached;
+// 服务端是「按页去上游抓，抓不满就整段丢」，页宽太大容易失败 → 失败时换小页宽重抓
+@property (nonatomic, assign) NSInteger pageSize;
 @property (nonatomic, strong) NSArray<ADTrack *> *orderedCache;
 @end
 
@@ -430,6 +432,7 @@
     self.errText = nil;
     self.endReached = NO;
     self.orderedCache = nil;
+    self.pageSize = 50;
     self.hasMore = YES;
     self.loading = NO;
     [self.tracks removeAllObjects];
@@ -471,11 +474,20 @@
     [self loadPage:p];
 }
 
+// 页宽从大到小试：50 → 20 → 10 → 5
+- (BOOL)shrinkPageSize {
+    static const NSInteger sizes[] = {50, 20, 10, 5};
+    for (int i = 0; i < 4; i++) {
+        if (sizes[i] < self.pageSize) { self.pageSize = sizes[i]; return YES; }
+    }
+    return NO;
+}
+
 - (void)loadPage:(NSInteger)p {
     if (p < 1 || [self.pageLoading containsObject:@(p)]) return;
     [self.pageLoading addObject:@(p)];
     __weak typeof(self) weakSelf = self;
-    [[ADApi shared] tracksOf:self.album.albumId page:p done:^(NSArray<ADTrack *> *list, NSInteger total, BOOL cached, NSString *err) {
+    [[ADApi shared] tracksOf:self.album.albumId page:p pageSize:self.pageSize done:^(NSArray<ADTrack *> *list, NSInteger total, BOOL cached, NSString *err) {
         __strong typeof(weakSelf) self = weakSelf; if (!self) return;
         if (total > 0) self.total = total;
         // 缓存：先铺一层，网络结果随后覆盖同一页
@@ -492,13 +504,23 @@
         BOOL netEmptyFirst = (!cached && list.count == 0 && p == 1);
         if (err.length || netEmptyFirst) {
             NSInteger tries = [self.pageTries[@(p)] integerValue];
-            if (tries < 2) {
+            if (tries < (p == 1 ? 1 : 2)) {     // 第 1 页抓不到多半是页宽问题，少重试、赶紧换页宽
                 self.pageTries[@(p)] = @(tries + 1);
                 __weak typeof(self) w2 = self;
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * (tries + 1) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                     __strong typeof(w2) s = w2; if (!s) return;
                     [s loadPage:p];
                 });
+            } else if (p == 1 && [self shrinkPageSize]) {
+                // 第 1 页就抓不到：换小页宽让服务端重新去上游抓
+                self.pageTries = [NSMutableDictionary dictionary];
+                self.pageMap = [NSMutableDictionary dictionary];
+                self.orderedCache = nil;
+                self.errText = nil;
+                [self.table reloadData];
+                [self fillHeader];
+                [self loadPage:1];
+                return;
             } else {
                 self.failPage = p;
                 self.errText = err.length ? err : @"这一页目录没取到";
