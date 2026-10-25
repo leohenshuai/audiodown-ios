@@ -32,6 +32,10 @@
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *pageTries;
 @property (nonatomic, assign) NSInteger failPage, lastPageCount;
 @property (nonatomic, assign) BOOL pendingDownloadAll;
+// 目录“到底了”只由事实决定：某页返回 0 条、或整页都是重复的。
+// 不再拿服务端给的 total 当唯一依据——total 缺失或给错会把分页直接卡死。
+@property (nonatomic, assign) BOOL endReached;
+@property (nonatomic, strong) NSArray<ADTrack *> *orderedCache;
 @end
 
 @implementation ADAlbumController
@@ -163,7 +167,9 @@
 
 - (NSArray<ADTrack *> *)ordered {
     if (!self.sortDesc) return self.tracks;
-    return [[self.tracks reverseObjectEnumerator] allObjects];
+    if (!self.orderedCache || self.orderedCache.count != self.tracks.count)
+        self.orderedCache = [[self.tracks reverseObjectEnumerator] allObjects];
+    return self.orderedCache;
 }
 
 - (void)showAlbumMenu {
@@ -172,12 +178,13 @@
         else if (i == 1) { self.sortDesc = NO; [self.table reloadData]; }
         else if (i == 2) {
             self.sortDesc = YES;
+            self.orderedCache = nil;
             [self.table reloadData];
-            if (self.hasMore) {
-                self.loadingAll = YES;
-                self.errText = nil;
-                [self loadTracks];
-            }
+            self.endReached = NO;        // 倒序必须拿到真正的最后一集，不能信 total
+            self.hasMore = YES;
+            self.loadingAll = YES;
+            self.errText = nil;
+            [self loadTracks];
         }
         else if (i == 3) [self downloadAll];
         else [self refreshAll];
@@ -191,7 +198,8 @@
         self.rangeBar.contentInset = UIEdgeInsetsMake(0, 16, 0, 16);
     }
     for (UIView *v in self.rangeBar.subviews) [v removeFromSuperview];
-    NSInteger total = self.total > 0 ? self.total : self.tracks.count;
+    NSInteger total = self.total > 0 ? self.total : MAX((NSInteger)self.tracks.count, (NSInteger)60);
+    if (self.hasMore) total = MAX(total, (NSInteger)self.tracks.count + 60);   // 总数未知时多一段
     NSInteger step = 60;
     NSInteger n = (total + step - 1) / step;
     CGFloat x = 16;
@@ -291,9 +299,11 @@
         [self.table scrollToRowAtIndexPath:ip atScrollPosition:UITableViewScrollPositionTop animated:YES];
         return;
     }
-    if (!self.hasMore) return;
     self.errText = nil;
     self.jumpTarget = idx;
+    self.endReached = NO;            // 用户明确要跳到这一段，先把“到底了”解开
+    self.hasMore = YES;
+    self.loadingAll = NO;
     [self loadNextPage];
 }
 
@@ -418,6 +428,8 @@
     self.failPage = 0;
     self.lastPageCount = 0;
     self.errText = nil;
+    self.endReached = NO;
+    self.orderedCache = nil;
     self.hasMore = YES;
     self.loading = NO;
     [self.tracks removeAllObjects];
@@ -441,8 +453,8 @@
     }
     self.lastPageCount = lastCount;
     self.tracks = out;
-    if (self.total > 0) self.hasMore = (NSInteger)out.count < self.total;
-    else self.hasMore = lastCount >= 50;
+    self.orderedCache = nil;
+    self.hasMore = !self.endReached;
 }
 
 - (void)loadTracks {
@@ -454,8 +466,8 @@
     if (!self.hasMore) return;
     if (self.pageLoading.count >= 2) return;   // 同时最多拉两页，避免列表滚动时一口气发一堆请求
     NSInteger p = 1;
-    while (([self.pageMap objectForKey:@(p)] || [self.pageLoading containsObject:@(p)]) && p < 500) p++;
-    if (self.total > 0 && p > (self.total + 49) / 50) { self.hasMore = NO; return; }
+    while (([self.pageMap objectForKey:@(p)] || [self.pageLoading containsObject:@(p)]) && p < 400) p++;
+    if (p >= 400) { self.endReached = YES; self.hasMore = NO; return; }
     [self loadPage:p];
 }
 
@@ -498,14 +510,50 @@
             }
             return;
         }
+        // 空页：先当作“可能只是抖动”，补一次；还是空才算真的到底
+        if (!cached && list.count == 0 && p > 1) {
+            if ([self.pageTries[@(p)] integerValue] < 1) {
+                self.pageTries[@(p)] = @1;
+                __weak typeof(self) w3 = self;
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    __strong typeof(w3) s3 = w3; if (!s3) return;
+                    [s3 loadPage:p];
+                });
+                return;
+            }
+            [self.pageTries removeObjectForKey:@(p)];
+            self.endReached = YES;
+            self.hasMore = NO;
+            self.loadingAll = NO;
+            [self.table reloadData];
+            [self fillHeader];
+            if (self.jumpTarget >= 0) {   // 想跳的那段超出了实际集数，至少落到最后一行
+                NSInteger last = MAX(0, (NSInteger)self.tracks.count - 1);
+                self.jumpTarget = -1;
+                [self.table scrollToRowAtIndexPath:[NSIndexPath indexPathForRow:[self rowForIndex:last] inSection:0]
+                                    atScrollPosition:UITableViewScrollPositionBottom animated:YES];
+            }
+            if (self.pendingDownloadAll) { self.pendingDownloadAll = NO; [self downloadAll]; }
+            return;
+        }
         [self.pageTries removeObjectForKey:@(p)];
         self.errText = nil;
         self.failPage = 0;
+        NSInteger before = (NSInteger)self.tracks.count;
+        BOOL shortPage = list.count > 0 && list.count < 50;
         self.pageMap[@(p)] = list ?: @[];
         [self rebuildTracks];
+        NSInteger added = (NSInteger)self.tracks.count - before;
+        if (list.count > 0 && added <= 0) self.endReached = YES;         // 整页都是重复的：服务端没有更多了
+        if (shortPage && self.total > 0 && (NSInteger)self.tracks.count >= self.total) self.endReached = YES;
+        if (self.total > 0 && (NSInteger)self.tracks.count > self.total) self.total = 0;   // total 给少了，弃用
+        self.hasMore = !self.endReached;
         if (self.tracks.count && !ADPlayer.shared.album) {
             ADPlayer.shared.album = self.album;
             ADPlayer.shared.tracks = self.tracks;
+        } else if (ADPlayer.shared.album && [ADPlayer.shared.album.albumId isEqualToString:self.album.albumId]
+                   && self.tracks.count > ADPlayer.shared.tracks.count) {
+            ADPlayer.shared.tracks = self.tracks;   // 目录补全后同步播放队列（只增不减）
         }
         [self.table reloadData];
         [self fillHeader];
@@ -528,6 +576,10 @@
             } else {
                 self.loadingAll = NO;
                 [self.table reloadData];
+                if (self.sortDesc && self.tracks.count) {   // 拉全后把真正的最后一集顶到首位
+                    [self.table scrollToRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:0]
+                                        atScrollPosition:UITableViewScrollPositionTop animated:NO];
+                }
                 if (self.pendingDownloadAll) { self.pendingDownloadAll = NO; [self downloadAll]; }
             }
         }
@@ -1151,7 +1203,7 @@
         [opts addObject:[NSString stringWithFormat:@"%ld–%ld", (long)start + 1, (long)end]];
     }
     [ADOptionSheet showIn:self title:@"快速选集" options:opts destructive:-1 choose:^(NSInteger i) {
-        NSInteger target = i * 60;
+        NSInteger target = MIN(i * 60, MAX(0, (NSInteger)ADPlayer.shared.tracks.count - 1));
         NSIndexPath *ip = [NSIndexPath indexPathForRow:[self queueRowForIndex:target] inSection:0];
         if (ip.row < (NSInteger)ADPlayer.shared.tracks.count)
             [self.queue scrollToRowAtIndexPath:ip atScrollPosition:UITableViewScrollPositionTop animated:YES];
@@ -1226,7 +1278,8 @@
     }];
     [self.queue reloadData];
     if (self.showQueue) {
-        NSIndexPath *ip = [NSIndexPath indexPathForRow:ADPlayer.shared.index inSection:0];
+        [ADPlayer.shared ensureFullQueue];      // 打开队列时顺手把后面的目录补齐
+        NSIndexPath *ip = [NSIndexPath indexPathForRow:[self queueRowForIndex:ADPlayer.shared.index] inSection:0];
         if (ip.row < (NSInteger)ADPlayer.shared.tracks.count)
             [self.queue scrollToRowAtIndexPath:ip atScrollPosition:UITableViewScrollPositionMiddle animated:YES];
     }

@@ -12,6 +12,11 @@
 // 界面就一直停在「正在获取音频…」。现在新请求直接接管，旧回调按序号作废。
 @property (nonatomic, assign) NSInteger resolveSeq;
 @property (nonatomic, assign) BOOL retriedItem;
+// 播放队列补全：专辑页只加载了前几十集时，播放器自己把后面的目录补齐，
+// 否则队列的「倒序」「快速选集」「缓存整本」都只能看到前 50 集。
+@property (nonatomic, assign) BOOL filling;
+- (void)ensureFullQueue;
+- (void)fillQueuePage:(NSInteger)page tries:(NSInteger)tries forAlbum:(NSString *)albumId;
 @end
 
 @implementation ADPlayer
@@ -54,6 +59,52 @@
         }
     }
     [self playAt:start];
+    [self ensureFullQueue];
+}
+
+// ── 队列补全 ─────────────────────────────────────────
+- (void)fillQueuePage:(NSInteger)page tries:(NSInteger)tries forAlbum:(NSString *)albumId {
+    if (!albumId.length) { self.filling = NO; return; }
+    __weak typeof(self) w = self;
+    [[ADApi shared] tracksOf:albumId page:page done:^(NSArray<ADTrack *> *list, NSInteger total, BOOL cached, NSString *err) {
+        __strong typeof(w) self = w; if (!self) return;
+        if (!self.album || ![self.album.albumId isEqualToString:albumId]) { self.filling = NO; return; }
+        if (cached) return;                       // 缓存那条由专辑页处理，这里只认网络结果
+        if (err.length) {
+            if (tries < 2) {
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    __strong typeof(w) s = w; if (!s) return;
+                    [s fillQueuePage:page tries:tries + 1 forAlbum:albumId];
+                });
+            } else {
+                self.filling = NO;
+            }
+            return;
+        }
+        if (!list.count) { self.filling = NO; return; }
+        NSMutableArray *merged = [self.tracks mutableCopy] ?: [NSMutableArray array];
+        NSMutableSet *have = [NSMutableSet set];
+        for (ADTrack *t in merged) if (t.trackId.length) [have addObject:t.trackId];
+        NSInteger added = 0;
+        for (ADTrack *t in list) {
+            if (!t.trackId.length || [have containsObject:t.trackId]) continue;
+            [merged addObject:t]; [have addObject:t.trackId]; added++;
+        }
+        if (added > 0) {
+            self.tracks = merged;                 // 只往末尾追加，当前播放的 _index 不受影响
+            [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
+        }
+        if (added == 0 || list.count < 50) { self.filling = NO; return; }
+        [self fillQueuePage:page + 1 tries:0 forAlbum:albumId];
+    }];
+}
+
+- (void)ensureFullQueue {
+    if (self.filling) return;
+    if (!self.album || !self.tracks.count) return;
+    if ((NSInteger)self.tracks.count % 50 != 0) return;   // 不是被截断的样子，不用补
+    self.filling = YES;
+    [self fillQueuePage:(NSInteger)self.tracks.count / 50 + 1 tries:0 forAlbum:self.album.albumId];
 }
 
 - (void)playAt:(NSInteger)index {
