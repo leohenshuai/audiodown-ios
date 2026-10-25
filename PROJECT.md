@@ -47,7 +47,8 @@ Base:`https://audio.959935291.xyz:899`,认证 `Authorization: Bearer <token>`(`x
 - v1.6(2026-10-25):搜索页加在线/本地分段,本地搜下载/收藏/历史(包含匹配)
 - v1.7(2026-10-25):专辑页支持单集下载(左滑)、多选下载(⋯→选择剧集)、目录正序倒序、每 60 集快速选集;智能预加载(预取后续 N 集到 Documents/cache/prefetch)
 - v1.8(2026-10-25):预加载加「仅 Wi-Fi」开关(默认开,检测 en0),清理策略 不清理/3/7/30 天
-- 产物:`听书-1.8-unsigned.ipa`(bundle com.leo.audiodown,最新)
+- v1.9(2026-10-25):修搜索中文二次编码(关键词先在 search() 严格转义、request() 不再整条 URL 再转义);结果按"标题含关键词"优先排序。踩坑:同一 URL 既在 search() 里转义又在 request() 里转义,`%` 变 `%25`,服务器按字面量匹配→永远搜不到
+- 产物:`听书-1.9-unsigned.ipa`(bundle com.leo.audiodown,最新)
 
 ## 待办
 - 分类浏览(需服务端支持)
