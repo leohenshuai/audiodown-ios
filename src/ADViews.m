@@ -533,6 +533,9 @@
 @property (nonatomic, assign) NSInteger catIndex;
 @property (nonatomic, assign) NSInteger autoPages;
 @property (nonatomic, strong) NSMutableArray *chips;
+@property (nonatomic, strong) UIScrollView *panel;
+@property (nonatomic, strong) NSArray<ADAlbum *> *recs;
+@property (nonatomic, strong) NSMutableArray<NSString *> *history;
 @end
 
 @implementation ADSearchController
@@ -582,11 +585,21 @@
     self.cats.contentInset = UIEdgeInsetsMake(0, 12, 0, 12);
     [self.view addSubview:self.cats];
     [self buildChips];
+
+    self.panel = [[UIScrollView alloc] initWithFrame:CGRectZero];
+    self.panel.backgroundColor = UIColor.clearColor;
+    self.panel.showsVerticalScrollIndicator = NO;
+    self.panel.contentInset = UIEdgeInsetsMake(0, 0, 140, 0);
+    [self.view addSubview:self.panel];
+    [self rebuildPanel];
+    [self loadRecs];
+    [self updatePanel];
 }
 
 - (void)switchMode {
     self.localMode = (self.seg.selectedSegmentIndex == 1);
     [self layoutChrome];
+    [self updatePanel];
     self.page = 1;
     self.autoPages = 0;
     if (self.localMode) {
@@ -622,9 +635,24 @@
 }
 
 - (void)searchBar:(UISearchBar *)b textDidChange:(NSString *)t {
-    if (!self.localMode) return;
-    [self.cv reloadData];
-    self.hint.text = [self visible].count ? @"" : (t.length ? @"本机没有匹配的内容" : @"本机还没有内容，先在专辑页「缓存到本机」或收藏");
+    NSString *q = [t stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+    if (self.localMode) {
+        [self.cv reloadData];
+        self.hint.text = [self visible].count ? @"" : (q.length ? @"本机没有匹配的内容" : @"本机还没有内容，先在专辑页「缓存到本机」或收藏");
+        self.hint.hidden = self.hint.text.length == 0;
+        return;
+    }
+    if (!q.length) {
+        // 清空搜索词：结果要跟着清掉，回到「历史/热词/推荐」面板
+        self.keyword = @"";
+        [self.list removeAllObjects];
+        self.page = 1;
+        self.more = NO;
+        self.autoPages = 0;
+        self.hint.text = @"";
+        [self.cv reloadData];
+        [self updatePanel];
+    }
 }
 
 
@@ -758,6 +786,206 @@
     }
     return arr;
 }
+// ── 空状态面板：搜索历史 / 热门搜索 / 推荐收听 ──
+- (NSMutableArray<NSString *> *)history {
+    if (!_history) {
+        NSArray *a = [NSUserDefaults.standardUserDefaults arrayForKey:@"ad_search_history"];
+        _history = a ? [a mutableCopy] : [NSMutableArray array];
+    }
+    return _history;
+}
+
+- (void)rememberKeyword:(NSString *)k {
+    if (!k.length) return;
+    [self.history removeObject:k];
+    [self.history insertObject:k atIndex:0];
+    while (self.history.count > 12) [self.history removeLastObject];
+    [NSUserDefaults.standardUserDefaults setObject:self.history forKey:@"ad_search_history"];
+    [self rebuildPanel];
+}
+
+- (NSArray<NSString *> *)hotWords {
+    return @[@"郭德纲", @"三国演义", @"睡前故事", @"白噪音", @"英语听力",
+             @"鬼吹灯", @"明朝那些事", @"儿童成语", @"盗墓笔记", @"助眠轻音乐"];
+}
+
+- (CGFloat)addChips:(NSArray<NSString *> *)words atY:(CGFloat)y tagBase:(NSInteger)base {
+    UIFont *f = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    CGFloat x = 16, maxX = self.view.bounds.size.width - 16;
+    for (NSInteger i = 0; i < (NSInteger)words.count; i++) {
+        NSString *w = words[i];
+        CGSize sz = [w sizeWithAttributes:@{NSFontAttributeName: f}];
+        CGFloat bw = sz.width + 26;
+        if (x + bw > maxX) { x = 16; y += 38; }
+        UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+        b.frame = CGRectMake(x, y, bw, 30);
+        b.tag = base + i;
+        b.titleLabel.font = f;
+        [b setTitle:w forState:UIControlStateNormal];
+        [b setTitleColor:[UIColor colorWithWhite:1 alpha:0.85] forState:UIControlStateNormal];
+        b.backgroundColor = [UIColor colorWithWhite:1 alpha:0.09];
+        b.layer.cornerRadius = 15;
+        [b addTarget:self action:@selector(tapWord:) forControlEvents:UIControlEventTouchUpInside];
+        [self.panel addSubview:b];
+        x += bw + 8;
+    }
+    return y + 30;
+}
+
+- (void)rebuildPanel {
+    for (UIView *v in self.panel.subviews) [v removeFromSuperview];
+    CGFloat W = self.view.bounds.size.width;
+    CGFloat y = 6;
+
+    if (self.history.count) {
+        UILabel *t = [ADUtil label:@"PingFangSC-Semibold" size:15 color:UIColor.whiteColor];
+        t.text = @"搜索历史";
+        t.frame = CGRectMake(16, y, 160, 22);
+        [self.panel addSubview:t];
+
+        UIButton *clr = [UIButton buttonWithType:UIButtonTypeSystem];
+        clr.frame = CGRectMake(W - 72, y - 4, 56, 30);
+        clr.titleLabel.font = [UIFont systemFontOfSize:13];
+        [clr setTitle:@"清空" forState:UIControlStateNormal];
+        [clr setTitleColor:[ADUtil dim] forState:UIControlStateNormal];
+        [clr addTarget:self action:@selector(clearHistory) forControlEvents:UIControlEventTouchUpInside];
+        [self.panel addSubview:clr];
+        y += 30;
+        y = [self addChips:self.history atY:y tagBase:1000];
+        y += 16;
+    }
+
+    UILabel *h = [ADUtil label:@"PingFangSC-Semibold" size:15 color:UIColor.whiteColor];
+    h.text = @"大家都在搜";
+    h.frame = CGRectMake(16, y, 200, 22);
+    [self.panel addSubview:h];
+    y += 30;
+    y = [self addChips:self.hotWords atY:y tagBase:2000];
+    y += 22;
+
+    if (self.recs.count) {
+        UILabel *r = [ADUtil label:@"PingFangSC-Semibold" size:15 color:UIColor.whiteColor];
+        r.text = @"推荐收听";
+        r.frame = CGRectMake(16, y, 200, 22);
+        [self.panel addSubview:r];
+        y += 32;
+        for (NSInteger i = 0; i < (NSInteger)self.recs.count; i++) {
+            ADAlbum *a = self.recs[i];
+            UIButton *row = [UIButton buttonWithType:UIButtonTypeCustom];
+            row.frame = CGRectMake(0, y, W, 64);
+            row.tag = 3000 + i;
+            [row addTarget:self action:@selector(tapRec:) forControlEvents:UIControlEventTouchUpInside];
+
+            UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(16, 8, 48, 48)];
+            iv.layer.cornerRadius = 8;
+            iv.clipsToBounds = YES;
+            iv.backgroundColor = [UIColor colorWithWhite:1 alpha:0.06];
+            [ADUtil cover:iv url:a.cover];
+            [row addSubview:iv];
+
+            UILabel *t = [ADUtil label:nil size:14 color:UIColor.whiteColor];
+            t.frame = CGRectMake(74, 8, W - 74 - 40, 20);
+            t.text = a.title;
+            [row addSubview:t];
+
+            UILabel *sub = [ADUtil label:nil size:11 color:[ADUtil dim]];
+            sub.frame = CGRectMake(74, 30, W - 74 - 40, 18);
+            sub.text = [NSString stringWithFormat:@"%@%@", a.anchor.length ? a.anchor : @"有声书",
+                        a.trackCount > 0 ? [NSString stringWithFormat:@" · %ld 集", (long)a.trackCount] : @""];
+            [row addSubview:sub];
+
+            UIImageView *chev = [[UIImageView alloc] initWithFrame:CGRectMake(W - 30, 24, 16, 16)];
+            chev.image = [UIImage systemImageNamed:@"chevron.right" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:12 weight:UIImageSymbolWeightSemibold]];
+            chev.tintColor = [UIColor colorWithWhite:1 alpha:0.3];
+            [row addSubview:chev];
+
+            [self.panel addSubview:row];
+            y += 64;
+        }
+    }
+
+    self.panel.contentSize = CGSizeMake(W, y + 20);
+}
+
+- (void)loadRecs {
+    __weak typeof(self) w = self;
+    [[ADApi shared] discover:^(NSArray<NSDictionary *> *sections, BOOL cached, NSString *err) {
+        __strong typeof(w) self = w; if (!self) return;
+        NSMutableArray *arr = [NSMutableArray array];
+        NSMutableSet *seen = [NSMutableSet set];
+        for (NSDictionary *sec in sections) {
+            NSArray *its = sec[@"items"];
+            if (![its isKindOfClass:NSArray.class]) continue;
+            for (id o in its) {
+                ADAlbum *a = [ADAlbum fromJSON:o];
+                if (!a || [seen containsObject:a.albumId]) continue;
+                [seen addObject:a.albumId];
+                [arr addObject:a];
+                if (arr.count >= 6) break;
+            }
+            if (arr.count >= 6) break;
+        }
+        self.recs = arr;
+        [self rebuildPanel];
+    }];
+}
+
+- (void)clearHistory {
+    [self.history removeAllObjects];
+    [NSUserDefaults.standardUserDefaults setObject:@[] forKey:@"ad_search_history"];
+    [self rebuildPanel];
+}
+
+- (void)tapWord:(UIButton *)b {
+    NSInteger tag = b.tag;
+    NSString *word = nil;
+    if (tag >= 2000 && tag < 3000) {
+        NSArray *hw = [self hotWords];
+        NSInteger i = tag - 2000;
+        if (i < (NSInteger)hw.count) word = hw[i];
+    } else if (tag >= 1000 && tag < 2000) {
+        NSInteger i = tag - 1000;
+        if (i < (NSInteger)self.history.count) word = self.history[i];
+    }
+    if (word.length) [self startSearch:word];
+}
+
+- (void)tapRec:(UIButton *)b {
+    NSInteger i = b.tag - 3000;
+    if (i < 0 || i >= (NSInteger)self.recs.count) return;
+    ADAlbumController *vc = [ADAlbumController new];
+    vc.album = self.recs[i];
+    [self.navigationController pushViewController:vc animated:YES];
+}
+
+- (void)startSearch:(NSString *)q {
+    q = [q stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+    if (!q.length) return;
+    self.localMode = NO;
+    self.seg.selectedSegmentIndex = 0;
+    self.bar.text = q;
+    [self.bar resignFirstResponder];
+    self.keyword = q;
+    self.page = 1;
+    self.more = YES;
+    self.autoPages = 0;
+    self.list = [NSMutableArray array];
+    if (self.catIndex != 0) { self.catIndex = 0; [self paintChips]; }
+    [self.cv reloadData];
+    self.hint.text = @"搜索中…";
+    self.hint.hidden = NO;
+    [self rememberKeyword:q];
+    [self updatePanel];
+    [self loadPage];
+}
+
+- (void)updatePanel {
+    BOOL show = (!self.localMode && self.keyword.length == 0);
+    self.panel.hidden = !show;
+    self.cv.hidden = show;
+    if (show) self.hint.hidden = YES;
+}
+
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; self.navigationController.navigationBar.hidden = YES; [self layoutChrome]; }
 - (void)layoutChrome {
     CGFloat top = MAX(self.view.safeAreaInsets.top, 47);
@@ -767,6 +995,7 @@
     self.cats.hidden = self.localMode;
     CGFloat gridTop = self.localMode ? top + 82 : top + 122;
     self.cv.frame = CGRectMake(0, gridTop, self.view.bounds.size.width, self.view.bounds.size.height - gridTop);
+    self.panel.frame = self.cv.frame;
 }
 - (void)viewWillLayoutSubviews {
     [super viewWillLayoutSubviews];
@@ -779,14 +1008,7 @@
 - (void)searchBarSearchButtonClicked:(UISearchBar *)b {
     [b resignFirstResponder];
     if (self.localMode) { [self.cv reloadData]; return; }
-    NSString *q = [b.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
-    if (!q.length) return;
-    self.keyword = q; self.page = 1; self.more = YES; self.autoPages = 0;
-    self.list = [NSMutableArray array];
-    if (self.catIndex != 0) { self.catIndex = 0; [self paintChips]; }
-    [self.list removeAllObjects]; [self.cv reloadData];
-    self.hint.text = @"搜索中…";
-    [self loadPage];
+    [self startSearch:b.text];
 }
 - (void)refreshSearch {
     [self.cv.refreshControl endRefreshing];
@@ -868,50 +1090,182 @@
 }
 @end
 
-// ───────────── 书架 ─────────────
-@interface ADShelfController () <UICollectionViewDataSource, UICollectionViewDelegate>
-@property (nonatomic, strong) UICollectionView *cv;
+// ───────────── 书架（列表样式） ─────────────
+@interface ADShelfRow : UITableViewCell
+@property (nonatomic, assign) double progress;
+- (void)fill:(ADAlbum *)a;
+@end
+
+@implementation ADShelfRow {
+    UIImageView *_cover;
+    UIView *_bar, *_fill;
+    UILabel *_title, *_pct, *_author, *_cur, *_cnt, *_dlTag, *_favTag;
+}
+
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reid {
+    if ((self = [super initWithStyle:style reuseIdentifier:reid])) {
+        self.backgroundColor = UIColor.clearColor;
+        self.selectionStyle = UITableViewCellSelectionStyleNone;
+        _cover = [[UIImageView alloc] init];
+        _cover.layer.cornerRadius = 10;
+        _cover.clipsToBounds = YES;
+        _cover.backgroundColor = [UIColor colorWithWhite:1 alpha:0.06];
+        [self.contentView addSubview:_cover];
+
+        _title = [ADUtil label:@"PingFangSC-Semibold" size:16 color:UIColor.whiteColor];
+        [self.contentView addSubview:_title];
+
+        _pct = [ADUtil label:nil size:13 color:[UIColor colorWithWhite:1 alpha:0.9]];
+        _pct.textAlignment = NSTextAlignmentRight;
+        [self.contentView addSubview:_pct];
+
+        _author = [ADUtil label:nil size:12 color:[ADUtil dim]];
+        [self.contentView addSubview:_author];
+
+        _cur = [ADUtil label:nil size:12 color:[ADUtil dim]];
+        [self.contentView addSubview:_cur];
+
+        _bar = [UIView new];
+        _bar.backgroundColor = [UIColor colorWithWhite:1 alpha:0.16];
+        _bar.layer.cornerRadius = 2;
+        [self.contentView addSubview:_bar];
+
+        _fill = [UIView new];
+        _fill.backgroundColor = [UIColor colorWithWhite:1 alpha:0.95];
+        _fill.layer.cornerRadius = 2;
+        [_bar addSubview:_fill];
+
+        _cnt = [ADUtil label:nil size:11 color:[ADUtil dim]];
+        _cnt.textAlignment = NSTextAlignmentRight;
+        [self.contentView addSubview:_cnt];
+
+        _dlTag = [self pill:@"已下载"];
+        _favTag = [self pill:@"收藏"];
+        [self.contentView addSubview:_dlTag];
+        [self.contentView addSubview:_favTag];
+    }
+    return self;
+}
+
+- (UILabel *)pill:(NSString *)t {
+    UILabel *l = [ADUtil label:nil size:11 color:[UIColor colorWithWhite:1 alpha:0.8]];
+    l.text = t;
+    l.textAlignment = NSTextAlignmentCenter;
+    l.backgroundColor = [UIColor colorWithWhite:1 alpha:0.12];
+    l.layer.cornerRadius = 10;
+    l.clipsToBounds = YES;
+    return l;
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGFloat W = self.contentView.bounds.size.width;
+    _cover.frame = CGRectMake(16, 12, 76, 76);
+    _title.frame = CGRectMake(104, 10, W - 104 - 70, 22);
+    _pct.frame = CGRectMake(W - 66, 10, 50, 22);
+    _author.frame = CGRectMake(104, 33, W - 128, 17);
+    _cur.frame = CGRectMake(104, 52, W - 124, 17);
+    _bar.frame = CGRectMake(104, 76, W - 120, 4);
+    _fill.frame = CGRectMake(0, 0, _bar.bounds.size.width * self.progress, 4);
+    _cnt.frame = CGRectMake(W - 216, 85, 200, 16);
+    CGFloat x = 104;
+    for (UILabel *l in @[_dlTag, _favTag]) {
+        if (l.hidden) continue;
+        CGSize sz = [l.text sizeWithAttributes:@{NSFontAttributeName: l.font}];
+        l.frame = CGRectMake(x, 105, sz.width + 20, 20);
+        x += sz.width + 20 + 8;
+    }
+}
+
+- (void)fill:(ADAlbum *)a {
+    [ADUtil cover:_cover url:a.cover];
+    _title.text = a.title;
+    _author.text = a.anchor.length ? a.anchor : (a.author.length ? a.author : @"");
+
+    NSDictionary *info = [[ADStore shared] lastInfoOf:a.albumId];
+    NSInteger idx = [info[@"index"] integerValue];
+    NSInteger total = a.trackCount;
+    if (total <= 0) {
+        ADTask *t = [[ADDownloader shared] taskForAlbum:a.albumId];
+        total = (NSInteger)t.tracks.count;
+    }
+    double sec = [info[@"seconds"] doubleValue];
+    double dur = [info[@"duration"] doubleValue];
+    double inner = (dur > 1) ? MIN(1.0, sec / dur) : 0;
+    double prog = (total > 0) ? ((double)idx + inner) / (double)total : 0;
+    if (prog < 0) prog = 0;
+    if (prog > 1) prog = 1;
+    self.progress = prog;
+
+    _cur.text = info ? [NSString stringWithFormat:@"当前：%@", info[@"title"] ?: @"—"] : @"还没开始听";
+    _pct.text = [NSString stringWithFormat:@"%ld%%", (long)lround(prog * 100.0)];
+    if (total > 0) {
+        NSInteger listened = MIN(idx + 1, total);
+        if (prog <= 0.0001) listened = 0;
+        _cnt.text = [NSString stringWithFormat:@"已听 %ld/%ld 章", (long)listened, (long)total];
+    } else {
+        _cnt.text = @"";
+    }
+    _pct.textColor = prog >= 1 ? [ADUtil brand] : [UIColor colorWithWhite:1 alpha:0.9];
+
+    ADTask *task = [[ADDownloader shared] taskForAlbum:a.albumId];
+    _dlTag.hidden = !(task && task.done > 0);
+    _favTag.hidden = ![[ADStore shared] isFavorite:a.albumId];
+    [self setNeedsLayout];
+}
+@end
+
+@interface ADShelfController () <UITableViewDataSource, UITableViewDelegate>
+@property (nonatomic, strong) UITableView *table;
 @property (nonatomic, strong) NSArray *items;
-@property (nonatomic, strong) UILabel *hint;
+@property (nonatomic, strong) UILabel *hint, *countLabel;
 @end
 
 @implementation ADShelfController
+
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor colorWithRed:0.043 green:0.035 blue:0.035 alpha:1];
     self.navigationController.navigationBar.hidden = YES;
+
     UILabel *t = [ADUtil label:@"PingFangSC-Semibold" size:34 color:UIColor.whiteColor];
-    t.frame = CGRectMake(16, MAX(self.view.safeAreaInsets.top, 47), 200, 40);
     t.text = @"书架";
     t.tag = 99;
     [self.view addSubview:t];
+
+    self.countLabel = [ADUtil label:nil size:15 color:[UIColor colorWithWhite:1 alpha:0.45]];
+    [self.view addSubview:self.countLabel];
+
     UIButton *gear = [UIButton buttonWithType:UIButtonTypeSystem];
-    gear.frame = CGRectMake(self.view.bounds.size.width - 60, MAX(self.view.safeAreaInsets.top, 47) + 4, 44, 44);
     gear.backgroundColor = [UIColor colorWithWhite:1 alpha:0.14];
     gear.layer.cornerRadius = 22;
+    gear.tag = 98;
     gear.tintColor = UIColor.whiteColor;
     [gear setImage:[UIImage systemImageNamed:@"gearshape" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
     [gear addTarget:self action:@selector(goSettings) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:gear];
 
-    CGFloat w = (self.view.bounds.size.width - 16 * 2 - 12 * 2) / 3;
-    UICollectionViewFlowLayout *lo = [UICollectionViewFlowLayout new];
-    lo.itemSize = CGSizeMake(w, w + 40);
-    lo.minimumInteritemSpacing = 12; lo.minimumLineSpacing = 16;
-    self.cv = [[UICollectionView alloc] initWithFrame:CGRectMake(0, 108, self.view.bounds.size.width, self.view.bounds.size.height - 108) collectionViewLayout:lo];
-    self.cv.backgroundColor = UIColor.clearColor;
-    self.cv.contentInset = UIEdgeInsetsMake(8, 16, 120, 16);
-    self.cv.dataSource = self; self.cv.delegate = self;
-    [self.cv registerClass:UICollectionViewCell.class forCellWithReuseIdentifier:@"c"];
-    self.cv.refreshControl = [[UIRefreshControl alloc] init];
-    self.cv.refreshControl.tintColor = [UIColor colorWithWhite:1 alpha:0.5];
-    [self.cv.refreshControl addTarget:self action:@selector(refreshSearch) forControlEvents:UIControlEventValueChanged];
-    [self.view addSubview:self.cv];
+    self.table = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStylePlain];
+    self.table.backgroundColor = UIColor.clearColor;
+    self.table.separatorColor = [UIColor colorWithWhite:1 alpha:0.08];
+    self.table.separatorInset = UIEdgeInsetsMake(0, 104, 0, 0);
+    self.table.rowHeight = 128;
+    self.table.contentInset = UIEdgeInsetsMake(6, 0, 120, 0);
+    self.table.dataSource = self;
+    self.table.delegate = self;
+    self.table.tableFooterView = [UIView new];
+    self.table.refreshControl = [[UIRefreshControl alloc] init];
+    self.table.refreshControl.tintColor = [UIColor colorWithWhite:1 alpha:0.5];
+    [self.table.refreshControl addTarget:self action:@selector(pullRefresh) forControlEvents:UIControlEventValueChanged];
+    [self.view addSubview:self.table];
+
     self.hint = [ADUtil label:nil size:14 color:[UIColor colorWithWhite:1 alpha:0.5]];
     self.hint.textAlignment = NSTextAlignmentCenter;
+    self.hint.numberOfLines = 0;
     self.hint.text = @"还没有收藏和收听记录\n在专辑页点右上角收藏";
     [self.view addSubview:self.hint];
 }
+
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     self.navigationController.navigationBar.hidden = YES;
@@ -924,30 +1278,39 @@
     }
     self.items = arr;
     self.hint.hidden = arr.count > 0;
-    [self.cv reloadData];
+    self.countLabel.text = arr.count ? [NSString stringWithFormat:@"%ld 本", (long)arr.count] : @"";
+    [self.table reloadData];
+    [self layoutChrome];
 }
+
+- (void)layoutChrome {
+    CGFloat top = MAX(self.view.safeAreaInsets.top, 47);
+    UILabel *t = [self.view viewWithTag:99];
+    t.frame = CGRectMake(16, top - 4, 120, 42);
+    CGSize sz = [t.text sizeWithAttributes:@{NSFontAttributeName: t.font}];
+    self.countLabel.frame = CGRectMake(20 + sz.width, top + 14, 100, 22);
+    UIButton *gear = (UIButton *)[self.view viewWithTag:98];
+    gear.frame = CGRectMake(self.view.bounds.size.width - 60, top + 4, 44, 44);
+    self.table.frame = CGRectMake(0, top + 46, self.view.bounds.size.width, self.view.bounds.size.height - top - 46);
+    self.hint.frame = CGRectMake(30, self.view.bounds.size.height / 2 - 60, self.view.bounds.size.width - 60, 60);
+}
+
 - (void)viewWillLayoutSubviews {
     [super viewWillLayoutSubviews];
-    self.cv.frame = CGRectMake(0, 108, self.view.bounds.size.width, self.view.bounds.size.height - 108);
-    self.hint.frame = CGRectMake(30, self.view.bounds.size.height / 2 - 40, self.view.bounds.size.width - 60, 60);
+    [self layoutChrome];
     ADMiniBar *m = [ADMiniBar shared];
     m.frame = CGRectMake(8, self.view.bounds.size.height - self.view.safeAreaInsets.bottom - 64, self.view.bounds.size.width - 16, 58);
     if (!m.superview) [self.view addSubview:m];
     [m refresh];
 }
+
 - (void)viewSafeAreaInsetsDidChange {
     [super viewSafeAreaInsetsDidChange];
-    CGFloat top = MAX(self.view.safeAreaInsets.top, 47);
-    UILabel *t = [self.view viewWithTag:99];
-    t.frame = CGRectMake(16, top, 200, 40);
-    UIButton *g = nil;
-    for (UIView *v in self.view.subviews) if ([v isKindOfClass:UIButton.class]) g = (UIButton *)v;
-    g.frame = CGRectMake(self.view.bounds.size.width - 60, top + 4, 44, 44);
-    self.cv.frame = CGRectMake(0, top + 52, self.view.bounds.size.width, self.view.bounds.size.height - top - 52);
+    [self layoutChrome];
 }
 
 - (void)pullRefresh {
-    [self.cv.refreshControl endRefreshing];
+    [self.table.refreshControl endRefreshing];
     [self viewWillAppear:NO];
 }
 
@@ -956,35 +1319,20 @@
     nav.modalPresentationStyle = UIModalPresentationPageSheet;
     [self presentViewController:nav animated:YES completion:nil];
 }
-- (NSInteger)collectionView:(UICollectionView *)cv numberOfItemsInSection:(NSInteger)s { return self.items.count; }
-- (UICollectionViewCell *)collectionView:(UICollectionView *)cv cellForItemAtIndexPath:(NSIndexPath *)ip {
-    UICollectionViewCell *cell = [cv dequeueReusableCellWithReuseIdentifier:@"c" forIndexPath:ip];
-    [cell.contentView.subviews makeObjectsPerformSelector:@selector(removeFromSuperview)];
-    ADAlbum *a = self.items[ip.item];
-    CGFloat w = cell.contentView.bounds.size.width;
-    UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, w, w)];
-    iv.layer.cornerRadius = 12; iv.clipsToBounds = YES;
-    [ADUtil cover:iv url:a.cover];
-    UILabel *t = [ADUtil label:nil size:12 color:[UIColor colorWithWhite:1 alpha:0.85]];
-    t.frame = CGRectMake(0, w + 6, w, 32);
-    t.numberOfLines = 2;
-    t.text = a.title;
-    [cell.contentView addSubview:iv]; [cell.contentView addSubview:t];
-    if ([[ADStore shared] isAlbumDone:a.albumId]) {
-        UILabel *badge = [ADUtil label:nil size:10 color:UIColor.whiteColor];
-        badge.text = @"已听完";
-        badge.textAlignment = NSTextAlignmentCenter;
-        badge.backgroundColor = [ADUtil brand];
-        badge.layer.cornerRadius = 9;
-        badge.clipsToBounds = YES;
-        badge.frame = CGRectMake(w - 52, 6, 46, 18);
-        [cell.contentView addSubview:badge];
-    }
-    return cell;
+
+- (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { return self.items.count; }
+
+- (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {
+    ADShelfRow *c = [t dequeueReusableCellWithIdentifier:@"shelf"];
+    if (!c) c = [[ADShelfRow alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"shelf"];
+    [c fill:self.items[ip.row]];
+    return c;
 }
-- (void)collectionView:(UICollectionView *)cv didSelectItemAtIndexPath:(NSIndexPath *)ip {
+
+- (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [t deselectRowAtIndexPath:ip animated:YES];
     ADAlbumController *vc = [ADAlbumController new];
-    vc.album = self.items[ip.item];
+    vc.album = self.items[ip.row];
     [self.navigationController pushViewController:vc animated:YES];
 }
 @end

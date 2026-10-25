@@ -22,6 +22,14 @@
     tab.tabBar.barStyle = UIBarStyleBlack;
     tab.tabBar.tintColor = [ADUtil brand];
     tab.tabBar.unselectedItemTintColor = [ADUtil dim];
+    // 修：从搜索结果进专辑再返回后，标签栏变成透明（滚动边缘样式）
+    if (@available(iOS 13.0, *)) {
+        UITabBarAppearance *ap = [UITabBarAppearance new];
+        [ap configureWithDefaultBackground];
+        ap.backgroundColor = [UIColor colorWithRed:0.043 green:0.035 blue:0.035 alpha:0.92];
+        tab.tabBar.standardAppearance = ap;
+        if (@available(iOS 15.0, *)) tab.tabBar.scrollEdgeAppearance = ap;
+    }
     d.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"发现" image:[UIImage systemImageNamed:@"sparkles"] tag:0];
     s.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"搜索" image:[UIImage systemImageNamed:@"magnifyingglass"] tag:1];
     b.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"书架" image:[UIImage systemImageNamed:@"books.vertical"] tag:2];
