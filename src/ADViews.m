@@ -830,6 +830,16 @@
     t.numberOfLines = 2;
     t.text = a.title;
     [cell.contentView addSubview:iv]; [cell.contentView addSubview:t];
+    if ([[ADStore shared] isAlbumDone:a.albumId]) {
+        UILabel *badge = [ADUtil label:nil size:10 color:UIColor.whiteColor];
+        badge.text = @"已听完";
+        badge.textAlignment = NSTextAlignmentCenter;
+        badge.backgroundColor = [ADUtil brand];
+        badge.layer.cornerRadius = 9;
+        badge.clipsToBounds = YES;
+        badge.frame = CGRectMake(w - 52, 6, 46, 18);
+        [cell.contentView addSubview:badge];
+    }
     return cell;
 }
 - (void)collectionView:(UICollectionView *)cv didSelectItemAtIndexPath:(NSIndexPath *)ip {
@@ -941,6 +951,16 @@
     t.numberOfLines = 2;
     t.text = a.title;
     [cell.contentView addSubview:iv]; [cell.contentView addSubview:t];
+    if ([[ADStore shared] isAlbumDone:a.albumId]) {
+        UILabel *badge = [ADUtil label:nil size:10 color:UIColor.whiteColor];
+        badge.text = @"已听完";
+        badge.textAlignment = NSTextAlignmentCenter;
+        badge.backgroundColor = [ADUtil brand];
+        badge.layer.cornerRadius = 9;
+        badge.clipsToBounds = YES;
+        badge.frame = CGRectMake(w - 52, 6, 46, 18);
+        [cell.contentView addSubview:badge];
+    }
     return cell;
 }
 - (void)collectionView:(UICollectionView *)cv didSelectItemAtIndexPath:(NSIndexPath *)ip {

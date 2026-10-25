@@ -496,13 +496,15 @@
     c.textLabel.font = [UIFont systemFontOfSize:15];
     c.textLabel.text = tr.title;
     double pos = [[ADStore shared] positionFor:tr.trackId];
+    BOOL listened = [[ADStore shared] isDone:tr.trackId];
     if ([[ADDownloader shared] hasLocal:tr.trackId]) {
         c.detailTextLabel.text = @"已缓存 · 离线可听";
         c.detailTextLabel.textColor = [ADUtil brand];
     } else
-    c.detailTextLabel.text = pos > 0
+    NSString *base = pos > 0
         ? [NSString stringWithFormat:@"听到 %@ / %@", [ADUtil time:pos], [ADUtil time:tr.duration]]
         : (tr.duration > 0 ? [ADUtil time:tr.duration] : @"");
+    c.detailTextLabel.text = listened ? (base.length ? [NSString stringWithFormat:@"已听完 · %@", base] : @"已听完") : base;
     ADTrack *cur = ADPlayer.shared.current;
     BOOL playing = cur && [cur.trackId isEqualToString:tr.trackId];
     c.textLabel.textColor = playing ? [ADUtil brand] : UIColor.whiteColor;
@@ -563,6 +565,10 @@
 @property (nonatomic, strong) UITableView *queue;
 @property (nonatomic, strong) UIView *queueDim;
 @property (nonatomic, assign) BOOL showQueue;
+@property (nonatomic, assign) BOOL queueDesc, queueSelecting;
+@property (nonatomic, strong) NSMutableSet *queueSel;
+@property (nonatomic, strong) UIView *queueBar;
+@property (nonatomic, strong) UIButton *sortBtn, *pickBtn, *selBtn, *dlBtn;
 @end
 
 @implementation ADPlayerController
@@ -671,6 +677,19 @@
     [self.view addSubview:self.queueDim];
     [self.view addSubview:self.queue];
 
+    self.queueSel = [NSMutableSet set];
+    self.queueBar = [[UIView alloc] initWithFrame:CGRectZero];
+    self.queueBar.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.98];
+    self.queueBar.layer.cornerRadius = 14;
+    self.queueBar.clipsToBounds = YES;
+    self.queueBar.hidden = YES;
+    [self.view addSubview:self.queueBar];
+    self.sortBtn = [self barButton:@"正序" action:@selector(toggleQueueSort)];
+    self.pickBtn = [self barButton:@"选集" action:@selector(showQueuePicker)];
+    self.selBtn  = [self barButton:@"多选" action:@selector(toggleQueueSelect)];
+    self.dlBtn   = [self barButton:@"缓存整本" action:@selector(queueDownload)];
+    for (UIButton *b in @[self.sortBtn, self.pickBtn, self.selBtn, self.dlBtn]) [self.queueBar addSubview:b];
+
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(sync) name:@"ADPlayerTick" object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(sync) name:@"ADPlayerChanged" object:nil];
     [self sync];
@@ -766,10 +785,15 @@
     self.queueDim.frame = self.view.bounds;
     [self.view viewWithTag:304].frame = CGRectMake(W / 2 + 106, y + 2, 44, 36);
 
-    if (self.showQueue) {
-        self.queue.frame = CGRectMake(16, H - 320, W - 32, 300);
-    } else {
-        self.queue.frame = CGRectMake(16, H, W - 32, 300);
+    CGRect qf = self.showQueue ? CGRectMake(16, H - 320, W - 32, 300) : CGRectMake(16, H, W - 32, 300);
+    self.queue.frame = qf;
+    self.queueBar.frame = CGRectMake(16, qf.origin.y - 44, W - 32, 40);
+    self.queueBar.hidden = !self.showQueue;
+    CGFloat bw = (W - 32) / 4.0;
+    CGFloat bx = 0;
+    for (UIButton *b in @[self.sortBtn, self.pickBtn, self.selBtn, self.dlBtn]) {
+        b.frame = CGRectMake(bx, 0, bw, 40);
+        bx += bw;
     }
 }
 
@@ -989,6 +1013,91 @@
     [self presentViewController:a animated:YES completion:nil];
 }
 
+- (UIButton *)barButton:(NSString *)t action:(SEL)sel {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    b.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+    [b setTitle:t forState:UIControlStateNormal];
+    [b setTitleColor:[UIColor colorWithWhite:1 alpha:0.9] forState:UIControlStateNormal];
+    [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
+    return b;
+}
+
+- (NSInteger)queueRowForIndex:(NSInteger)idx {
+    NSInteger n = ADPlayer.shared.tracks.count;
+    if (n <= 0) return 0;
+    if (idx >= n) idx = n - 1;
+    return self.queueDesc ? (n - 1 - idx) : idx;
+}
+
+- (NSInteger)queueIndexForRow:(NSInteger)row {
+    NSInteger n = ADPlayer.shared.tracks.count;
+    if (n <= 0) return 0;
+    return self.queueDesc ? (n - 1 - row) : row;
+}
+
+- (void)toggleQueueSort {
+    self.queueDesc = !self.queueDesc;
+    [self.sortBtn setTitle:(self.queueDesc ? @"倒序" : @"正序") forState:UIControlStateNormal];
+    [self.queue reloadData];
+    NSIndexPath *ip = [NSIndexPath indexPathForRow:[self queueRowForIndex:ADPlayer.shared.index] inSection:0];
+    if (ip.row < (NSInteger)ADPlayer.shared.tracks.count)
+        [self.queue scrollToRowAtIndexPath:ip atScrollPosition:UITableViewScrollPositionMiddle animated:YES];
+}
+
+- (void)showQueuePicker {
+    NSInteger total = ADPlayer.shared.tracks.count;
+    if (!total) return;
+    NSMutableArray *opts = [NSMutableArray array];
+    for (NSInteger start = 0; start < total; start += 60) {
+        NSInteger end = MIN(start + 60, total);
+        [opts addObject:[NSString stringWithFormat:@"%ld–%ld", (long)start + 1, (long)end]];
+    }
+    [ADOptionSheet showIn:self title:@"快速选集" options:opts destructive:-1 choose:^(NSInteger i) {
+        NSInteger target = i * 60;
+        NSIndexPath *ip = [NSIndexPath indexPathForRow:[self queueRowForIndex:target] inSection:0];
+        if (ip.row < (NSInteger)ADPlayer.shared.tracks.count)
+            [self.queue scrollToRowAtIndexPath:ip atScrollPosition:UITableViewScrollPositionTop animated:YES];
+    }];
+}
+
+- (void)toggleQueueSelect {
+    self.queueSelecting = !self.queueSelecting;
+    if (!self.queueSelecting) [self.queueSel removeAllObjects];
+    [self.selBtn setTitle:(self.queueSelecting ? @"取消多选" : @"多选") forState:UIControlStateNormal];
+    [self updateQueueDl];
+    [self.queue reloadData];
+}
+
+- (void)updateQueueDl {
+    if (self.queueSelecting) {
+        [self.dlBtn setTitle:[NSString stringWithFormat:@"缓存所选(%ld)", (long)self.queueSel.count] forState:UIControlStateNormal];
+    } else {
+        [self.dlBtn setTitle:@"缓存整本" forState:UIControlStateNormal];
+    }
+}
+
+- (void)queueDownload {
+    ADPlayer *p = ADPlayer.shared;
+    if (!p.album) return;
+    if (self.queueSelecting) {
+        if (!self.queueSel.count) return;
+        NSMutableArray *arr = [NSMutableArray array];
+        for (ADTrack *t in p.tracks) if ([self.queueSel containsObject:t.trackId]) [arr addObject:t];
+        [[ADDownloader shared] addTracks:p.album tracks:arr];
+        self.queueSelecting = NO;
+        [self.queueSel removeAllObjects];
+        [self.selBtn setTitle:@"多选" forState:UIControlStateNormal];
+        [self updateQueueDl];
+        [self.queue reloadData];
+        UIImpactFeedbackGenerator *g = [UIImpactFeedbackGenerator new];
+        [g impactOccurred];
+        return;
+    }
+    [[ADDownloader shared] addAlbum:p.album tracks:p.tracks];
+    UIImpactFeedbackGenerator *g = [UIImpactFeedbackGenerator new];
+    [g impactOccurred];
+}
+
 - (void)closeQueue {
     if (!self.showQueue) return;
     self.showQueue = NO;
@@ -1003,9 +1112,13 @@
     self.showQueue = !self.showQueue;
     self.queue.hidden = !self.showQueue;
     self.queueDim.hidden = !self.showQueue;
+    self.queueBar.hidden = !self.showQueue;
+    if (self.showQueue) { self.queueSelecting = NO; [self.queueSel removeAllObjects]; [self.selBtn setTitle:@"多选" forState:UIControlStateNormal]; [self updateQueueDl]; }
     [UIView animateWithDuration:0.25 animations:^{
         CGFloat W = self.view.bounds.size.width, H = self.view.bounds.size.height;
-        self.queue.frame = self.showQueue ? CGRectMake(16, H - 320, W - 32, 300) : CGRectMake(16, H, W - 32, 300);
+        CGRect qf = self.showQueue ? CGRectMake(16, H - 320, W - 32, 300) : CGRectMake(16, H, W - 32, 300);
+        self.queue.frame = qf;
+        self.queueBar.frame = CGRectMake(16, qf.origin.y - 44, W - 32, 40);
     }];
     [self.queue reloadData];
     if (self.showQueue) {
@@ -1020,16 +1133,34 @@
     static NSString *cid = @"q";
     UITableViewCell *c = [t dequeueReusableCellWithIdentifier:cid];
     if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:cid];
-    ADTrack *tr = ADPlayer.shared.tracks[ip.row];
+    NSInteger idx = [self queueIndexForRow:ip.row];
+    ADTrack *tr = ADPlayer.shared.tracks[idx];
     c.backgroundColor = UIColor.clearColor;
     c.textLabel.font = [UIFont systemFontOfSize:14];
-    c.textLabel.text = tr.title;
-    c.textLabel.textColor = (ip.row == ADPlayer.shared.index) ? [ADUtil brand] : UIColor.whiteColor;
+    BOOL done = [[ADStore shared] isDone:tr.trackId];
+    c.textLabel.text = done ? [NSString stringWithFormat:@"✓ %@", tr.title] : tr.title;
+    c.textLabel.textColor = (idx == ADPlayer.shared.index) ? [ADUtil brand]
+                          : (done ? [UIColor colorWithWhite:1 alpha:0.55] : UIColor.whiteColor);
+    if (self.queueSelecting) {
+        c.accessoryType = [self.queueSel containsObject:tr.trackId] ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+        c.tintColor = [ADUtil brand];
+    } else {
+        c.accessoryType = UITableViewCellAccessoryNone;
+    }
     return c;
 }
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
-    [ADPlayer.shared playAt:ip.row];
-    [self openQueue];
+    NSInteger idx = [self queueIndexForRow:ip.row];
+    if (self.queueSelecting) {
+        ADTrack *tr = ADPlayer.shared.tracks[idx];
+        if ([self.queueSel containsObject:tr.trackId]) [self.queueSel removeObject:tr.trackId];
+        else [self.queueSel addObject:tr.trackId];
+        [self updateQueueDl];
+        [t reloadRowsAtIndexPaths:@[ip] withRowAnimation:UITableViewRowAnimationNone];
+        return;
+    }
+    [ADPlayer.shared playAt:idx];
+    [self closeQueue];
     [self sync];
 }
 @end

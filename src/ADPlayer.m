@@ -231,6 +231,11 @@
 }
 
 - (void)itemEnded:(NSNotification *)n {
+    ADTrack *cur = self.current;
+    if (cur.trackId) {
+        BOOL last = (_index + 1 >= (NSInteger)_tracks.count);
+        [[ADStore shared] markDone:cur.trackId album:_album.albumId wholeBook:last];
+    }
     if (self.stopAfterChapter) {
         self.stopAfterChapter = NO;
         [_player pause];

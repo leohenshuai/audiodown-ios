@@ -39,6 +39,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSArray<ADAlbum *> *)history;                    // 最近收听
 - (void)touchHistory:(ADAlbum *)a;
 - (double)positionFor:(NSString *)trackId;
+- (BOOL)isDone:(nullable NSString *)trackId;
+- (void)markDone:(nullable NSString *)trackId album:(nullable NSString *)albumId wholeBook:(BOOL)whole;
+- (BOOL)isAlbumDone:(nullable NSString *)albumId;
 - (void)setPosition:(double)sec for:(NSString *)trackId;
 - (NSString *)lastTrackOf:(NSString *)albumId;
 - (NSDictionary *)lastInfoOf:(NSString *)albumId;

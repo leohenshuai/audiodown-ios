@@ -108,6 +108,8 @@ static double ADNum(id o, NSString *k) {
     NSMutableDictionary<NSString *, NSNumber *> *_pos;
     NSMutableDictionary<NSString *, NSString *> *_last;
     NSMutableDictionary<NSString *, NSDictionary *> *_info;
+    NSMutableSet<NSString *> *_done;
+    NSMutableSet<NSString *> *_doneAlbums;
 }
 + (instancetype)shared {
     static ADStore *s; static dispatch_once_t once;
@@ -131,6 +133,11 @@ static double ADNum(id o, NSString *k) {
     _last = (d4 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setD fromData:d4 error:nil] : nil) ?: [NSMutableDictionary dictionary];
     NSData *d5 = [NSData dataWithContentsOfFile:[self path:@"info.dat"]];
     _info = (d5 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setD fromData:d5 error:nil] : nil) ?: [NSMutableDictionary dictionary];
+    NSSet *setS = [NSSet setWithObjects:NSSet.class, NSMutableSet.class, NSString.class, nil];
+    NSData *d6 = [NSData dataWithContentsOfFile:[self path:@"done.dat"]];
+    NSData *d7 = [NSData dataWithContentsOfFile:[self path:@"donealbums.dat"]];
+    _done = (d6 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setS fromData:d6 error:nil] : nil) ?: [NSMutableSet set];
+    _doneAlbums = (d7 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setS fromData:d7 error:nil] : nil) ?: [NSMutableSet set];
 }
 - (void)save {
     [[NSKeyedArchiver archivedDataWithRootObject:_fav requiringSecureCoding:NO error:nil] writeToFile:[self path:@"fav.dat"] atomically:YES];
@@ -138,6 +145,8 @@ static double ADNum(id o, NSString *k) {
     [[NSKeyedArchiver archivedDataWithRootObject:_pos requiringSecureCoding:NO error:nil] writeToFile:[self path:@"pos.dat"] atomically:YES];
     [[NSKeyedArchiver archivedDataWithRootObject:_last requiringSecureCoding:NO error:nil] writeToFile:[self path:@"last.dat"] atomically:YES];
     [[NSKeyedArchiver archivedDataWithRootObject:_info requiringSecureCoding:NO error:nil] writeToFile:[self path:@"info.dat"] atomically:YES];
+    [[NSKeyedArchiver archivedDataWithRootObject:_done requiringSecureCoding:NO error:nil] writeToFile:[self path:@"done.dat"] atomically:YES];
+    [[NSKeyedArchiver archivedDataWithRootObject:_doneAlbums requiringSecureCoding:NO error:nil] writeToFile:[self path:@"donealbums.dat"] atomically:YES];
 }
 - (NSArray<ADAlbum *> *)favorites { return _fav; }
 - (NSArray<ADAlbum *> *)history { return _hist; }
@@ -160,6 +169,24 @@ static double ADNum(id o, NSString *k) {
     [self save];
 }
 - (double)positionFor:(NSString *)trackId { return trackId ? [_pos[trackId] doubleValue] : 0; }
+- (BOOL)isDone:(NSString *)trackId {
+    return trackId.length && [_done containsObject:trackId];
+}
+
+- (void)markDone:(NSString *)trackId album:(NSString *)albumId wholeBook:(BOOL)whole {
+    BOOL changed = NO;
+    if (trackId.length && ![_done containsObject:trackId]) { [_done addObject:trackId]; changed = YES; }
+    if (whole && albumId.length && ![_doneAlbums containsObject:albumId]) { [_doneAlbums addObject:albumId]; changed = YES; }
+    if (changed) {
+        [self save];
+        [NSNotificationCenter.defaultCenter postNotificationName:@"ADDoneChanged" object:nil];
+    }
+}
+
+- (BOOL)isAlbumDone:(NSString *)albumId {
+    return albumId.length && [_doneAlbums containsObject:albumId];
+}
+
 - (void)setPosition:(double)sec for:(NSString *)trackId { if (trackId) _pos[trackId] = @(sec); [self save]; }
 - (NSString *)lastTrackOf:(NSString *)albumId { return albumId ? _last[albumId] : nil; }
 - (NSDictionary *)lastInfoOf:(NSString *)albumId {
