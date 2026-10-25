@@ -30,6 +30,9 @@
 @property (nonatomic, strong) NSURLSessionDownloadTask *current;
 @property (nonatomic, strong) ADTask *runningTask;
 @property (nonatomic, assign) BOOL resolving;
+// 每集最多重试 2 次，避免一次网络抖动就永久跳过这一集
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *retryMap;
+@property (nonatomic, assign) NSInteger waitCount;
 @end
 
 @implementation ADDownloader
@@ -38,6 +41,7 @@
     static ADDownloader *d; static dispatch_once_t once;
     dispatch_once(&once, ^{
         d = [ADDownloader new];
+        d.retryMap = [NSMutableDictionary dictionary];
         [d load];
         NSURLSessionConfiguration *c = [NSURLSessionConfiguration defaultSessionConfiguration];
         d.session = [NSURLSession sessionWithConfiguration:c delegate:d delegateQueue:nil];
@@ -198,15 +202,33 @@
         __strong typeof(w) self = w; if (!self) return;
         self.resolving = NO;
         if (!url) {
+            // 同一集最多重试 2 次，仍然失败才跳过
+            NSInteger tries = tr.trackId.length ? [self.retryMap[tr.trackId] integerValue] : 99;
+            if (tries < 2) {
+                if (tr.trackId.length) self.retryMap[tr.trackId] = @(tries + 1);
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * (tries + 1) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self stepTask:t]; });
+                return;
+            }
+            [self.retryMap removeObjectForKey:tr.trackId];
             t.failed += 1; t.cursor += 1;
+            self.waitCount = 0;
             [self save]; [self notify];
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self stepTask:t]; });
             return;
         }
         if ([err isEqualToString:@"WAIT"]) {
+            self.waitCount += 1;
+            if (self.waitCount > 60) {   // 大约 2 分钟还没转码好，先跳过，别把整本书卡死
+                self.waitCount = 0;
+                t.failed += 1; t.cursor += 1;
+                [self save]; [self notify];
+                [self stepTask:t];
+                return;
+            }
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self stepTask:t]; });
             return;
         }
+        self.waitCount = 0;
         NSMutableURLRequest *r = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
         [headers enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *s) {
             if ([v isKindOfClass:NSString.class] && [v length]) [r setValue:v forHTTPHeaderField:k];
@@ -221,8 +243,36 @@
 - (void)URLSession:(NSURLSession *)s downloadTask:(NSURLSessionDownloadTask *)task didFinishDownloadingToURL:(NSURL *)location {
     NSString *tid = task.taskDescription;
     NSString *dst = [self fileFor:tid];
-    [NSFileManager.defaultManager removeItemAtPath:dst error:nil];
-    [[NSFileManager defaultManager] copyItemAtPath:location.path toPath:dst error:nil];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    [fm removeItemAtPath:dst error:nil];
+    [fm copyItemAtPath:location.path toPath:dst error:nil];
+    NSDictionary *attr = [fm attributesOfItemAtPath:dst error:nil];
+    // 文件没写成 / 太小（多半是服务端返回的错误页）就别当成功，交回重试
+    if (!attr || [attr fileSize] < 8000) {
+        [fm removeItemAtPath:dst error:nil];
+        __weak typeof(self) w0 = self;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(w0) self = w0; if (!self) return;
+            ADTask *t0 = self.runningTask;
+            if (!t0 || t0.state != ADTaskStateRunning) return;
+            NSInteger tries = tid.length ? [self.retryMap[tid] integerValue] : 99;
+            if (tries < 2) {
+                if (tid.length) self.retryMap[tid] = @(tries + 1);
+                self.current = nil;
+                [self save]; [self notify];
+                [self stepTask:t0];
+            } else {
+                if (tid.length) [self.retryMap removeObjectForKey:tid];
+                t0.failed += 1; t0.cursor += 1;
+                self.current = nil;
+                [self save]; [self notify];
+                [self stepTask:t0];
+            }
+        });
+        return;
+    }
+    if (tid.length) [self.retryMap removeObjectForKey:tid];
+    self.waitCount = 0;
     ADTask *t = self.runningTask;
     if (!t) { for (ADTask *x in _tasks) if (x.state == ADTaskStateRunning) { t = x; break; } }
     __weak typeof(self) w = self;
@@ -242,8 +292,18 @@
         __strong typeof(w) self = w; if (!self) return;
         ADTask *t = self.runningTask;
         if (t && t.state == ADTaskStateRunning) {
-            t.failed += 1; t.cursor += 1;
+            NSString *tid = task.taskDescription;
+            NSInteger tries = tid.length ? [self.retryMap[tid] integerValue] : 99;
             self.current = nil;
+            if (tries < 2) {
+                // 同一集重下（cursor 不动）
+                if (tid.length) self.retryMap[tid] = @(tries + 1);
+                [self notify];
+                [self stepTask:t];
+                return;
+            }
+            if (tid.length) [self.retryMap removeObjectForKey:tid];
+            t.failed += 1; t.cursor += 1;
             [self save]; [self notify];
             [self stepTask:t];
         }

@@ -33,6 +33,8 @@ static void ADCacheSet(NSString *key, id json) {
 
 @interface ADApi ()
 @property (nonatomic, strong) NSURLSession *session;
+- (void)JSON:(NSString *)path method:(NSString *)method body:(id)body timeout:(NSTimeInterval)timeout done:(void (^)(id json, NSString *err))cb;
+- (void)cachedGET:(NSString *)path key:(NSString *)key timeout:(NSTimeInterval)timeout done:(void (^)(id json, BOOL cached, NSString *err))cb;
 @end
 
 @implementation ADApi
@@ -71,7 +73,12 @@ static void ADCacheSet(NSString *key, id json) {
 }
 
 - (void)JSON:(NSString *)path method:(NSString *)method body:(id)body done:(void (^)(id json, NSString *err))cb {
+    [self JSON:path method:method body:body timeout:0 done:cb];
+}
+
+- (void)JSON:(NSString *)path method:(NSString *)method body:(id)body timeout:(NSTimeInterval)timeout done:(void (^)(id json, NSString *err))cb {
     NSMutableURLRequest *r = [self request:path method:method body:body];
+    if (timeout > 0) r.timeoutInterval = timeout;
     NSLog(@"[AD] %@ %@", method, r.URL.absoluteString);
     [[self.session dataTaskWithRequest:r completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
         NSInteger code = [(NSHTTPURLResponse *)resp statusCode];
@@ -89,10 +96,14 @@ static void ADCacheSet(NSString *key, id json) {
 
 // 带缓存的 GET：先给缓存，再给网络结果
 - (void)cachedGET:(NSString *)path key:(NSString *)key done:(void (^)(id json, BOOL cached, NSString *err))cb {
+    [self cachedGET:path key:key timeout:0 done:cb];
+}
+
+- (void)cachedGET:(NSString *)path key:(NSString *)key timeout:(NSTimeInterval)timeout done:(void (^)(id json, BOOL cached, NSString *err))cb {
     NSTimeInterval age = 0;
     id cached = ADCacheGet(key, &age);
     if (cached) cb(cached, YES, nil);
-    [self JSON:path method:@"GET" body:nil done:^(id json, NSString *err) {
+    [self JSON:path method:@"GET" body:nil timeout:timeout done:^(id json, NSString *err) {
         if (!err && json) { ADCacheSet(key, json); cb(json, NO, nil); return; }
         if (!cached) cb(nil, NO, err);
         else cb(cached, YES, err);   // 有缓存时把错误一并带回去，界面可提示离线
@@ -138,7 +149,8 @@ static void ADCacheSet(NSString *key, id json) {
 - (void)tracksOf:(NSString *)albumId page:(NSInteger)page done:(void (^)(NSArray<ADTrack *> *, NSInteger, BOOL, NSString *))cb {
     NSString *path = [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=%ld&pageSize=50", albumId, (long)page];
     NSString *key = [NSString stringWithFormat:@"tracks:%@:%ld", albumId, (long)page];
-    [self cachedGET:path key:key done:^(id json, BOOL cached, NSString *err) {
+    // 目录接口服务端要现场找源，比别的接口慢，给它 30 秒（其它接口仍是 12 秒）
+    [self cachedGET:path key:key timeout:30 done:^(id json, BOOL cached, NSString *err) {
         NSArray *items = [json isKindOfClass:NSDictionary.class] ? json[@"items"] : nil;
         NSInteger total = [json[@"total"] respondsToSelector:@selector(integerValue)] ? [json[@"total"] integerValue] : 0;
         ADAlbum *stub = [ADAlbum new];

@@ -7,7 +7,11 @@
 @interface ADPlayer ()
 @property (nonatomic, strong) AVPlayer *player;
 @property (nonatomic, strong) id ticker;
-@property (nonatomic, assign) BOOL resolving;
+// 用一个自增序号代替原来的 _resolving 互斥标志：
+// 旧写法里连续点两集时，前一次请求没回来，后一次会被直接丢弃，
+// 界面就一直停在「正在获取音频…」。现在新请求直接接管，旧回调按序号作废。
+@property (nonatomic, assign) NSInteger resolveSeq;
+@property (nonatomic, assign) BOOL retriedItem;
 @end
 
 @implementation ADPlayer
@@ -55,6 +59,7 @@
 - (void)playAt:(NSInteger)index {
     if (index < 0 || index >= (NSInteger)_tracks.count) return;
     _index = index;
+    self.retriedItem = NO;
     ADTrack *t = _tracks[index];
     NSURL *local = [[ADDownloader shared] localURL:t.trackId];
     if (!local) {
@@ -143,13 +148,23 @@
 }
 
 - (void)resolveAndPlay:(ADTrack *)t attempt:(NSInteger)attempt {
-    if (_resolving) return;
-    _resolving = YES;
+    if (attempt == 0) self.resolveSeq += 1;          // 新的播放请求，作废之前所有在飞的请求
+    NSInteger seq = self.resolveSeq;
     __weak typeof(self) w = self;
     [[ADApi shared] playURLOf:t done:^(NSString *url, NSDictionary *headers, NSString *err) {
         __strong typeof(w) self = w; if (!self) return;
+        if (seq != self.resolveSeq) return;          // 已被后来的请求取代
         if (!url) {
-            self.resolving = NO;
+            // 取地址失败（超时 / 服务端 5xx）先自己重试一次，别直接甩错误
+            if (attempt < 1) {
+                self.statusText = @"获取音频失败，正在重试…";
+                [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    __strong typeof(w) s = w; if (!s) return;
+                    [s resolveAndPlay:t attempt:attempt + 1];
+                });
+                return;
+            }
             self.statusText = err ?: @"无法播放";
             [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
             return;
@@ -157,19 +172,19 @@
         if ([err isEqualToString:@"WAIT"]) {
             // 番茄源需要先下载，轮询到就绪
             if (attempt > 40) {
-                self.resolving = NO;
                 self.statusText = @"音频还在准备，稍后会自动开始";
                 [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
                 return;
             }
             self.statusText = @"音频准备中…";
+            [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                self.resolving = NO;
-                [self resolveAndPlay:t attempt:attempt + 1];
+                __strong typeof(w) s = w; if (!s) return;
+                if (seq != s.resolveSeq) return;
+                [s resolveAndPlay:t attempt:attempt + 1];
             });
             return;
         }
-        self.resolving = NO;
         [self startWithURL:url headers:headers track:t];
     }];
 }
@@ -226,6 +241,15 @@
 }
 
 - (void)failed:(NSNotification *)n {
+    // 音频地址有时效，过期后会 403。先按原集重新取一次地址再报错
+    if (!self.retriedItem && self.index >= 0 && self.index < (NSInteger)_tracks.count) {
+        self.retriedItem = YES;
+        ADTrack *t = _tracks[self.index];
+        self.statusText = @"音频地址失效，正在重新获取…";
+        [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
+        [self resolveAndPlay:t attempt:0];
+        return;
+    }
     self.statusText = @"加载失败，检查 token 或换一集";
     [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
 }

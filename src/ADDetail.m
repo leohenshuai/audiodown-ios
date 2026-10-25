@@ -26,6 +26,12 @@
 @property (nonatomic, assign) NSInteger jumpTarget;
 @property (nonatomic, assign) BOOL hasMore;
 @property (nonatomic, assign) BOOL loadingAll;
+// 目录分页：按页存 + 去重 + 逐页重试
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSArray<ADTrack *> *> *pageMap;
+@property (nonatomic, strong) NSMutableSet<NSNumber *> *pageLoading;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *pageTries;
+@property (nonatomic, assign) NSInteger failPage, lastPageCount;
+@property (nonatomic, assign) BOOL pendingDownloadAll;
 @end
 
 @implementation ADAlbumController
@@ -42,8 +48,8 @@
     self.navigationController.navigationBar.barStyle = UIBarStyleBlack;
     self.title = @"专辑";
     self.tracks = [NSMutableArray array];
-    self.page = 1;
     self.total = self.album.trackCount;
+    [self resetPaging];
 
     self.table = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStylePlain];
     self.table.backgroundColor = UIColor.clearColor;
@@ -138,7 +144,10 @@
     self.table.tableHeaderView = head;
 
     ADTask *task = [[ADDownloader shared] taskForAlbum:self.album.albumId];
-    if (task) {
+    if (self.pendingDownloadAll) {
+        [self.dlBtn setTitle:[NSString stringWithFormat:@"获取目录 %ld/%ld…", (long)self.tracks.count, (long)MAX(self.total, (NSInteger)self.tracks.count)]
+                    forState:UIControlStateNormal];
+    } else if (task) {
         NSString *t2 = task.state == ADTaskStateDone ? @"已缓存"
                     : (task.state == ADTaskStatePaused ? [NSString stringWithFormat:@"已暂停 %ld/%ld", (long)task.done, (long)task.tracks.count]
                     : [NSString stringWithFormat:@"缓存中 %ld/%ld", (long)task.done, (long)task.tracks.count]);
@@ -163,12 +172,12 @@
         else if (i == 1) { self.sortDesc = NO; [self.table reloadData]; }
         else if (i == 2) {
             self.sortDesc = YES;
-            if ((NSInteger)self.tracks.count < MAX(self.total, 1)) {
+            [self.table reloadData];
+            if (self.hasMore) {
                 self.loadingAll = YES;
-                self.hasMore = YES;
+                self.errText = nil;
                 [self loadTracks];
             }
-            [self.table reloadData];
         }
         else if (i == 3) [self downloadAll];
         else [self refreshAll];
@@ -282,13 +291,10 @@
         [self.table scrollToRowAtIndexPath:ip atScrollPosition:UITableViewScrollPositionTop animated:YES];
         return;
     }
-    if ((NSInteger)self.tracks.count < MAX(self.total, 1)) {
-        self.loadingAll = YES;
-        self.hasMore = YES;
-    }
     if (!self.hasMore) return;
+    self.errText = nil;
     self.jumpTarget = idx;
-    [self loadTracks];
+    [self loadNextPage];
 }
 
 - (void)beginSelecting {
@@ -365,11 +371,13 @@
 }
 
 - (void)refreshAll {
-    self.page = 1;
-    self.hasMore = YES;
-    [self.tracks removeAllObjects];
+    self.loadingAll = NO;
+    self.pendingDownloadAll = NO;
+    self.jumpTarget = -1;
+    [self resetPaging];
+    [self updateFooter];
     [self.table reloadData];
-    [self loadTracks];
+    [self loadPage:1];
     [self.table.refreshControl endRefreshing];
 }
 
@@ -378,6 +386,15 @@
     if (task && task.state == ADTaskStateRunning) { [[ADDownloader shared] pauseTask:task]; [self fillHeader]; return; }
     if (task && task.state == ADTaskStatePaused) { [[ADDownloader shared] resumeTask:task]; [self fillHeader]; return; }
     if (!self.tracks.count) return;
+    // 目录没拉全时先拉全，否则「缓存整本」只会缓存已经看到的这几十集
+    if (self.hasMore) {
+        self.pendingDownloadAll = YES;
+        self.loadingAll = YES;
+        self.errText = nil;
+        [self fillHeader];
+        [self loadNextPage];
+        return;
+    }
     [[ADDownloader shared] addAlbum:self.album tracks:self.tracks];
     [self fillHeader];
 }
@@ -389,75 +406,162 @@
     [g impactOccurred];
 }
 
+// ── 目录分页 ────────────────────────────────────────────
+// 以前是「回调里直接 addObjectsFromArray + page++」，而网络层是“先给缓存再给网络”，
+// 同一页会回调两次 → 列表重复、page 跳号、中间几页永远拉不到。
+// 现在按页存 pageMap，网络结果覆盖缓存结果，重建时按页号排序并按 trackId 去重。
+- (void)resetPaging {
+    self.page = 1;
+    self.pageMap = [NSMutableDictionary dictionary];
+    self.pageLoading = [NSMutableSet set];
+    self.pageTries = [NSMutableDictionary dictionary];
+    self.failPage = 0;
+    self.lastPageCount = 0;
+    self.errText = nil;
+    self.hasMore = YES;
+    self.loading = NO;
+    [self.tracks removeAllObjects];
+}
+
+- (void)rebuildTracks {
+    NSArray<NSNumber *> *keys = [[self.pageMap allKeys] sortedArrayUsingSelector:@selector(compare:)];
+    NSMutableArray<ADTrack *> *out = [NSMutableArray array];
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    NSInteger lastCount = 0;
+    for (NSNumber *k in keys) {
+        NSArray<ADTrack *> *arr = self.pageMap[k];
+        lastCount = (NSInteger)arr.count;
+        for (ADTrack *t in arr) {
+            if (t.trackId.length) {
+                if ([seen containsObject:t.trackId]) continue;
+                [seen addObject:t.trackId];
+            }
+            [out addObject:t];
+        }
+    }
+    self.lastPageCount = lastCount;
+    self.tracks = out;
+    if (self.total > 0) self.hasMore = (NSInteger)out.count < self.total;
+    else self.hasMore = lastCount >= 50;
+}
+
 - (void)loadTracks {
-    if (self.loading) return;
-    self.loading = YES;
+    if (!self.pageMap.count) { [self loadPage:1]; return; }
+    if (self.hasMore) [self loadNextPage];
+}
+
+- (void)loadNextPage {
+    if (!self.hasMore) return;
+    NSInteger p = 1;
+    while (([self.pageMap objectForKey:@(p)] || [self.pageLoading containsObject:@(p)]) && p < 500) p++;
+    if (self.total > 0 && p > (self.total + 49) / 50) { self.hasMore = NO; return; }
+    [self loadPage:p];
+}
+
+- (void)loadPage:(NSInteger)p {
+    if (p < 1 || [self.pageLoading containsObject:@(p)]) return;
+    [self.pageLoading addObject:@(p)];
     __weak typeof(self) weakSelf = self;
-    [[ADApi shared] tracksOf:self.album.albumId page:self.page done:^(NSArray<ADTrack *> *list, NSInteger total, BOOL cached, NSString *err) {
+    [[ADApi shared] tracksOf:self.album.albumId page:p done:^(NSArray<ADTrack *> *list, NSInteger total, BOOL cached, NSString *err) {
         __strong typeof(weakSelf) self = weakSelf; if (!self) return;
-        self.loading = NO;
-        BOOL empty = (list.count == 0 && self.page == 1);
-        if (err || empty) {
-            if (self.retries < 2) {
-                self.retries += 1;
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                    [self loadTracks];
+        if (total > 0) self.total = total;
+        // 缓存：先铺一层，网络结果随后覆盖同一页
+        if (cached && !err.length) {
+            if (![self.pageMap objectForKey:@(p)] && list.count) {
+                self.pageMap[@(p)] = list;
+                [self rebuildTracks];
+                [self.table reloadData];
+                [self fillHeader];
+            }
+            return;
+        }
+        [self.pageLoading removeObject:@(p)];
+        BOOL netEmptyFirst = (!cached && list.count == 0 && p == 1);
+        if (err.length || netEmptyFirst) {
+            NSInteger tries = [self.pageTries[@(p)] integerValue];
+            if (tries < 2) {
+                self.pageTries[@(p)] = @(tries + 1);
+                __weak typeof(self) w2 = self;
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * (tries + 1) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    __strong typeof(w2) s = w2; if (!s) return;
+                    [s loadPage:p];
                 });
             } else {
-                self.errText = err.length ? err : @"播放目录没取到";
+                self.failPage = p;
+                self.errText = err.length ? err : @"这一页目录没取到";
+                self.loadingAll = NO;
+                self.pendingDownloadAll = NO;
+                [self.table reloadData];
+                [self updateFooter];
+                [self fillHeader];
             }
-            [self.table reloadData];
-            [self updateFooter];
             return;
         }
-        self.retries = 0;
+        [self.pageTries removeObjectForKey:@(p)];
         self.errText = nil;
-        [self updateFooter];
-        if (total > 0) self.total = total;
-        if (list.count) [self.tracks addObjectsFromArray:list];
-        if (list.count) self.page += 1;
-        self.hasMore = list.count > 0 && (NSInteger)self.tracks.count < MAX(self.total, 1);
-        [self.table reloadData];
-        [self fillHeader];
-        if (self.jumpTarget >= 0 && (NSInteger)self.tracks.count > self.jumpTarget) {
-            NSIndexPath *ip = [NSIndexPath indexPathForRow:[self rowForIndex:self.jumpTarget] inSection:0];
-            self.jumpTarget = -1;
-            [self.table scrollToRowAtIndexPath:ip atScrollPosition:UITableViewScrollPositionTop animated:YES];
-        }
-        // 自动恢复上次进度
-        if (self.loadingAll) {
-            if (self.hasMore) [self loadTracks];
-            else { self.loadingAll = NO; [self.table reloadData]; }
-            return;
-        }
+        self.failPage = 0;
+        self.pageMap[@(p)] = list ?: @[];
+        [self rebuildTracks];
         if (self.tracks.count && !ADPlayer.shared.album) {
             ADPlayer.shared.album = self.album;
             ADPlayer.shared.tracks = self.tracks;
+        }
+        [self.table reloadData];
+        [self fillHeader];
+        [self updateFooter];
+        if (self.jumpTarget >= 0) {
+            if ((NSInteger)self.tracks.count > self.jumpTarget) {
+                NSIndexPath *ip = [NSIndexPath indexPathForRow:[self rowForIndex:self.jumpTarget] inSection:0];
+                self.jumpTarget = -1;
+                [self.table scrollToRowAtIndexPath:ip atScrollPosition:UITableViewScrollPositionTop animated:YES];
+            } else if (self.hasMore) {
+                [self loadNextPage];
+            } else {
+                self.jumpTarget = -1;
+            }
+            return;
+        }
+        if (self.loadingAll) {
+            if (self.hasMore) {
+                [self loadNextPage];
+            } else {
+                self.loadingAll = NO;
+                [self.table reloadData];
+                if (self.pendingDownloadAll) { self.pendingDownloadAll = NO; [self downloadAll]; }
+            }
         }
     }];
 }
 
 - (void)updateFooter {
-    if (self.errText.length && self.tracks.count == 0) {
-        UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-        b.frame = CGRectMake(0, 0, self.view.bounds.size.width, 120);
-        b.titleLabel.numberOfLines = 0;
-        b.titleLabel.textAlignment = NSTextAlignmentCenter;
-        b.titleLabel.font = [UIFont systemFontOfSize:14];
-        [b setTitle:[NSString stringWithFormat:@"%@\n点这里重试", self.errText] forState:UIControlStateNormal];
-        [b setTitleColor:[UIColor colorWithWhite:1 alpha:0.55] forState:UIControlStateNormal];
-        [b addTarget:self action:@selector(retryTracks) forControlEvents:UIControlEventTouchUpInside];
-        self.table.tableFooterView = b;
-    } else {
+    if (!self.errText.length) {
         self.table.tableFooterView = [UIView new];
+        return;
     }
+    CGFloat w = self.view.bounds.size.width;
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    b.frame = CGRectMake(0, 0, w, self.tracks.count ? 84 : 120);
+    b.titleLabel.numberOfLines = 0;
+    b.titleLabel.textAlignment = NSTextAlignmentCenter;
+    b.titleLabel.font = [UIFont systemFontOfSize:13];
+    NSString *head = self.tracks.count
+        ? [NSString stringWithFormat:@"第 %ld 段目录没取到（%@）", (long)self.failPage, self.errText]
+        : self.errText;
+    [b setTitle:[NSString stringWithFormat:@"%@\n已加载 %ld 集 · 点这里重试", head, (long)self.tracks.count]
+       forState:UIControlStateNormal];
+    [b setTitleColor:[UIColor colorWithWhite:1 alpha:0.55] forState:UIControlStateNormal];
+    [b addTarget:self action:@selector(retryTracks) forControlEvents:UIControlEventTouchUpInside];
+    self.table.tableFooterView = b;
 }
 
 - (void)retryTracks {
-    self.retries = 0;
+    NSInteger p = self.failPage > 0 ? self.failPage : (self.page > 0 ? self.page : 1);
     self.errText = nil;
+    self.failPage = 0;
+    [self.pageTries removeAllObjects];
+    [self updateFooter];
     [self.table reloadData];
-    [self loadTracks];
+    [self loadPage:p];
 }
 
 - (void)playFrom:(NSInteger)index {
@@ -510,7 +614,7 @@
     BOOL playing = cur && [cur.trackId isEqualToString:tr.trackId];
     c.textLabel.textColor = playing ? [ADUtil brand] : UIColor.whiteColor;
     // 触底加载
-    if (!self.selecting && ip.row == (NSInteger)self.tracks.count - 3 && self.tracks.count < self.total) [self loadTracks];
+    if (!self.selecting && self.hasMore && self.jumpTarget < 0 && ip.row >= (NSInteger)self.tracks.count - 6) [self loadNextPage];
     if (self.selecting) {
         BOOL on = [self.selected containsObject:tr.trackId];
         c.accessoryType = on ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
