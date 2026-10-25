@@ -287,7 +287,8 @@
         CGFloat h = _collapsed ? 50 : 58;
         CGFloat w = _collapsed ? 50 : W - 16;
         CGFloat bottom = tab.view.bounds.size.height - tab.view.safeAreaInsets.bottom - 8 - h;
-        CGFloat aboveBar = tab.tabBar.frame.origin.y - 8 - h;
+        ADTabBar *tb = [ADTabBar shared];
+        CGFloat aboveBar = tb.barVisible ? (tb.frame.origin.y - 10 - h) : 1e9;
         CGFloat y = MIN(bottom, aboveBar) + (58 - h) / 2.0;
         CGFloat x = _collapsed ? (W - w - 6) : 8;
         target = CGRectMake(x, y, w, h);
@@ -1724,4 +1725,143 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
     vc.album = self.items[ip.item];
     [self.navigationController pushViewController:vc animated:YES];
 }
+@end
+
+// ───────────── iOS 26 风格悬浮标签栏 ─────────────
+@interface ADTabBar ()
+- (void)layoutIn:(UITabBarController *)tab;
+@end
+
+@implementation ADTabBar {
+    NSMutableArray<UIButton *> *_items;
+    UIView *_pills;
+}
+
++ (instancetype)shared {
+    static ADTabBar *b; static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        b = [[ADTabBar alloc] initWithFrame:CGRectMake(0, 0, 320, 64)];
+        [b build];
+    });
+    return b;
+}
+
+- (void)build {
+    [ADGlass applyTo:self radius:32 tint:0.05];
+    self.layer.shadowOpacity = 0.45;
+    self.layer.shadowRadius = 26;
+    self.layer.shadowOffset = CGSizeMake(0, 12);
+    _items = [NSMutableArray array];
+    NSArray *icons = @[@"sparkles", @"magnifyingglass", @"books.vertical"];
+    NSArray *titles = @[@"发现", @"搜索", @"书架"];
+    for (NSInteger i = 0; i < 3; i++) {
+        UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
+        b.tag = i;
+        [b addTarget:self action:@selector(tapItem:) forControlEvents:UIControlEventTouchUpInside];
+        UIImageView *iv = [[UIImageView alloc] init];
+        iv.tag = 10;
+        iv.contentMode = UIViewContentModeScaleAspectFit;
+        iv.image = [UIImage systemImageNamed:icons[i] withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:21 weight:UIImageSymbolWeightMedium]];
+        [b addSubview:iv];
+        UILabel *l = [ADUtil label:nil size:10.5 color:UIColor.whiteColor];
+        l.tag = 11;
+        l.text = titles[i];
+        l.textAlignment = NSTextAlignmentCenter;
+        [b addSubview:l];
+        [self addSubview:b];
+        [_items addObject:b];
+    }
+    [self paintSelection];
+}
+
+- (void)layoutIn:(UITabBarController *)tab {
+    if (!tab) return;
+    CGFloat H = tab.view.bounds.size.height;
+    CGFloat sb = tab.view.safeAreaInsets.bottom;
+    CGFloat h = 64, side = 24;
+    CGFloat y = H - sb - 10 - h;
+    if (fabs(self.frame.origin.y - y) > 0.5 || fabs(self.frame.size.width - (tab.view.bounds.size.width - side * 2)) > 0.5) {
+        self.frame = CGRectMake(side, y, tab.view.bounds.size.width - side * 2, h);
+        [ADGlass setRadius:h / 2.0 on:self];
+    }
+    CGFloat seg = self.bounds.size.width / 3.0;
+    for (NSInteger i = 0; i < (NSInteger)_items.count; i++) {
+        UIButton *b = _items[i];
+        b.frame = CGRectMake(seg * i, 0, seg, h);
+        UIImageView *iv = [b viewWithTag:10];
+        UILabel *l = [b viewWithTag:11];
+        iv.frame = CGRectMake((seg - 24) / 2, 12, 24, 24);
+        l.frame = CGRectMake(0, 38, seg, 14);
+    }
+}
+
+- (CGFloat)topY { return self.frame.origin.y; }
+
+- (void)paintSelection {
+    for (NSInteger i = 0; i < (NSInteger)_items.count; i++) {
+        UIButton *b = _items[i];
+        BOOL on = (i == self.selectedIndex);
+        UIImageView *iv = [b viewWithTag:10];
+        UILabel *l = [b viewWithTag:11];
+        UIColor *c = on ? [ADUtil brand] : [UIColor colorWithWhite:1 alpha:0.58];
+        iv.tintColor = c;
+        l.textColor = c;
+        b.transform = CGAffineTransformIdentity;
+    }
+}
+
+- (void)tapItem:(UIButton *)b {
+    [ADHaptic select];
+    NSInteger idx = b.tag;
+    if (idx == self.selectedIndex) {
+        // 已经在当前页，点一下回到根
+        UITabBarController *tab = (UITabBarController *)self.window.rootViewController;
+        UIViewController *sel = tab.selectedViewController;
+        if ([sel isKindOfClass:UINavigationController.class])
+            [(UINavigationController *)sel popToRootViewControllerAnimated:YES];
+        return;
+    }
+    self.selectedIndex = idx;
+    [self paintSelection];
+    if (self.onSelect) self.onSelect(idx);
+}
+
+- (void)setSelectedIndex:(NSInteger)selectedIndex {
+    _selectedIndex = selectedIndex;
+    [self paintSelection];
+}
+
+- (void)showBar:(BOOL)show animated:(BOOL)animated {
+    _barVisible = show;
+    if (!animated) {
+        self.alpha = show ? 1 : 0;
+        self.transform = show ? CGAffineTransformIdentity : CGAffineTransformMakeTranslation(0, 30);
+        return;
+    }
+    [UIView animateWithDuration:0.28 delay:0 usingSpringWithDamping:0.9 initialSpringVelocity:0.2
+                        options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState
+                     animations:^{
+        self.alpha = show ? 1 : 0;
+        self.transform = show ? CGAffineTransformIdentity : CGAffineTransformMakeTranslation(0, 30);
+    } completion:nil];
+}
+@end
+
+@implementation ADTabController
+
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    ADTabBar *bar = [ADTabBar shared];
+    if (bar.superview != self.view) {
+        [self.view addSubview:bar];
+        bar.selectedIndex = self.selectedIndex;
+    }
+    [bar layoutIn:self];
+}
+
+- (void)setSelectedIndex:(NSUInteger)selectedIndex {
+    [super setSelectedIndex:selectedIndex];
+    [ADTabBar shared].selectedIndex = (NSInteger)selectedIndex;
+}
+
 @end
