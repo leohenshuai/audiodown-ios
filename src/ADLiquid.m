@@ -24,14 +24,10 @@ static NSInteger const kSpecTag  = 9824;
 
 #pragma mark - 悬浮导航胶囊
 
-@interface ADNavDock : UIView
-@property (nonatomic, assign) NSInteger selectedIndex;
-@property (nonatomic, assign) BOOL dockVisible;
-@property (nonatomic, copy) void (^onSelect)(NSInteger index);
-+ (instancetype)shared;
+@interface ADNavDock ()
 - (void)layoutIn:(UITabBarController *)tab;
-- (void)show:(BOOL)show animated:(BOOL)animated;
-- (CGFloat)topY;
+- (void)movePill:(BOOL)animated;
+- (void)paint:(BOOL)animated;
 @end
 
 @implementation ADNavDock {
