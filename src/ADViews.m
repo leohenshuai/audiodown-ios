@@ -528,6 +528,8 @@
 @property (nonatomic, copy) NSString *keyword;
 @property (nonatomic, strong) UILabel *hint;
 @property (nonatomic, strong) UIScrollView *cats;
+@property (nonatomic, strong) UISegmentedControl *seg;
+@property (nonatomic, assign) BOOL localMode;
 @property (nonatomic, assign) NSInteger catIndex;
 @property (nonatomic, assign) NSInteger autoPages;
 @property (nonatomic, strong) NSMutableArray *chips;
@@ -563,11 +565,66 @@
     self.hint.textAlignment = NSTextAlignmentCenter;
     [self.view addSubview:self.hint];
     self.list = [NSMutableArray array];
+    self.seg = [[UISegmentedControl alloc] initWithItems:@[@"在线", @"本地"]];
+    self.seg.selectedSegmentIndex = 0;
+    self.seg.frame = CGRectMake(16, 0, 150, 32);
+    if (@available(iOS 13.0, *)) {
+        self.seg.selectedSegmentTintColor = [ADUtil brand];
+        self.seg.backgroundColor = [UIColor colorWithWhite:1 alpha:0.1];
+    }
+    [self.seg setTitleTextAttributes:@{NSForegroundColorAttributeName: UIColor.whiteColor} forState:UIControlStateSelected];
+    [self.seg setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor colorWithWhite:1 alpha:0.7]} forState:UIControlStateNormal];
+    [self.seg addTarget:self action:@selector(switchMode) forControlEvents:UIControlEventValueChanged];
+    [self.view addSubview:self.seg];
+
     self.cats = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 40)];
     self.cats.showsHorizontalScrollIndicator = NO;
     self.cats.contentInset = UIEdgeInsetsMake(0, 12, 0, 12);
     [self.view addSubview:self.cats];
     [self buildChips];
+}
+
+- (void)switchMode {
+    self.localMode = (self.seg.selectedSegmentIndex == 1);
+    [self layoutChrome];
+    self.page = 1;
+    self.autoPages = 0;
+    if (self.localMode) {
+        [self.bar resignFirstResponder];
+        self.bar.placeholder = @"搜索本机下载、书架、历史";
+        [self.cv reloadData];
+        self.hint.text = [self visible].count ? @"" : @"本机还没有内容，先在专辑页「缓存到本机」或收藏";
+    } else {
+        self.bar.placeholder = @"书名 / 作者 / 主播";
+        if (self.keyword.length) { [self.list removeAllObjects]; self.more = YES; [self loadPage]; }
+        else { [self.cv reloadData]; self.hint.text = @""; }
+    }
+    [self paintChips];
+}
+
+- (NSArray<ADAlbum *> *)localAlbums {
+    NSMutableArray *arr = [NSMutableArray array];
+    NSMutableSet *seen = [NSMutableSet set];
+    for (ADTask *t in [ADDownloader shared].tasks) {
+        if (!t.albumId.length || [seen containsObject:t.albumId]) continue;
+        ADAlbum *a = [ADAlbum new];
+        a.albumId = t.albumId;
+        a.title = t.title.length ? t.title : t.albumId;
+        a.cover = t.cover;
+        [arr addObject:a];
+        [seen addObject:t.albumId];
+    }
+    for (ADAlbum *a in [ADStore shared].favorites)
+        if (![seen containsObject:a.albumId]) { [arr addObject:a]; [seen addObject:a.albumId]; }
+    for (ADAlbum *a in [ADStore shared].history)
+        if (![seen containsObject:a.albumId]) { [arr addObject:a]; [seen addObject:a.albumId]; }
+    return arr;
+}
+
+- (void)searchBar:(UISearchBar *)b textDidChange:(NSString *)t {
+    if (!self.localMode) return;
+    [self.cv reloadData];
+    self.hint.text = [self visible].count ? @"" : (t.length ? @"本机没有匹配的内容" : @"本机还没有内容，先在专辑页「缓存到本机」或收藏");
 }
 
 - (NSArray *)catTitles {
@@ -635,6 +692,17 @@
 }
 
 - (NSArray<ADAlbum *> *)visible {
+    if (self.localMode) {
+        NSString *q = [[self.bar.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet] lowercaseString];
+        NSArray *all = [self localAlbums];
+        if (!q.length) return all;
+        NSMutableArray *arr = [NSMutableArray array];
+        for (ADAlbum *a in all) {
+            NSString *hay = [[NSString stringWithFormat:@"%@ %@ %@", a.title ?: @"", a.anchor ?: @"", a.author ?: @""] lowercaseString];
+            if ([hay rangeOfString:q].location != NSNotFound) [arr addObject:a];
+        }
+        return arr;
+    }
     if (self.catIndex == 0) return self.list;
     NSMutableArray *arr = [NSMutableArray array];
     for (ADAlbum *a in self.list) if ([self catMatch:a]) [arr addObject:a];
@@ -644,8 +712,11 @@
 - (void)layoutChrome {
     CGFloat top = MAX(self.view.safeAreaInsets.top, 47);
     self.bar.frame = CGRectMake(0, top - 6, self.view.bounds.size.width, 52);
-    self.cats.frame = CGRectMake(0, top + 44, self.view.bounds.size.width, 40);
-    self.cv.frame = CGRectMake(0, top + 84, self.view.bounds.size.width, self.view.bounds.size.height - top - 84);
+    self.seg.frame = CGRectMake(16, top + 46, 150, 32);
+    self.cats.frame = CGRectMake(0, top + 82, self.view.bounds.size.width, 40);
+    self.cats.hidden = self.localMode;
+    CGFloat gridTop = self.localMode ? top + 82 : top + 122;
+    self.cv.frame = CGRectMake(0, gridTop, self.view.bounds.size.width, self.view.bounds.size.height - gridTop);
 }
 - (void)viewWillLayoutSubviews {
     [super viewWillLayoutSubviews];
@@ -657,6 +728,7 @@
 }
 - (void)searchBarSearchButtonClicked:(UISearchBar *)b {
     [b resignFirstResponder];
+    if (self.localMode) { [self.cv reloadData]; return; }
     NSString *q = [b.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
     if (!q.length) return;
     self.keyword = q; self.page = 1; self.more = YES; self.autoPages = 0;
