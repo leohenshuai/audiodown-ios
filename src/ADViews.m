@@ -190,6 +190,8 @@
     UILabel *_title, *_sub;
     UIButton *_btn, *_back;
     UIView *_track, *_fill;
+    BOOL _collapsed;
+    NSTimer *_collapseTimer;
 }
 + (instancetype)shared {
     static ADMiniBar *m; static dispatch_once_t once;
@@ -226,27 +228,119 @@
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:@"ADPlayerTick" object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:@"ADPlayerChanged" object:nil];
 }
+
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGFloat w = self.bounds.size.width, h = self.bounds.size.height;
+    if (_collapsed) {
+        _cover.frame = CGRectMake(7, 7, h - 14, h - 14);
+        _cover.layer.cornerRadius = (h - 14) / 2;
+        _title.hidden = YES;
+        _sub.hidden = YES;
+        _btn.hidden = YES;
+        _back.hidden = YES;
+        _track.hidden = YES;
+        _fill.hidden = YES;
+        return;
+    }
+    _title.hidden = NO;
+    _sub.hidden = NO;
+    _btn.hidden = NO;
+    _back.hidden = NO;
+    _track.hidden = NO;
+    _fill.hidden = NO;
+    _cover.layer.cornerRadius = 8;
     _cover.frame = CGRectMake(8, (h - 42) / 2, 42, 42);
     _btn.frame = CGRectMake(w - 46, (h - 36) / 2, 36, 36);
     _back.frame = CGRectMake(w - 82, (h - 36) / 2, 32, 36);
     _title.frame = CGRectMake(58, 10, w - 148, 18);
     _sub.frame = CGRectMake(58, 29, w - 148, 15);
     _track.frame = CGRectMake(0, h - 2, w, 2);
-    _fill.frame = CGRectMake(0, h - 2, 0, 2);
+    double cur = ADPlayer.shared.player ? CMTimeGetSeconds(ADPlayer.shared.player.currentTime) : 0;
+    double dur = ADPlayer.shared.player.currentItem ? CMTimeGetSeconds(ADPlayer.shared.player.currentItem.duration) : 0;
+    _fill.frame = CGRectMake(0, h - 2, (dur > 0 && !isnan(dur)) ? w * cur / dur : 0, 2);
 }
+
+// 位置：展开时贴在标签栏上方，收缩时缩成右边缘的小圆球
+- (void)applyFrame:(BOOL)animated {
+    UIWindow *key = UIApplication.sharedApplication.windows.firstObject;
+    UIViewController *root = key.rootViewController;
+    CGRect target = self.frame;
+    if ([root isKindOfClass:UITabBarController.class]) {
+        UITabBarController *tab = (UITabBarController *)root;
+        if (self.superview != tab.view) {
+            [tab.view addSubview:self];
+            [tab.view bringSubviewToFront:self];
+        }
+        CGFloat W = tab.view.bounds.size.width;
+        CGFloat h = _collapsed ? 50 : 58;
+        CGFloat w = _collapsed ? 50 : W - 16;
+        CGFloat bottom = tab.view.bounds.size.height - tab.view.safeAreaInsets.bottom - 8 - h;
+        CGFloat aboveBar = tab.tabBar.frame.origin.y - 8 - h;
+        CGFloat y = MIN(bottom, aboveBar) + (58 - h) / 2.0;
+        CGFloat x = _collapsed ? (W - w - 6) : 8;
+        target = CGRectMake(x, y, w, h);
+    } else if (!self.superview && key) {
+        [key addSubview:self];
+    }
+    __weak typeof(self) wself = self;
+    void (^apply)(void) = ^{
+        __strong typeof(wself) me = wself; if (!me) return;
+        me.frame = target;
+        me.layer.cornerRadius = me->_collapsed ? 25 : 16;
+        me.clipsToBounds = !me->_collapsed;
+        me.layer.shadowColor = UIColor.blackColor.CGColor;
+        me.layer.shadowOpacity = me->_collapsed ? 0.35 : 0;
+        me.layer.shadowRadius = me->_collapsed ? 10 : 0;
+        me.layer.shadowOffset = CGSizeMake(0, 3);
+    };
+    if (CGRectEqualToRect(self.frame, target)) { apply(); return; }
+    if (animated) {
+        [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.85 initialSpringVelocity:0.3
+                            options:UIViewAnimationOptionAllowUserInteraction animations:apply completion:nil];
+    } else {
+        apply();
+    }
+    [self setNeedsLayout];
+}
+
+- (void)scheduleCollapse {
+    [_collapseTimer invalidate];
+    _collapseTimer = nil;
+    if (_collapsed || !ADPlayer.shared.isPlaying) return;
+    _collapseTimer = [NSTimer scheduledTimerWithTimeInterval:8.0 target:self selector:@selector(collapseNow) userInfo:nil repeats:NO];
+}
+
+- (void)collapseNow {
+    _collapseTimer = nil;
+    if (_collapsed || !ADPlayer.shared.current || !ADPlayer.shared.isPlaying) return;
+    _collapsed = YES;
+    [self applyFrame:YES];
+    [UIView animateWithDuration:0.2 animations:^{ [self layoutIfNeeded]; }];
+}
+
+- (void)expandNow {
+    [_collapseTimer invalidate];
+    _collapseTimer = nil;
+    if (!_collapsed) return;
+    _collapsed = NO;
+    [self applyFrame:YES];
+    [UIView animateWithDuration:0.2 animations:^{ [self layoutIfNeeded]; }];
+    [self scheduleCollapse];
+}
+
 - (void)refresh {
     ADPlayer *p = ADPlayer.shared;
     ADTrack *t = p.current;
 
-    // 迷你条统一挂在标签栏控制器上：任何页面（发现/搜索/书架/专辑）都能实时看到
+    // 统一挂在标签栏控制器上：任何页面都能实时看到
     UIWindow *key = UIApplication.sharedApplication.windows.firstObject;
     UIViewController *root = key.rootViewController;
     BOOL playerOpen = [root.presentedViewController isKindOfClass:ADPlayerController.class];
     if (!t || playerOpen) {
         if (!self.hidden) self.hidden = YES;
+        [_collapseTimer invalidate];
+        _collapseTimer = nil;
         return;
     }
     if (self.hidden) {
@@ -255,22 +349,6 @@
             self.alpha = 0;
             [UIView animateWithDuration:0.22 animations:^{ self.alpha = 1; }];
         }
-    }
-    if ([root isKindOfClass:UITabBarController.class]) {
-        UITabBarController *tab = (UITabBarController *)root;
-        if (self.superview != tab.view) {
-            [tab.view addSubview:self];
-            [tab.view bringSubviewToFront:self];
-        }
-        CGFloat h = 58;
-        CGFloat bottom = tab.view.bounds.size.height - tab.view.safeAreaInsets.bottom - 8 - h;
-        CGFloat aboveBar = tab.tabBar.frame.origin.y - 8 - h;
-        CGFloat y = MIN(bottom, aboveBar);
-        CGFloat w = tab.view.bounds.size.width - 16;
-        if (fabs(self.frame.origin.y - y) > 0.5 || fabs(self.frame.size.width - w) > 0.5)
-            self.frame = CGRectMake(8, y, w, h);
-    } else if (!self.superview && key) {
-        [key addSubview:self];
     }
 
     _title.text = t.title;
@@ -281,11 +359,36 @@
     [_btn setImage:[UIImage systemImageNamed:(p.isPlaying ? @"pause.fill" : @"play.fill") withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:20 weight:UIImageSymbolWeightSemibold]] forState:UIControlStateNormal];
     CGFloat full = self.bounds.size.width;
     _fill.frame = CGRectMake(0, self.bounds.size.height - 2, (dur > 0 && !isnan(dur)) ? full * cur / dur : 0, 2);
+
+    // 暂停时保持展开，播放中闲置 8 秒收缩
+    if (!p.isPlaying) {
+        [_collapseTimer invalidate];
+        _collapseTimer = nil;
+        if (_collapsed) { _collapsed = NO; [self applyFrame:YES]; }
+    } else if (!_collapsed && !_collapseTimer) {
+        [self scheduleCollapse];
+    }
+    [self applyFrame:NO];
 }
-- (void)tapPlay { [ADHaptic tap]; [ADPlayer.shared toggle]; [self refresh]; }
-- (void)tapBack { [ADPlayer.shared seekBy:-15]; }
+
+- (void)tapPlay {
+    [ADHaptic tap];
+    if (_collapsed) { [self expandNow]; return; }
+    [ADPlayer.shared toggle];
+    [self refresh];
+    [self scheduleCollapse];
+}
+
+- (void)tapBack {
+    [ADHaptic tap];
+    if (_collapsed) { [self expandNow]; return; }
+    [ADPlayer.shared seekBy:-15];
+    [self scheduleCollapse];
+}
+
 - (void)tapBar {
     [ADHaptic tap];
+    if (_collapsed) { [self expandNow]; return; }
     UIWindow *win = UIApplication.sharedApplication.windows.firstObject;
     UIViewController *top = win.rootViewController;
     while (top.presentedViewController) top = top.presentedViewController;
