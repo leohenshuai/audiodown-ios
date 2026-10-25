@@ -518,8 +518,7 @@
     for (NSInteger i = 0; i < 2; i++) {
         UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
         b.frame = CGRectMake(W - 16 - 44 - i * 56, y + 4, 44, 44);
-        b.backgroundColor = [UIColor colorWithWhite:1 alpha:0.14];
-        b.layer.cornerRadius = 22;
+        [ADGlass applyTo:b radius:22 tint:0.06];
         b.tintColor = (i == 1) ? [ADUtil brand] : UIColor.whiteColor;
         [b setImage:[UIImage systemImageNamed:icons[i] withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
         SEL sel = NSSelectorFromString(sels[i]);
@@ -565,7 +564,9 @@
 
     // 推荐内容面板
     UIView *panel = [[UIView alloc] initWithFrame:CGRectMake(0, y, W, 0)];
-    panel.backgroundColor = [UIColor colorWithRed:0.106 green:0.106 blue:0.118 alpha:1];
+    panel.backgroundColor = [UIColor colorWithWhite:1 alpha:0.045];
+    panel.layer.borderWidth = 0.6;
+    panel.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.10].CGColor;
     panel.layer.cornerRadius = 20;
     panel.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner;
     [self.scroll addSubview:panel];
@@ -738,6 +739,14 @@
     self.bar.searchBarStyle = UISearchBarStyleMinimal;
     self.bar.delegate = self;
     self.bar.tintColor = [ADUtil brand];
+    if (@available(iOS 13.0, *)) {
+        self.bar.searchTextField.backgroundColor = [UIColor colorWithWhite:1 alpha:0.08];
+        self.bar.searchTextField.layer.cornerRadius = 14;
+        self.bar.searchTextField.layer.cornerCurve = kCACornerCurveContinuous;
+        self.bar.searchTextField.layer.borderWidth = 0.6;
+        self.bar.searchTextField.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.12].CGColor;
+        self.bar.searchTextField.clipsToBounds = YES;
+    }
     [self.view addSubview:self.bar];
     [self layoutChrome];
     CGFloat w = (self.view.bounds.size.width - 16 * 2 - 12 * 2) / 3;
@@ -1329,6 +1338,15 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
 - (void)fill:(ADAlbum *)a mode:(NSInteger)mode width:(CGFloat)w {
     [self.contentView.subviews makeObjectsPerformSelector:@selector(removeFromSuperview)];
     self.contentView.backgroundColor = UIColor.clearColor;
+
+    if (mode != 2) {
+        // 每行一张玻璃卡片
+        CGFloat insetY = (mode == 1) ? 4 : 5;
+        UIView *card = [[UIView alloc] initWithFrame:CGRectMake(8, insetY, w - 16, self.contentView.bounds.size.height - insetY * 2)];
+        card.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+        [ADGlass applyTo:card radius:20 tint:0.025];
+        [self.contentView insertSubview:card atIndex:0];
+    }
 
     NSInteger listened = 0, total = 0;
     double prog = 0;
