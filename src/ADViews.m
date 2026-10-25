@@ -527,8 +527,7 @@
     for (NSInteger i = 0; i < 2; i++) {
         UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
         b.frame = CGRectMake(W - 16 - 44 - i * 56, y + 4, 44, 44);
-        [ADLiquid glass:b radius:22 alpha:0.07];
-        [ADLiquid float:b];
+        [ADLiquid glassButton:b radius:22];
         b.tintColor = (i == 1) ? [ADUtil brand] : UIColor.whiteColor;
         [b setImage:[UIImage systemImageNamed:icons[i] withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
         SEL sel = NSSelectorFromString(sels[i]);
@@ -539,9 +538,7 @@
 
     UIButton *searchPill = [UIButton buttonWithType:UIButtonTypeCustom];
     searchPill.frame = CGRectMake(16, y, W - 32, 44);
-    [ADLiquid glass:searchPill radius:22 alpha:0.05];
-    [ADLiquid float:searchPill];
-    searchPill.layer.shadowOpacity = 0.2;
+    [ADLiquid glassButton:searchPill radius:22];
     [searchPill addTarget:self action:@selector(gotoSearch) forControlEvents:UIControlEventTouchUpInside];
 
     UIImageView *mag = [[UIImageView alloc] initWithFrame:CGRectMake(16, 12, 20, 20)];
@@ -1500,8 +1497,7 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
     [self.view addSubview:self.countLabel];
 
     UIButton *gear = [UIButton buttonWithType:UIButtonTypeSystem];
-    [ADLiquid glass:gear radius:22 alpha:0.07];
-    [ADLiquid float:gear];
+    [ADLiquid glassButton:gear radius:22];
     gear.tag = 98;
     gear.tintColor = UIColor.whiteColor;
     [gear setImage:[UIImage systemImageNamed:@"line.3.horizontal" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];

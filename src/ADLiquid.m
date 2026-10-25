@@ -313,6 +313,21 @@ static NSInteger const kSpecTag  = 9824;
     [blur bringSubviewToFront:tint];
 }
 
+// 按钮专用：不用模糊子视图（会挡住 UIButton 自带的图标/标题）
++ (void)glassButton:(UIButton *)b radius:(CGFloat)r {
+    if (!b) return;
+    b.backgroundColor = [UIColor colorWithWhite:1 alpha:0.10];
+    b.layer.cornerCurve = kCACornerCurveContinuous;
+    b.layer.cornerRadius = r;
+    b.layer.borderWidth = 0.65;
+    b.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.18].CGColor;
+    b.layer.shadowColor = UIColor.blackColor.CGColor;
+    b.layer.shadowOpacity = 0.22;
+    b.layer.shadowRadius = 12;
+    b.layer.shadowOffset = CGSizeMake(0, 6);
+    b.clipsToBounds = NO;
+}
+
 + (void)corner:(CGFloat)r on:(UIView *)v {
     if (!v) return;
     v.layer.cornerCurve = kCACornerCurveContinuous;

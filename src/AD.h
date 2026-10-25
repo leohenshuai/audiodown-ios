@@ -64,6 +64,7 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)glass:(UIView *)v radius:(CGFloat)r;                 // 玻璃面
 + (void)glass:(UIView *)v radius:(CGFloat)r alpha:(CGFloat)alpha;
 + (void)corner:(CGFloat)r on:(UIView *)v;
++ (void)glassButton:(UIButton *)b radius:(CGFloat)r;          // 按钮用的玻璃（不遮挡图标）
 + (void)float:(UIView *)v;                                   // 悬浮投影
 + (void)press:(UIView *)v;                                   // 按压缩放
 + (void)pulse:(UIView *)v;

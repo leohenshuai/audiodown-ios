@@ -89,9 +89,7 @@
     self.intro.frame = CGRectMake(16, 170, w - 32, 0);
     self.dlBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     self.dlBtn.frame = CGRectMake(140, 92, 130, 30);
-    [ADLiquid glass:self.dlBtn radius:15 alpha:0.06];
-    [ADLiquid float:self.dlBtn];
-    self.dlBtn.layer.shadowOpacity = 0.2;
+    [ADLiquid glassButton:self.dlBtn radius:15];
     [self.dlBtn setTitle:@"缓存到本机" forState:UIControlStateNormal];
     [self.dlBtn setTitleColor:[ADUtil brand] forState:UIControlStateNormal];
     self.dlBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
@@ -976,9 +974,7 @@
 
 - (UIButton *)circleButton:(NSString *)icon action:(SEL)sel {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-    [ADLiquid glass:b radius:22 alpha:0.07];
-    [ADLiquid float:b];
-    b.layer.shadowOpacity = 0.2;
+    [ADLiquid glassButton:b radius:22];
     b.tintColor = UIColor.whiteColor;
     [b setImage:[UIImage systemImageNamed:icon withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
     [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
