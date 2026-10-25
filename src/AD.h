@@ -81,12 +81,14 @@ typedef NS_ENUM(NSInteger, ADTaskState) {
 - (NSArray<ADTask *> *)tasks;
 - (nullable ADTask *)taskForAlbum:(NSString *)albumId;
 - (void)addAlbum:(ADAlbum *)a tracks:(NSArray<ADTrack *> *)tracks;
+- (void)addTracks:(ADAlbum *)a tracks:(NSArray<ADTrack *> *)tracks;
 - (void)pauseTask:(ADTask *)t;
 - (void)resumeTask:(ADTask *)t;
 - (void)deleteTask:(ADTask *)t;
 - (void)pauseAll;
 - (void)resumeAll;
 - (BOOL)hasLocal:(nullable NSString *)trackId;
+- (void)removeLocal:(NSString *)trackId;
 - (nullable NSURL *)localURL:(nullable NSString *)trackId;
 @end
 
@@ -97,6 +99,7 @@ typedef NS_ENUM(NSInteger, ADTaskState) {
 @property (nonatomic, assign) NSInteger index;
 @property (nonatomic, assign) float rate;
 @property (nonatomic, assign) double sleepDeadline;
+@property (nonatomic, strong) NSMutableSet *prefetching;
 @property (nonatomic, assign) BOOL stopAfterChapter;   // 0 关闭
 @property (nonatomic, copy, nullable) NSString *statusText;
 + (instancetype)shared;

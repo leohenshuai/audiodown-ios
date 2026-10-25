@@ -75,6 +75,13 @@
 - (BOOL)hasLocal:(NSString *)trackId {
     return trackId && [NSFileManager.defaultManager fileExistsAtPath:[self fileFor:trackId]];
 }
+- (void)removeLocal:(NSString *)trackId {
+    if (!trackId.length) return;
+    NSString *p = [self fileFor:trackId];
+    if ([NSFileManager.defaultManager fileExistsAtPath:p]) [NSFileManager.defaultManager removeItemAtPath:p error:nil];
+    [self notify];
+}
+
 - (NSURL *)localURL:(NSString *)trackId {
     return [self hasLocal:trackId] ? [NSURL fileURLWithPath:[self fileFor:trackId]] : nil;
 }
@@ -96,6 +103,26 @@
     t.tracks = tracks;
     t.done = 0; t.failed = 0; t.cursor = 0;
     t.state = ADTaskStateQueued;
+    [self save];
+    [self notify];
+    [self pump];
+}
+
+- (void)addTracks:(ADAlbum *)a tracks:(NSArray<ADTrack *> *)list {
+    if (!list.count) return;
+    ADTask *t = [self taskForAlbum:a.albumId];
+    if (!t) {
+        [self addAlbum:a tracks:list];
+        return;
+    }
+    NSMutableArray *merged = [t.tracks mutableCopy] ?: [NSMutableArray array];
+    NSMutableSet *have = [NSMutableSet set];
+    for (ADTrack *x in merged) [have addObject:x.trackId];
+    BOOL added = NO;
+    for (ADTrack *x in list) if (![have containsObject:x.trackId]) { [merged addObject:x]; [have addObject:x.trackId]; added = YES; }
+    if (!added) { [self notify]; return; }
+    t.tracks = merged;
+    if (t.state == ADTaskStateDone || t.state == ADTaskStateFailed) t.state = ADTaskStateQueued;
     [self save];
     [self notify];
     [self pump];

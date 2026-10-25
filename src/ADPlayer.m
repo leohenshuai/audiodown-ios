@@ -55,6 +55,10 @@
     _index = index;
     ADTrack *t = _tracks[index];
     NSURL *local = [[ADDownloader shared] localURL:t.trackId];
+    if (!local) {
+        NSString *pp = [self prefetchPath:t.trackId];
+        if ([NSFileManager.defaultManager fileExistsAtPath:pp]) local = [NSURL fileURLWithPath:pp];
+    }
     if (local) {
         [self startWithURL:local.absoluteString headers:@{} track:t];
         return;
@@ -62,6 +66,64 @@
     self.statusText = @"正在获取音频…";
     [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
     [self resolveAndPlay:t attempt:0];
+}
+
+- (NSString *)prefetchDir {
+    static NSString *d; static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        d = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/cache/prefetch"];
+        [NSFileManager.defaultManager createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:nil];
+    });
+    return d;
+}
+
+- (NSString *)prefetchPath:(NSString *)trackId {
+    return [[self prefetchDir] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.m4a", trackId]];
+}
+
+- (void)cleanPrefetch {
+    NSInteger days = [[NSUserDefaults standardUserDefaults] integerForKey:@"ad_prefetch_days"];
+    if (days <= 0) days = 3;
+    NSDate *limit = [NSDate dateWithTimeIntervalSinceNow:-days * 86400];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    for (NSString *f in [fm contentsOfDirectoryAtPath:[self prefetchDir] error:nil]) {
+        NSString *p = [[self prefetchDir] stringByAppendingPathComponent:f];
+        NSDictionary *attr = [fm attributesOfItemAtPath:p error:nil];
+        if ([attr.fileModificationDate compare:limit] == NSOrderedAscending) [fm removeItemAtPath:p error:nil];
+    }
+}
+
+- (void)prefetchAhead {
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"ad_prefetch"]) return;
+    NSInteger n = [[NSUserDefaults standardUserDefaults] integerForKey:@"ad_prefetch_count"];
+    if (n <= 0) n = 2;
+    if (!self.prefetching) self.prefetching = [NSMutableSet set];
+    for (NSInteger k = 1; k <= n; k++) {
+        NSInteger i = _index + k;
+        if (i >= (NSInteger)_tracks.count) break;
+        ADTrack *t = _tracks[i];
+        if ([[ADDownloader shared] hasLocal:t.trackId]) continue;
+        if ([NSFileManager.defaultManager fileExistsAtPath:[self prefetchPath:t.trackId]]) continue;
+        if ([self.prefetching containsObject:t.trackId]) continue;
+        [self.prefetching addObject:t.trackId];
+        __weak typeof(self) w = self;
+        [[ADApi shared] playURLOf:t done:^(NSString *url, NSDictionary *headers, NSString *err) {
+            __strong typeof(w) self = w; if (!self) return;
+            if (!url.length || [err isEqualToString:@"WAIT"]) { [self.prefetching removeObject:t.trackId]; return; }
+            NSMutableDictionary *h = [NSMutableDictionary dictionary];
+            [headers enumerateKeysAndObjectsUsingBlock:^(id key, id val, BOOL *stop) {
+                if ([val isKindOfClass:NSString.class] && [val length]) h[key] = val;
+            }];
+            NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+            req.timeoutInterval = 60;
+            for (NSString *key in h) [req setValue:h[key] forHTTPHeaderField:key];
+            NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *r, NSError *e) {
+                [self.prefetching removeObject:t.trackId];
+                if (data.length > 40000) [data writeToFile:[self prefetchPath:t.trackId] atomically:YES];
+            }];
+            [task resume];
+        }];
+    }
 }
 
 - (void)resolveAndPlay:(ADTrack *)t attempt:(NSInteger)attempt {
@@ -97,6 +159,8 @@
 }
 
 - (void)startWithURL:(NSString *)url headers:(NSDictionary *)headers track:(ADTrack *)t {
+    [self prefetchAhead];
+    [self cleanPrefetch];
     NSMutableDictionary *opts = [NSMutableDictionary dictionary];
     NSMutableDictionary *h = [NSMutableDictionary dictionary];
     // 过滤空值

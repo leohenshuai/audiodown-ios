@@ -16,6 +16,13 @@
 @property (nonatomic, assign) NSInteger page, total;
 @property (nonatomic, assign) BOOL loading;
 @property (nonatomic, strong) UIButton *dlBtn;
+@property (nonatomic, strong) UIBarButtonItem *favBtn;
+@property (nonatomic, assign) BOOL sortDesc, selecting;
+@property (nonatomic, strong) NSMutableSet *selected;
+@property (nonatomic, strong) UIScrollView *rangeBar;
+@property (nonatomic, strong) UIView *actionBar;
+@property (nonatomic, strong) UILabel *actionLabel;
+@property (nonatomic, assign) NSInteger jumpTarget;
 @end
 
 @implementation ADAlbumController
@@ -67,7 +74,11 @@
     [head addSubview:self.intro];
     self.table.tableHeaderView = head;
 
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"heart"] style:UIBarButtonItemStylePlain target:self action:@selector(toggleFav)];
+    self.selected = [NSMutableSet set];
+    self.jumpTarget = -1;
+    self.favBtn = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"heart"] style:UIBarButtonItemStylePlain target:self action:@selector(toggleFav)];
+    UIBarButtonItem *moreItem = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"ellipsis.circle"] style:UIBarButtonItemStylePlain target:self action:@selector(showAlbumMenu)];
+    self.navigationItem.rightBarButtonItems = @[moreItem, self.favBtn];
 
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(fillHeader) name:@"ADDownloadChanged" object:nil];
     [self fillHeader];
@@ -126,8 +137,152 @@
         [self.dlBtn setTitle:@"缓存到本机" forState:UIControlStateNormal];
     }
     BOOL fav = [[ADStore shared] isFavorite:self.album.albumId];
-    [self.navigationItem.rightBarButtonItem setImage:[UIImage systemImageNamed:fav ? @"heart.fill" : @"heart"]];
-    self.navigationItem.rightBarButtonItem.tintColor = fav ? [ADUtil brand] : UIColor.whiteColor;
+    [self.favBtn setImage:[UIImage systemImageNamed:fav ? @"heart.fill" : @"heart"]];
+    self.favBtn.tintColor = fav ? [ADUtil brand] : UIColor.whiteColor;
+    [self buildRangeBar];
+}
+
+- (NSArray<ADTrack *> *)ordered {
+    if (!self.sortDesc) return self.tracks;
+    return [[self.tracks reverseObjectEnumerator] allObjects];
+}
+
+- (void)showAlbumMenu {
+    [ADOptionSheet showIn:self title:self.album.title options:@[@"选择剧集下载", @"目录正序", @"目录倒序", @"缓存整本到本机", @"刷新目录"] destructive:-1 choose:^(NSInteger i) {
+        if (i == 0) [self beginSelecting];
+        else if (i == 1) { self.sortDesc = NO; [self.table reloadData]; }
+        else if (i == 2) { self.sortDesc = YES; [self.table reloadData]; }
+        else if (i == 3) [self downloadAll];
+        else [self refreshAll];
+    }];
+}
+
+- (void)buildRangeBar {
+    if (!self.rangeBar) {
+        self.rangeBar = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 44)];
+        self.rangeBar.showsHorizontalScrollIndicator = NO;
+        self.rangeBar.contentInset = UIEdgeInsetsMake(0, 16, 0, 16);
+    }
+    for (UIView *v in self.rangeBar.subviews) [v removeFromSuperview];
+    NSInteger total = self.total > 0 ? self.total : self.tracks.count;
+    NSInteger step = 60;
+    NSInteger n = (total + step - 1) / step;
+    CGFloat x = 16;
+    for (NSInteger i = 0; i < n && i < 60; i++) {
+        NSInteger s0 = i * step + 1, s1 = MIN((i + 1) * step, total);
+        NSString *t = [NSString stringWithFormat:@"%ld–%ld", (long)s0, (long)s1];
+        UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+        CGSize sz = [t sizeWithAttributes:@{NSFontAttributeName: [UIFont systemFontOfSize:13 weight:UIFontWeightMedium]}];
+        CGFloat w = sz.width + 26;
+        b.frame = CGRectMake(x, 4, w, 32);
+        b.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+        b.layer.cornerRadius = 16;
+        b.backgroundColor = [UIColor colorWithWhite:1 alpha:0.1];
+        [b setTitleColor:[UIColor colorWithWhite:1 alpha:0.85] forState:UIControlStateNormal];
+        [b setTitle:t forState:UIControlStateNormal];
+        b.tag = 2000 + i * step;
+        [b addTarget:self action:@selector(tapRange:) forControlEvents:UIControlEventTouchUpInside];
+        [self.rangeBar addSubview:b];
+        x += w + 8;
+    }
+    self.rangeBar.contentSize = CGSizeMake(x + 8, 44);
+    UIView *head = self.table.tableHeaderView;
+    if (self.rangeBar.superview != head) [head addSubview:self.rangeBar];
+    self.rangeBar.frame = CGRectMake(0, head.bounds.size.height - 44, self.view.bounds.size.width, 44);
+}
+
+- (void)tapRange:(UIButton *)b {
+    NSInteger start = b.tag - 2000;
+    for (UIView *v in self.rangeBar.subviews) {
+        v.backgroundColor = [UIColor colorWithWhite:1 alpha:0.1];
+    }
+    b.backgroundColor = [UIColor whiteColor];
+    [b setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+    [self jumpTo:start];
+}
+
+- (void)jumpTo:(NSInteger)idx {
+    if (idx < (NSInteger)self.tracks.count) {
+        NSIndexPath *ip = [NSIndexPath indexPathForRow:idx inSection:0];
+        [self.table scrollToRowAtIndexPath:ip atScrollPosition:UITableViewScrollPositionTop animated:YES];
+        return;
+    }
+    if (!self.more) return;
+    self.jumpTarget = idx;
+    [self loadTracks];
+}
+
+- (void)beginSelecting {
+    self.selecting = YES;
+    [self.selected removeAllObjects];
+    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"取消" style:UIBarButtonItemStylePlain target:self action:@selector(endSelecting)];
+    self.navigationItem.rightBarButtonItems = @[[[UIBarButtonItem alloc] initWithTitle:@"全选" style:UIBarButtonItemStylePlain target:self action:@selector(selectAll)]];
+    [self showActionBar];
+    [self.table reloadData];
+}
+
+- (void)selectAll {
+    for (ADTrack *t in self.ordered) [self.selected addObject:t.trackId];
+    [self updateActionBar];
+    [self.table reloadData];
+}
+
+- (void)endSelecting {
+    self.selecting = NO;
+    [self.selected removeAllObjects];
+    self.navigationItem.leftBarButtonItem = nil;
+    UIBarButtonItem *moreItem = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"ellipsis.circle"] style:UIBarButtonItemStylePlain target:self action:@selector(showAlbumMenu)];
+    self.navigationItem.rightBarButtonItems = @[moreItem, self.favBtn];
+    [self.actionBar removeFromSuperview];
+    self.actionBar = nil;
+    [self.table reloadData];
+}
+
+- (void)showActionBar {
+    if (self.actionBar) return;
+    CGFloat h = 56;
+    self.actionBar = [[UIView alloc] initWithFrame:CGRectMake(0, self.view.bounds.size.height - h, self.view.bounds.size.width, h)];
+    self.actionBar.backgroundColor = [UIColor colorWithWhite:0.14 alpha:0.98];
+    self.actionLabel = [ADUtil label:nil size:14 color:[UIColor colorWithWhite:1 alpha:0.7]];
+    self.actionLabel.frame = CGRectMake(16, 18, 160, 20);
+    [self.actionBar addSubview:self.actionLabel];
+    UIButton *go = [UIButton buttonWithType:UIButtonTypeSystem];
+    go.frame = CGRectMake(self.view.bounds.size.width - 132, 10, 120, 36);
+    go.backgroundColor = [ADUtil brand];
+    go.layer.cornerRadius = 18;
+    go.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+    [go setTitle:@"缓存所选" forState:UIControlStateNormal];
+    [go setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    [go addTarget:self action:@selector(downloadSelected) forControlEvents:UIControlEventTouchUpInside];
+    [self.actionBar addSubview:go];
+    [self.view addSubview:self.actionBar];
+    [self updateActionBar];
+}
+
+- (void)updateActionBar {
+    self.actionLabel.text = [NSString stringWithFormat:@"已选 %ld 集", (long)self.selected.count];
+}
+
+- (void)downloadSelected {
+    if (!self.selected.count) return;
+    NSMutableArray *arr = [NSMutableArray array];
+    for (ADTrack *t in self.tracks) if ([self.selected containsObject:t.trackId]) [arr addObject:t];
+    [[ADDownloader shared] addTracks:self.album tracks:arr];
+    NSUInteger n = arr.count;
+    [self endSelecting];
+    UIImpactFeedbackGenerator *g = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
+    [g impactOccurred];
+    [self fillHeader];
+    UIAlertController *c = [UIAlertController alertControllerWithTitle:nil message:[NSString stringWithFormat:@"已加入下载队列 %ld 集", (long)n] preferredStyle:UIAlertControllerStyleAlert];
+    [c addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:c animated:YES completion:nil];
+}
+
+- (void)downloadOne:(ADTrack *)t {
+    [[ADDownloader shared] addTracks:self.album tracks:@[t]];
+    [self fillHeader];
+    UIImpactFeedbackGenerator *g = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
+    [g impactOccurred];
 }
 
 - (void)refreshAll {
@@ -183,6 +338,11 @@
         if (list.count) self.page += 1;
         [self.table reloadData];
         [self fillHeader];
+        if (self.jumpTarget >= 0 && (NSInteger)self.tracks.count > self.jumpTarget) {
+            NSIndexPath *ip = [NSIndexPath indexPathForRow:self.jumpTarget inSection:0];
+            self.jumpTarget = -1;
+            [self.table scrollToRowAtIndexPath:ip atScrollPosition:UITableViewScrollPositionTop animated:YES];
+        }
         // 自动恢复上次进度
         if (self.tracks.count && !ADPlayer.shared.album) {
             ADPlayer.shared.album = self.album;
@@ -216,7 +376,16 @@
 
 - (void)playFrom:(NSInteger)index {
     ADPlayer *p = ADPlayer.shared;
-    [p playAlbum:self.album tracks:self.tracks at:index];
+    NSArray *order = [self ordered];
+    ADTrack *target = order[index];
+    NSInteger idx = 0;
+    if (self.sortDesc) {
+        // 倒序展示时，播放列表仍按正序，定位到对应集
+        for (NSInteger i = 0; i < (NSInteger)self.tracks.count; i++) if ([self.tracks[i].trackId isEqualToString:target.trackId]) { idx = i; break; }
+        [p playAlbum:self.album tracks:self.tracks at:idx];
+    } else {
+        [p playAlbum:self.album tracks:self.tracks at:index];
+    }
     [self presentViewController:[ADPlayerController new] animated:YES completion:nil];
 }
 
@@ -229,11 +398,12 @@
     h.textLabel.textColor = [ADUtil dim];
 }
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { return self.tracks.count; }
+- (NSArray<UITableViewRowAction *> *)legacyActions { return nil; }
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {
     static NSString *cid = @"tr";
     UITableViewCell *c = [t dequeueReusableCellWithIdentifier:cid];
     if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:cid];
-    ADTrack *tr = self.tracks[ip.row];
+    ADTrack *tr = [self ordered][ip.row];
     c.backgroundColor = UIColor.clearColor;
     c.textLabel.textColor = UIColor.whiteColor;
     c.detailTextLabel.textColor = [ADUtil dim];
@@ -251,12 +421,46 @@
     BOOL playing = cur && [cur.trackId isEqualToString:tr.trackId];
     c.textLabel.textColor = playing ? [ADUtil brand] : UIColor.whiteColor;
     // 触底加载
-    if (ip.row == (NSInteger)self.tracks.count - 3 && self.tracks.count < self.total) [self loadTracks];
+    if (!self.selecting && ip.row == (NSInteger)self.tracks.count - 3 && self.tracks.count < self.total) [self loadTracks];
+    if (self.selecting) {
+        BOOL on = [self.selected containsObject:tr.trackId];
+        c.accessoryType = on ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+        c.tintColor = [ADUtil brand];
+    } else {
+        c.accessoryType = UITableViewCellAccessoryNone;
+    }
     return c;
 }
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [t deselectRowAtIndexPath:ip animated:YES];
+    ADTrack *tr = [self ordered][ip.row];
+    if (self.selecting) {
+        if ([self.selected containsObject:tr.trackId]) [self.selected removeObject:tr.trackId];
+        else [self.selected addObject:tr.trackId];
+        [self updateActionBar];
+        [t reloadRowsAtIndexPaths:@[ip] withRowAnimation:UITableViewRowAnimationNone];
+        return;
+    }
     [self playFrom:ip.row];
+}
+
+- (UISwipeActionsConfiguration *)tableView:(UITableView *)t trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)ip {
+    ADTrack *tr = [self ordered][ip.row];
+    BOOL local = [[ADDownloader shared] hasLocal:tr.trackId];
+    UIContextualAction *act = [UIContextualAction contextualActionWithStyle:(local ? UIContextualActionStyleDestructive : UIContextualActionStyleNormal)
+                                                                     title:(local ? @"删除缓存" : @"下载本集")
+                                                                   handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
+        if (local) {
+            [[ADDownloader shared] removeLocal:tr.trackId];
+            [[NSNotificationCenter defaultCenter] postNotificationName:@"ADDownloadChanged" object:nil];
+        } else {
+            [self downloadOne:tr];
+        }
+        [t reloadRowsAtIndexPaths:@[ip] withRowAnimation:UITableViewRowAnimationNone];
+        done(YES);
+    }];
+    act.backgroundColor = local ? [UIColor systemRedColor] : [ADUtil brand];
+    return [UISwipeActionsConfiguration configurationWithActions:@[act]];
 }
 @end
 
@@ -764,6 +968,16 @@
 
 - (void)closeSelf { [self dismissViewControllerAnimated:YES completion:nil]; }
 
+- (void)prefetchSwitch:(UISwitch *)sw {
+    [NSUserDefaults.standardUserDefaults setBool:sw.on forKey:@"ad_prefetch"];
+    if (sw.on) [ADPlayer.shared prefetchAhead];
+}
+
+- (void)prefetchStepper:(UIStepper *)st {
+    [NSUserDefaults.standardUserDefaults setInteger:(NSInteger)st.value forKey:@"ad_prefetch_count"];
+    [self.table reloadData];
+}
+
 - (void)refresh { [self.table reloadData]; }
 
 - (UITextField *)field:(NSString *)text placeholder:(NSString *)ph keyboard:(UIKeyboardType)kb {
@@ -837,9 +1051,11 @@
     }];
 }
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)t { return 2; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)t { return 3; }
 - (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)s {
-    return s == 0 ? @"服务" : @"本机下载";
+    if (s == 0) return @"服务";
+    if (s == 2) return @"播放与预加载";
+    return @"本机下载";
 }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
     if (s == 0) return self.status.text ?: @"点 Token 那一行可以粘贴或修改";
@@ -849,6 +1065,7 @@
 }
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s {
     if (s == 0) return 3;
+    if (s == 2) return 3;
     return MAX(1, (NSInteger)[ADDownloader shared].tasks.count) + 1;
 }
 
@@ -860,6 +1077,39 @@
     c.textLabel.font = [UIFont systemFontOfSize:15];
     c.detailTextLabel.font = [UIFont systemFontOfSize:11];
     c.selectionStyle = UITableViewCellSelectionStyleNone;
+
+    if (ip.section == 2) {
+        NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
+        if (ip.row == 0) {
+            c.textLabel.text = @"智能预缓存";
+            c.detailTextLabel.text = @"提前准备后续音频，弱网和地铁里更顺";
+            UISwitch *sw = [[UISwitch alloc] init];
+            sw.on = [ud boolForKey:@"ad_prefetch"];
+            sw.onTintColor = [ADUtil brand];
+            [sw addTarget:self action:@selector(prefetchSwitch:) forControlEvents:UIControlEventValueChanged];
+            c.accessoryView = sw;
+        } else if (ip.row == 1) {
+            c.textLabel.text = @"额外预加载后续集数";
+            NSInteger n = [ud integerForKey:@"ad_prefetch_count"];
+            if (n <= 0) n = 2;
+            c.detailTextLabel.text = [NSString stringWithFormat:@"当前 %ld 集（1–5）", (long)n];
+            UIStepper *st = [[UIStepper alloc] init];
+            st.minimumValue = 1; st.maximumValue = 5; st.stepValue = 1;
+            st.value = n;
+            st.tintColor = [ADUtil brand];
+            [st addTarget:self action:@selector(prefetchStepper:) forControlEvents:UIControlEventValueChanged];
+            c.accessoryView = st;
+        } else {
+            NSInteger days = [ud integerForKey:@"ad_prefetch_days"];
+            if (days < 0) days = 3;
+            c.textLabel.text = @"自动清理预缓存";
+            c.detailTextLabel.text = days == 0 ? @"不自动清理" : [NSString stringWithFormat:@"超过 %ld 天的临时音频自动删除", (long)days];
+            c.textLabel.textColor = UIColor.whiteColor;
+            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            c.selectionStyle = UITableViewCellSelectionStyleDefault;
+        }
+        return c;
+    }
 
     if (ip.section == 0) {
         if (ip.row == 0) {
@@ -926,6 +1176,18 @@
 }
 
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [t deselectRowAtIndexPath:ip animated:YES];
+    if (ip.section == 2) {
+        if (ip.row == 2) {
+            [ADOptionSheet showIn:self title:@"自动清理预缓存" options:@[@"不清理", @"3 天", @"7 天", @"30 天"] destructive:-1 choose:^(NSInteger i2) {
+                NSArray *v = @[@0, @3, @7, @30];
+                [NSUserDefaults.standardUserDefaults setInteger:[v[i2] integerValue] forKey:@"ad_prefetch_days"];
+                [ADPlayer.shared cleanPrefetch];
+                [self.table reloadData];
+            }];
+        }
+        return;
+    }
     [t deselectRowAtIndexPath:ip animated:YES];
     if (ip.section == 0) {
         if (ip.row == 0) [self.baseField becomeFirstResponder];
