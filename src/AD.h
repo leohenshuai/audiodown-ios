@@ -61,6 +61,7 @@ typedef void (^ADErr)(NSString * _Nullable err);
 - (void)tracksOf:(NSString *)albumId page:(NSInteger)page pageSize:(NSInteger)size done:(void (^)(NSArray<ADTrack *> *list, NSInteger total, BOOL cached, NSString * _Nullable err))cb;
 - (void)playURLOf:(ADTrack *)t done:(void (^)(NSString * _Nullable url, NSDictionary * _Nullable headers, NSString * _Nullable err))cb;
 - (void)downloads:(void (^)(NSArray<NSDictionary *> *items, NSString * _Nullable err))cb;
+- (void)rawGET:(NSString *)path timeout:(NSTimeInterval)timeout done:(void (^)(NSInteger code, NSString *body, NSString * _Nullable err))cb;
 @end
 
 

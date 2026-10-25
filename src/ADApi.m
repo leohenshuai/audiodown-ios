@@ -110,6 +110,18 @@ static void ADCacheSet(NSString *key, id json) {
     }];
 }
 
+// 诊断用：原样取回某个接口的状态码和响应体
+- (void)rawGET:(NSString *)path timeout:(NSTimeInterval)timeout done:(void (^)(NSInteger, NSString *, NSString *))cb {
+    NSMutableURLRequest *r = [self request:path method:@"GET" body:nil];
+    if (timeout > 0) r.timeoutInterval = timeout;
+    [[self.session dataTaskWithRequest:r completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+        NSInteger code = [(NSHTTPURLResponse *)resp statusCode];
+        NSString *body = data.length ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : @"";
+        if (!body) body = [NSString stringWithFormat:@"<%lu bytes>", (unsigned long)data.length];
+        dispatch_async(dispatch_get_main_queue(), ^{ cb(code, body ?: @"", err.localizedDescription); });
+    }] resume];
+}
+
 - (void)discover:(void (^)(NSArray<NSDictionary *> *, BOOL, NSString *))cb {
     [self cachedGET:@"/open-api/v1/discover" key:@"discover" done:^(id json, BOOL cached, NSString *err) {
         NSArray *secs = [json isKindOfClass:NSDictionary.class] ? json[@"sections"] : nil;

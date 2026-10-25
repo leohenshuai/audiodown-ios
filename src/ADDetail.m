@@ -175,7 +175,7 @@
 }
 
 - (void)showAlbumMenu {
-    [ADOptionSheet showIn:self title:self.album.title options:@[@"选择剧集下载", @"目录正序", @"目录倒序", @"缓存整本到本机", @"刷新目录"] destructive:-1 choose:^(NSInteger i) {
+    [ADOptionSheet showIn:self title:self.album.title options:@[@"选择剧集下载", @"目录正序", @"目录倒序", @"缓存整本到本机", @"刷新目录", @"目录诊断"] destructive:-1 choose:^(NSInteger i) {
         if (i == 0) [self beginSelecting];
         else if (i == 1) { self.sortDesc = NO; [self.table reloadData]; }
         else if (i == 2) {
@@ -189,7 +189,8 @@
             [self loadTracks];
         }
         else if (i == 3) [self downloadAll];
-        else [self refreshAll];
+        else if (i == 4) [self refreshAll];
+        else [self runProbe];
     }];
 }
 
@@ -307,6 +308,56 @@
     self.hasMore = YES;
     self.loadingAll = NO;
     [self loadNextPage];
+}
+
+// 把一批候选请求一次打完，结果写到 Documents/probe_<专辑>.txt
+- (void)runProbe {
+    NSString *aid = self.album.albumId;
+    NSArray<NSString *> *paths = @[
+        [NSString stringWithFormat:@"/open-api/v1/albums/%@", aid],
+        [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=1&pageSize=50", aid],
+        [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=1&pageSize=20", aid],
+        [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=1&pageSize=10", aid],
+        [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=1&pageSize=5", aid],
+        [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=0&pageSize=50", aid],
+        [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=1&pageSize=50&refresh=1", aid],
+        [NSString stringWithFormat:@"/api/v1/albums/%@/tracks?page=1&pageSize=50", aid],
+        [NSString stringWithFormat:@"/api/v1/books/%@/chapters?page=1&pageSize=50", aid],
+    ];
+    NSMutableString *out = [NSMutableString stringWithFormat:@"albumId=%@\nprovider=%@\ntrackCount=%ld\n\n",
+                            aid, self.album.provider, (long)self.album.trackCount];
+    UIAlertController *busy = [UIAlertController alertControllerWithTitle:@"目录诊断" message:@"正在逐个请求…" preferredStyle:UIAlertControllerStyleAlert];
+    [self presentViewController:busy animated:YES completion:nil];
+    __weak typeof(self) weakSelf = self;
+    dispatch_block_t next = nil;
+    __block NSUInteger idx = 0;
+    __block dispatch_block_t step = nil;
+    step = ^{
+        __strong typeof(weakSelf) self = weakSelf; if (!self) return;
+        if (idx >= paths.count) {
+            NSString *dir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+            NSString *f = [dir stringByAppendingPathComponent:[NSString stringWithFormat:@"probe_%@.txt", aid]];
+            [out writeToFile:f atomically:YES encoding:NSUTF8StringEncoding error:nil];
+            [busy dismissViewControllerAnimated:YES completion:^{
+                UIAlertController *a = [UIAlertController alertControllerWithTitle:@"诊断完成"
+                    message:[NSString stringWithFormat:@"已写入 probe_%@.txt\n文件 App → 我的 iPhone → 听书 里可以取到。", aid]
+                    preferredStyle:UIAlertControllerStyleAlert];
+                [a addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:a animated:YES completion:nil];
+            }];
+            return;
+        }
+        NSString *p = paths[idx++];
+        [[ADApi shared] rawGET:p timeout:20 done:^(NSInteger code, NSString *body, NSString *err) {
+            __strong typeof(weakSelf) self = weakSelf; if (!self) return;
+            NSString *b = body.length > 700 ? [[body substringToIndex:700] stringByAppendingString:@"…"] : body;
+            [out appendFormat:@"### %@\nHTTP %ld%@\n%@\n\n", p, (long)code,
+                err.length ? [NSString stringWithFormat:@" err=%@", err] : @"", b];
+            step();
+        }];
+    };
+    (void)next;
+    step();
 }
 
 - (void)beginSelecting {
@@ -474,11 +525,11 @@
     [self loadPage:p];
 }
 
-// 页宽从大到小试：50 → 20 → 10 → 5
+// 页宽逐个试：先小（上游常常一次给不满）再大（可能一次给全）
 - (BOOL)shrinkPageSize {
-    static const NSInteger sizes[] = {50, 20, 10, 5};
-    for (int i = 0; i < 4; i++) {
-        if (sizes[i] < self.pageSize) { self.pageSize = sizes[i]; return YES; }
+    static const NSInteger sizes[] = {50, 20, 10, 5, 100, 260};
+    for (int i = 0; i < 6; i++) {
+        if (sizes[i] == self.pageSize && i + 1 < 6) { self.pageSize = sizes[i + 1]; return YES; }
     }
     return NO;
 }
