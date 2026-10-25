@@ -223,7 +223,7 @@
         copy.titleLabel.font = b.titleLabel.font;
         copy.layer.cornerRadius = b.layer.cornerRadius;
         copy.backgroundColor = b.backgroundColor;
-        [copy setTitle:b.title forState:UIControlStateNormal];
+        [copy setTitle:[b titleForState:UIControlStateNormal] forState:UIControlStateNormal];
         [copy setTitleColor:[b titleColorForState:UIControlStateNormal] forState:UIControlStateNormal];
         [copy addTarget:self action:@selector(tapRange:) forControlEvents:UIControlEventTouchUpInside];
         [self.floatBar addSubview:copy];
