@@ -39,6 +39,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)isFavorite:(NSString *)albumId;
 - (void)toggleFavorite:(ADAlbum *)a;
 - (NSArray<ADAlbum *> *)history;                    // 最近收听
+- (NSArray<ADAlbum *> *)wants;                      // 想听
+- (BOOL)isWanted:(nullable NSString *)albumId;
+- (void)toggleWant:(ADAlbum *)a;
+- (BOOL)isPinned:(nullable NSString *)albumId;
+- (void)togglePin:(nullable NSString *)albumId;
+- (void)removeHistory:(nullable NSString *)albumId;
 - (void)touchHistory:(ADAlbum *)a;
 - (double)positionFor:(NSString *)trackId;
 - (BOOL)isDone:(nullable NSString *)trackId;

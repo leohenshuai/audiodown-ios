@@ -114,6 +114,8 @@ static double ADNum(id o, NSString *k) {
     NSMutableDictionary<NSString *, NSDictionary *> *_info;
     NSMutableSet<NSString *> *_done;
     NSMutableSet<NSString *> *_doneAlbums;
+    NSMutableArray<ADAlbum *> *_want;
+    NSMutableSet<NSString *> *_pin;
 }
 + (instancetype)shared {
     static ADStore *s; static dispatch_once_t once;
@@ -142,6 +144,10 @@ static double ADNum(id o, NSString *k) {
     NSData *d7 = [NSData dataWithContentsOfFile:[self path:@"donealbums.dat"]];
     _done = (d6 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setS fromData:d6 error:nil] : nil) ?: [NSMutableSet set];
     _doneAlbums = (d7 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setS fromData:d7 error:nil] : nil) ?: [NSMutableSet set];
+    NSData *d8 = [NSData dataWithContentsOfFile:[self path:@"want.dat"]];
+    NSData *d9 = [NSData dataWithContentsOfFile:[self path:@"pin.dat"]];
+    _want = (d8 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setA fromData:d8 error:nil] : nil) ?: [NSMutableArray array];
+    _pin = (d9 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setS fromData:d9 error:nil] : nil) ?: [NSMutableSet set];
 }
 - (void)save {
     [[NSKeyedArchiver archivedDataWithRootObject:_fav requiringSecureCoding:NO error:nil] writeToFile:[self path:@"fav.dat"] atomically:YES];
@@ -151,6 +157,8 @@ static double ADNum(id o, NSString *k) {
     [[NSKeyedArchiver archivedDataWithRootObject:_info requiringSecureCoding:NO error:nil] writeToFile:[self path:@"info.dat"] atomically:YES];
     [[NSKeyedArchiver archivedDataWithRootObject:_done requiringSecureCoding:NO error:nil] writeToFile:[self path:@"done.dat"] atomically:YES];
     [[NSKeyedArchiver archivedDataWithRootObject:_doneAlbums requiringSecureCoding:NO error:nil] writeToFile:[self path:@"donealbums.dat"] atomically:YES];
+    [[NSKeyedArchiver archivedDataWithRootObject:_want requiringSecureCoding:NO error:nil] writeToFile:[self path:@"want.dat"] atomically:YES];
+    [[NSKeyedArchiver archivedDataWithRootObject:_pin requiringSecureCoding:NO error:nil] writeToFile:[self path:@"pin.dat"] atomically:YES];
 }
 - (NSArray<ADAlbum *> *)favorites { return _fav; }
 - (NSArray<ADAlbum *> *)history { return _hist; }
@@ -192,6 +200,30 @@ static double ADNum(id o, NSString *k) {
 }
 
 - (void)setPosition:(double)sec for:(NSString *)trackId { if (trackId) _pos[trackId] = @(sec); [self save]; }
+- (NSArray<ADAlbum *> *)wants { return _want; }
+- (BOOL)isWanted:(NSString *)albumId {
+    for (ADAlbum *a in _want) if ([a.albumId isEqualToString:albumId]) return YES;
+    return NO;
+}
+- (void)toggleWant:(ADAlbum *)a {
+    ADAlbum *hit = nil;
+    for (ADAlbum *x in _want) if ([x.albumId isEqualToString:a.albumId]) { hit = x; break; }
+    if (hit) [_want removeObject:hit]; else [_want insertObject:a atIndex:0];
+    [self save];
+}
+- (BOOL)isPinned:(NSString *)albumId { return albumId.length && [_pin containsObject:albumId]; }
+- (void)togglePin:(NSString *)albumId {
+    if (!albumId.length) return;
+    if ([_pin containsObject:albumId]) [_pin removeObject:albumId]; else [_pin addObject:albumId];
+    [self save];
+}
+- (void)removeHistory:(NSString *)albumId {
+    if (!albumId.length) return;
+    for (ADAlbum *x in [_hist copy]) if ([x.albumId isEqualToString:albumId]) [_hist removeObject:x];
+    for (ADAlbum *x in [_fav copy]) if ([x.albumId isEqualToString:albumId]) [_fav removeObject:x];
+    for (ADAlbum *x in [_want copy]) if ([x.albumId isEqualToString:albumId]) [_want removeObject:x];
+    [self save];
+}
 - (NSString *)lastTrackOf:(NSString *)albumId { return albumId ? _last[albumId] : nil; }
 - (NSDictionary *)lastInfoOf:(NSString *)albumId {
     id v = albumId ? _info[albumId] : nil;

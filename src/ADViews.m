@@ -8,6 +8,7 @@
 @property (nonatomic, strong) NSDictionary *info;
 @property (nonatomic, copy) void (^onPlay)(void);
 @property (nonatomic, copy) void (^onMore)(void);
+@property (nonatomic, copy) void (^onMenu)(void);
 - (instancetype)initWithFrame:(CGRect)f album:(ADAlbum *)a info:(NSDictionary *)info;
 - (void)refresh;
 @end
@@ -55,6 +56,9 @@
         _meta = [ADUtil label:nil size:12 color:[UIColor colorWithWhite:1 alpha:0.5]];
         _meta.frame = CGRectMake(12, 203, w - 24, 15);
         [self addSubview:_ep]; [self addSubview:_title]; [self addSubview:_chapter]; [self addSubview:_meta];
+        UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleLong:)];
+        lp.minimumPressDuration = 0.45;
+        [self addGestureRecognizer:lp];
 
         UIView *pill = [[UIView alloc] initWithFrame:CGRectMake(12, f.size.height - 44, w - 62, 32)];
         pill.backgroundColor = [UIColor colorWithWhite:1 alpha:0.12];
@@ -120,6 +124,9 @@
     [_play setImage:[UIImage systemImageNamed:(playing ? @"pause.fill" : @"play.fill") withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:15 weight:UIImageSymbolWeightSemibold]] forState:UIControlStateNormal];
 }
 
+- (void)handleLong:(UILongPressGestureRecognizer *)g {
+    if (g.state == UIGestureRecognizerStateBegan && self.onMenu) self.onMenu();
+}
 - (void)tapPlay { if (self.onPlay) self.onPlay(); }
 - (void)tapMore { if (self.onMore) self.onMore(); }
 - (void)tapCard {
@@ -395,6 +402,7 @@
             __weak typeof(self) w = self;
             c.onPlay = ^{ [w playCard:a]; };
             c.onMore = ^{ [w moreCard:a]; };
+            c.onMenu = ^{ [w menuCard:a]; };
             [hs addSubview:c];
             [self.cards addObject:c];
         }
@@ -480,6 +488,35 @@
     m.frame = CGRectMake(8, self.view.bounds.size.height - bottom - 58, W - 16, 58);
     if (!m.superview) [self.view addSubview:m];
     [m refresh];
+}
+
+// 继续收听卡片长按菜单
+- (void)menuCard:(ADAlbum *)a {
+    ADStore *st = [ADStore shared];
+    BOOL fav = [st isFavorite:a.albumId];
+    NSArray *opts = @[@"播放", @"加入书架", (fav ? @"取消收藏" : @"收藏"), @"重新获取封面", @"删除记录"];
+    [ADOptionSheet showIn:self title:a.title options:opts destructive:4 choose:^(NSInteger i) {
+        if (i == 0) { [self playCard:a]; }
+        else if (i == 1) { [st touchHistory:a]; [self build]; }
+        else if (i == 2) { [st toggleFavorite:a]; [self build]; }
+        else if (i == 3) { [self refetchCover:a]; }
+        else { [st removeHistory:a.albumId]; [self load]; }
+    }];
+}
+
+- (void)refetchCover:(ADAlbum *)a {
+    // 先删本地封面缓存，再回服务端取一次详情，封面就会重新下载
+    if (a.cover.length) {
+        NSString *p = [NSString stringWithFormat:@"%@/Documents/cache/covers/%lu.jpg", NSHomeDirectory(), (unsigned long)a.cover.hash];
+        [[NSFileManager defaultManager] removeItemAtPath:p error:nil];
+    }
+    __weak typeof(self) w = self;
+    [[ADApi shared] albumDetail:a.albumId done:^(ADAlbum *d, BOOL cached, NSString *err) {
+        __strong typeof(w) self = w; if (!self) return;
+        if (d.cover.length && [d.cover hasPrefix:@"http"]) a.cover = d.cover;
+        [[ADStore shared] save];
+        [self build];
+    }];
 }
 
 - (void)openHistory {
@@ -1090,62 +1127,32 @@
 }
 @end
 
-// ───────────── 书架（列表样式） ─────────────
-@interface ADShelfRow : UITableViewCell
-@property (nonatomic, assign) double progress;
-- (void)fill:(ADAlbum *)a;
+// ───────────── 书架 ─────────────
+// 三种显示方式：0 详细列表 / 1 紧凑列表 / 2 封面墙
+static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, double *prog) {
+    NSDictionary *info = [[ADStore shared] lastInfoOf:a.albumId];
+    NSInteger idx = [info[@"index"] integerValue];
+    NSInteger t = a.trackCount;
+    if (t <= 0) {
+        ADTask *task = [[ADDownloader shared] taskForAlbum:a.albumId];
+        t = (NSInteger)task.tracks.count;
+    }
+    double sec = [info[@"seconds"] doubleValue];
+    double dur = [info[@"duration"] doubleValue];
+    double inner = (dur > 1) ? MIN(1.0, sec / dur) : 0;
+    double p = (t > 0) ? ((double)idx + inner) / (double)t : 0;
+    if (p < 0) p = 0;
+    if (p > 1) p = 1;
+    if (prog) *prog = p;
+    if (total) *total = t;
+    if (listened) *listened = info ? MIN(idx + 1, MAX(t, 1)) : 0;
+}
+
+@interface ADShelfCell : UICollectionViewCell
+- (void)fill:(ADAlbum *)a mode:(NSInteger)mode width:(CGFloat)w;
 @end
 
-@implementation ADShelfRow {
-    UIImageView *_cover;
-    UIView *_bar, *_fill;
-    UILabel *_title, *_pct, *_author, *_cur, *_cnt, *_dlTag, *_favTag;
-}
-
-- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reid {
-    if ((self = [super initWithStyle:style reuseIdentifier:reid])) {
-        self.backgroundColor = UIColor.clearColor;
-        self.selectionStyle = UITableViewCellSelectionStyleNone;
-        _cover = [[UIImageView alloc] init];
-        _cover.layer.cornerRadius = 10;
-        _cover.clipsToBounds = YES;
-        _cover.backgroundColor = [UIColor colorWithWhite:1 alpha:0.06];
-        [self.contentView addSubview:_cover];
-
-        _title = [ADUtil label:@"PingFangSC-Semibold" size:16 color:UIColor.whiteColor];
-        [self.contentView addSubview:_title];
-
-        _pct = [ADUtil label:nil size:13 color:[UIColor colorWithWhite:1 alpha:0.9]];
-        _pct.textAlignment = NSTextAlignmentRight;
-        [self.contentView addSubview:_pct];
-
-        _author = [ADUtil label:nil size:12 color:[ADUtil dim]];
-        [self.contentView addSubview:_author];
-
-        _cur = [ADUtil label:nil size:12 color:[ADUtil dim]];
-        [self.contentView addSubview:_cur];
-
-        _bar = [UIView new];
-        _bar.backgroundColor = [UIColor colorWithWhite:1 alpha:0.16];
-        _bar.layer.cornerRadius = 2;
-        [self.contentView addSubview:_bar];
-
-        _fill = [UIView new];
-        _fill.backgroundColor = [UIColor colorWithWhite:1 alpha:0.95];
-        _fill.layer.cornerRadius = 2;
-        [_bar addSubview:_fill];
-
-        _cnt = [ADUtil label:nil size:11 color:[ADUtil dim]];
-        _cnt.textAlignment = NSTextAlignmentRight;
-        [self.contentView addSubview:_cnt];
-
-        _dlTag = [self pill:@"已下载"];
-        _favTag = [self pill:@"收藏"];
-        [self.contentView addSubview:_dlTag];
-        [self.contentView addSubview:_favTag];
-    }
-    return self;
-}
+@implementation ADShelfCell
 
 - (UILabel *)pill:(NSString *)t {
     UILabel *l = [ADUtil label:nil size:11 color:[UIColor colorWithWhite:1 alpha:0.8]];
@@ -1157,68 +1164,121 @@
     return l;
 }
 
-- (void)layoutSubviews {
-    [super layoutSubviews];
-    CGFloat W = self.contentView.bounds.size.width;
-    _cover.frame = CGRectMake(16, 12, 76, 76);
-    _title.frame = CGRectMake(104, 10, W - 104 - 70, 22);
-    _pct.frame = CGRectMake(W - 66, 10, 50, 22);
-    _author.frame = CGRectMake(104, 33, W - 128, 17);
-    _cur.frame = CGRectMake(104, 52, W - 124, 17);
-    _bar.frame = CGRectMake(104, 76, W - 120, 4);
-    _fill.frame = CGRectMake(0, 0, _bar.bounds.size.width * self.progress, 4);
-    _cnt.frame = CGRectMake(W - 216, 85, 200, 16);
-    CGFloat x = 104;
-    for (UILabel *l in @[_dlTag, _favTag]) {
-        if (l.hidden) continue;
-        CGSize sz = [l.text sizeWithAttributes:@{NSFontAttributeName: l.font}];
-        l.frame = CGRectMake(x, 105, sz.width + 20, 20);
-        x += sz.width + 20 + 8;
-    }
+- (void)pill:(UILabel *)l at:(CGFloat *)x y:(CGFloat)y {
+    if (l.hidden) return;
+    CGSize sz = [l.text sizeWithAttributes:@{NSFontAttributeName: l.font}];
+    l.frame = CGRectMake(*x, y, sz.width + 20, 20);
+    *x += sz.width + 20 + 8;
 }
 
-- (void)fill:(ADAlbum *)a {
-    [ADUtil cover:_cover url:a.cover];
-    _title.text = a.title;
-    _author.text = a.anchor.length ? a.anchor : (a.author.length ? a.author : @"");
+- (void)fill:(ADAlbum *)a mode:(NSInteger)mode width:(CGFloat)w {
+    [self.contentView.subviews makeObjectsPerformSelector:@selector(removeFromSuperview)];
+    self.contentView.backgroundColor = UIColor.clearColor;
+
+    NSInteger listened = 0, total = 0;
+    double prog = 0;
+    ADAlbumProgress(a, &listened, &total, &prog);
+
+    if (mode == 2) {
+        // 封面墙
+        UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, w, w)];
+        iv.layer.cornerRadius = 12;
+        iv.clipsToBounds = YES;
+        iv.backgroundColor = [UIColor colorWithWhite:1 alpha:0.06];
+        [ADUtil cover:iv url:a.cover];
+        [self.contentView addSubview:iv];
+
+        UILabel *t = [ADUtil label:nil size:12 color:[UIColor colorWithWhite:1 alpha:0.85]];
+        t.frame = CGRectMake(0, w + 6, w, 32);
+        t.numberOfLines = 2;
+        t.text = a.title;
+        [self.contentView addSubview:t];
+
+        if ([[ADStore shared] isAlbumDone:a.albumId]) {
+            UILabel *b = [self pill:@"已听完"];
+            b.frame = CGRectMake(w - 52, 6, 46, 18);
+            [self.contentView addSubview:b];
+        } else if ([[ADStore shared] isPinned:a.albumId]) {
+            UILabel *b = [self pill:@"置顶"];
+            b.frame = CGRectMake(w - 46, 6, 40, 18);
+            [self.contentView addSubview:b];
+        }
+        return;
+    }
+
+    BOOL compact = (mode == 1);
+    CGFloat coverSide = compact ? 48 : 76;
+    CGFloat coverY = compact ? 14 : 12;
+    CGFloat tx = compact ? 76 : 104;
+
+    UIImageView *cv = [[UIImageView alloc] initWithFrame:CGRectMake(16, coverY, coverSide, coverSide)];
+    cv.layer.cornerRadius = compact ? 8 : 10;
+    cv.clipsToBounds = YES;
+    cv.backgroundColor = [UIColor colorWithWhite:1 alpha:0.06];
+    [ADUtil cover:cv url:a.cover];
+    [self.contentView addSubview:cv];
+
+    UILabel *pct = [ADUtil label:nil size:compact ? 12 : 13 color:(prog >= 1 ? [ADUtil brand] : [UIColor colorWithWhite:1 alpha:0.9])];
+    pct.textAlignment = NSTextAlignmentRight;
+    pct.frame = CGRectMake(w - 66, coverY - 2, 50, 20);
+    pct.text = [NSString stringWithFormat:@"%ld%%", (long)lround(prog * 100.0)];
+    [self.contentView addSubview:pct];
+
+    UILabel *title = [ADUtil label:@"PingFangSC-Semibold" size:compact ? 15 : 16 color:UIColor.whiteColor];
+    title.frame = CGRectMake(tx, coverY - 2, w - tx - 70, 22);
+    title.text = a.title;
+    [self.contentView addSubview:title];
+
+    UILabel *author = [ADUtil label:nil size:12 color:[ADUtil dim]];
+    author.frame = CGRectMake(tx, coverY + 21, w - tx - 24, 17);
+    author.text = a.anchor.length ? a.anchor : (a.author.length ? a.author : @"");
+    [self.contentView addSubview:author];
 
     NSDictionary *info = [[ADStore shared] lastInfoOf:a.albumId];
-    NSInteger idx = [info[@"index"] integerValue];
-    NSInteger total = a.trackCount;
-    if (total <= 0) {
-        ADTask *t = [[ADDownloader shared] taskForAlbum:a.albumId];
-        total = (NSInteger)t.tracks.count;
-    }
-    double sec = [info[@"seconds"] doubleValue];
-    double dur = [info[@"duration"] doubleValue];
-    double inner = (dur > 1) ? MIN(1.0, sec / dur) : 0;
-    double prog = (total > 0) ? ((double)idx + inner) / (double)total : 0;
-    if (prog < 0) prog = 0;
-    if (prog > 1) prog = 1;
-    self.progress = prog;
+    UILabel *cur = [ADUtil label:nil size:12 color:[ADUtil dim]];
+    cur.frame = CGRectMake(tx, coverY + 40, w - tx - 24, 17);
+    cur.text = info ? [NSString stringWithFormat:@"当前：%@", info[@"title"] ?: @"—"] : @"还没开始听";
+    [self.contentView addSubview:cur];
 
-    _cur.text = info ? [NSString stringWithFormat:@"当前：%@", info[@"title"] ?: @"—"] : @"还没开始听";
-    _pct.text = [NSString stringWithFormat:@"%ld%%", (long)lround(prog * 100.0)];
-    if (total > 0) {
-        NSInteger listened = MIN(idx + 1, total);
-        if (prog <= 0.0001) listened = 0;
-        _cnt.text = [NSString stringWithFormat:@"已听 %ld/%ld 章", (long)listened, (long)total];
-    } else {
-        _cnt.text = @"";
-    }
-    _pct.textColor = prog >= 1 ? [ADUtil brand] : [UIColor colorWithWhite:1 alpha:0.9];
+    CGFloat by = coverY + coverSide + 2;
+    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(tx, by, w - tx - 20, 4)];
+    bar.backgroundColor = [UIColor colorWithWhite:1 alpha:0.16];
+    bar.layer.cornerRadius = 2;
+    [self.contentView addSubview:bar];
+    UIView *fill = [[UIView alloc] initWithFrame:CGRectMake(0, 0, bar.bounds.size.width * prog, 4)];
+    fill.backgroundColor = [UIColor colorWithWhite:1 alpha:0.95];
+    fill.layer.cornerRadius = 2;
+    [bar addSubview:fill];
 
-    ADTask *task = [[ADDownloader shared] taskForAlbum:a.albumId];
-    _dlTag.hidden = !(task && task.done > 0);
-    _favTag.hidden = ![[ADStore shared] isFavorite:a.albumId];
-    [self setNeedsLayout];
+    UILabel *cnt = [ADUtil label:nil size:11 color:[ADUtil dim]];
+    cnt.textAlignment = NSTextAlignmentRight;
+    cnt.frame = CGRectMake(w - 216, by + 8, 196, 16);
+    cnt.text = total > 0 ? [NSString stringWithFormat:@"已听 %ld/%ld 章", (long)listened, (long)total] : @"";
+    [self.contentView addSubview:cnt];
+
+    if (!compact) {
+        ADTask *task = [[ADDownloader shared] taskForAlbum:a.albumId];
+        UILabel *dl = [self pill:@"已下载"];
+        dl.hidden = !(task && task.done > 0);
+        UILabel *fav = [self pill:@"收藏"];
+        fav.hidden = ![[ADStore shared] isFavorite:a.albumId];
+        UILabel *pin = [self pill:@"置顶"];
+        pin.hidden = ![[ADStore shared] isPinned:a.albumId];
+        CGFloat x = 104;
+        for (UILabel *l in @[dl, fav, pin]) {
+            [self.contentView addSubview:l];
+            [self pill:l at:&x y:by + 26];
+        }
+    }
 }
 @end
 
-@interface ADShelfController () <UITableViewDataSource, UITableViewDelegate>
-@property (nonatomic, strong) UITableView *table;
+@interface ADShelfController () <UICollectionViewDataSource, UICollectionViewDelegate>
+@property (nonatomic, strong) UICollectionView *cv;
+@property (nonatomic, strong) UICollectionViewFlowLayout *lo;
 @property (nonatomic, strong) NSArray *items;
 @property (nonatomic, strong) UILabel *hint, *countLabel;
+@property (nonatomic, assign) NSInteger mode, filter;
 @end
 
 @implementation ADShelfController
@@ -1227,6 +1287,8 @@
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor colorWithRed:0.043 green:0.035 blue:0.035 alpha:1];
     self.navigationController.navigationBar.hidden = YES;
+    self.mode = 0;
+    self.filter = 0;
 
     UILabel *t = [ADUtil label:@"PingFangSC-Semibold" size:34 color:UIColor.whiteColor];
     t.text = @"书架";
@@ -1241,46 +1303,127 @@
     gear.layer.cornerRadius = 22;
     gear.tag = 98;
     gear.tintColor = UIColor.whiteColor;
-    [gear setImage:[UIImage systemImageNamed:@"gearshape" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
-    [gear addTarget:self action:@selector(goSettings) forControlEvents:UIControlEventTouchUpInside];
+    [gear setImage:[UIImage systemImageNamed:@"line.3.horizontal" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
+    [gear addTarget:self action:@selector(showShelfMenu) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:gear];
 
-    self.table = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStylePlain];
-    self.table.backgroundColor = UIColor.clearColor;
-    self.table.separatorColor = [UIColor colorWithWhite:1 alpha:0.08];
-    self.table.separatorInset = UIEdgeInsetsMake(0, 104, 0, 0);
-    self.table.rowHeight = 128;
-    self.table.contentInset = UIEdgeInsetsMake(6, 0, 120, 0);
-    self.table.dataSource = self;
-    self.table.delegate = self;
-    self.table.tableFooterView = [UIView new];
-    self.table.refreshControl = [[UIRefreshControl alloc] init];
-    self.table.refreshControl.tintColor = [UIColor colorWithWhite:1 alpha:0.5];
-    [self.table.refreshControl addTarget:self action:@selector(pullRefresh) forControlEvents:UIControlEventValueChanged];
-    [self.view addSubview:self.table];
+    self.lo = [UICollectionViewFlowLayout new];
+    self.lo.minimumInteritemSpacing = 12;
+    self.lo.minimumLineSpacing = 0;
+    self.lo.sectionInset = UIEdgeInsetsZero;
+    self.cv = [[UICollectionView alloc] initWithFrame:self.view.bounds collectionViewLayout:self.lo];
+    self.cv.backgroundColor = UIColor.clearColor;
+    self.cv.dataSource = self;
+    self.cv.delegate = self;
+    [self.cv registerClass:ADShelfCell.class forCellWithReuseIdentifier:@"shelf"];
+    self.cv.refreshControl = [[UIRefreshControl alloc] init];
+    self.cv.refreshControl.tintColor = [UIColor colorWithWhite:1 alpha:0.5];
+    [self.cv.refreshControl addTarget:self action:@selector(pullRefresh) forControlEvents:UIControlEventValueChanged];
+    UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(longPress:)];
+    lp.minimumPressDuration = 0.45;
+    [self.cv addGestureRecognizer:lp];
+    [self.view addSubview:self.cv];
 
     self.hint = [ADUtil label:nil size:14 color:[UIColor colorWithWhite:1 alpha:0.5]];
     self.hint.textAlignment = NSTextAlignmentCenter;
     self.hint.numberOfLines = 0;
-    self.hint.text = @"还没有收藏和收听记录\n在专辑页点右上角收藏";
     [self.view addSubview:self.hint];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     self.navigationController.navigationBar.hidden = YES;
-    NSMutableArray *arr = [NSMutableArray array];
-    for (ADAlbum *a in [ADStore shared].favorites) [arr addObject:a];
-    for (ADAlbum *a in [ADStore shared].history) {
-        BOOL dup = NO;
-        for (ADAlbum *b in arr) if ([b.albumId isEqualToString:a.albumId]) { dup = YES; break; }
-        if (!dup) [arr addObject:a];
-    }
-    self.items = arr;
-    self.hint.hidden = arr.count > 0;
-    self.countLabel.text = arr.count ? [NSString stringWithFormat:@"%ld 本", (long)arr.count] : @"";
-    [self.table reloadData];
+    [self reloadData];
     [self layoutChrome];
+}
+
+- (void)applyLayout {
+    CGFloat W = self.view.bounds.size.width;
+    if (self.mode == 2) {
+        CGFloat w = (W - 16 * 2 - 12 * 2) / 3;
+        self.lo.itemSize = CGSizeMake(w, w + 42);
+        self.lo.minimumInteritemSpacing = 12;
+        self.lo.minimumLineSpacing = 16;
+        self.lo.sectionInset = UIEdgeInsetsMake(8, 16, 0, 16);
+        self.cv.contentInset = UIEdgeInsetsMake(0, 0, 130, 0);
+    } else if (self.mode == 1) {
+        self.lo.itemSize = CGSizeMake(W, 76);
+        self.lo.minimumInteritemSpacing = 0;
+        self.lo.minimumLineSpacing = 0;
+        self.lo.sectionInset = UIEdgeInsetsZero;
+        self.cv.contentInset = UIEdgeInsetsMake(6, 0, 130, 0);
+    } else {
+        self.lo.itemSize = CGSizeMake(W, 132);
+        self.lo.minimumInteritemSpacing = 0;
+        self.lo.minimumLineSpacing = 0;
+        self.lo.sectionInset = UIEdgeInsetsZero;
+        self.cv.contentInset = UIEdgeInsetsMake(6, 0, 130, 0);
+    }
+    [self.lo invalidateLayout];
+}
+
+- (NSArray<ADAlbum *> *)buildItems {
+    NSMutableArray *arr = [NSMutableArray array];
+    NSMutableSet *seen = [NSMutableSet set];
+    void (^add)(ADAlbum *) = ^(ADAlbum *a) {
+        if (!a.albumId.length || [seen containsObject:a.albumId]) return;
+        [seen addObject:a.albumId];
+        [arr addObject:a];
+    };
+    ADStore *st = [ADStore shared];
+    if (self.filter == 1) {
+        for (ADAlbum *a in st.favorites) add(a);
+    } else if (self.filter == 2) {
+        for (ADAlbum *a in st.wants) add(a);
+    } else if (self.filter == 3) {
+        for (ADAlbum *a in st.favorites) if ([st isPinned:a.albumId]) add(a);
+        for (ADAlbum *a in st.history) if ([st isPinned:a.albumId]) add(a);
+    } else if (self.filter == 4) {
+        for (ADTask *t in [ADDownloader shared].tasks) {
+            if (t.done <= 0) continue;
+            ADAlbum *a = [ADAlbum new];
+            a.albumId = t.albumId;
+            a.title = t.title.length ? t.title : t.albumId;
+            a.cover = t.cover;
+            a.anchor = t.anchor;
+            a.trackCount = (NSInteger)t.tracks.count;
+            add(a);
+        }
+    } else if (self.filter == 5) {
+        for (ADAlbum *a in st.history) add(a);
+    } else {
+        for (ADAlbum *a in st.favorites) add(a);
+        for (ADAlbum *a in st.history) add(a);
+    }
+    // 置顶的排最前
+    [arr sortUsingComparator:^NSComparisonResult(ADAlbum *x, ADAlbum *y) {
+        BOOL px = [st isPinned:x.albumId], py = [st isPinned:y.albumId];
+        if (px == py) return NSOrderedSame;
+        return px ? NSOrderedAscending : NSOrderedDescending;
+    }];
+    return arr;
+}
+
+- (void)reloadData {
+    self.items = [self buildItems];
+    self.hint.hidden = self.items.count > 0;
+    static NSArray *names = nil;
+    static NSArray *emptyHint = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        names = @[@"全部", @"收藏", @"想听", @"置顶", @"已下载", @"最近播放"];
+        emptyHint = @[@"还没有收藏和收听记录\n在专辑页点右上角收藏",
+                      @"还没有收藏\n在专辑页点右上角 ♡",
+                      @"想听是空的\n长按书架里的书可以加入想听",
+                      @"还没有置顶\n长按一本书 → 置顶",
+                      @"还没有下载\n在专辑页点「缓存到本机」",
+                      @"还没有收听记录"];
+    });
+    if (self.items.count) self.hint.text = @"";
+    else self.hint.text = emptyHint[self.filter];
+    self.countLabel.text = [NSString stringWithFormat:@"%ld 本 · %@", (long)self.items.count, names[self.filter]];
+    [self applyLayout];
+    [self.cv reloadData];
 }
 
 - (void)layoutChrome {
@@ -1288,11 +1431,12 @@
     UILabel *t = [self.view viewWithTag:99];
     t.frame = CGRectMake(16, top - 4, 120, 42);
     CGSize sz = [t.text sizeWithAttributes:@{NSFontAttributeName: t.font}];
-    self.countLabel.frame = CGRectMake(20 + sz.width, top + 14, 100, 22);
+    self.countLabel.frame = CGRectMake(20 + sz.width, top + 14, 240, 22);
     UIButton *gear = (UIButton *)[self.view viewWithTag:98];
     gear.frame = CGRectMake(self.view.bounds.size.width - 60, top + 4, 44, 44);
-    self.table.frame = CGRectMake(0, top + 46, self.view.bounds.size.width, self.view.bounds.size.height - top - 46);
+    self.cv.frame = CGRectMake(0, top + 46, self.view.bounds.size.width, self.view.bounds.size.height - top - 46);
     self.hint.frame = CGRectMake(30, self.view.bounds.size.height / 2 - 60, self.view.bounds.size.width - 60, 60);
+    [self applyLayout];
 }
 
 - (void)viewWillLayoutSubviews {
@@ -1310,8 +1454,8 @@
 }
 
 - (void)pullRefresh {
-    [self.table.refreshControl endRefreshing];
-    [self viewWillAppear:NO];
+    [self.cv.refreshControl endRefreshing];
+    [self reloadData];
 }
 
 - (void)goSettings {
@@ -1320,19 +1464,92 @@
     [self presentViewController:nav animated:YES completion:nil];
 }
 
-- (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { return self.items.count; }
+- (void)showShelfMenu {
+    static NSArray *names = nil;
+    static NSArray *modes = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        names = @[@"全部", @"收藏", @"想听", @"置顶", @"已下载", @"最近播放"];
+        modes = @[@"详细列表", @"紧凑列表", @"封面墙"];
+    });
+    NSString *f = [NSString stringWithFormat:@"分类：%@", names[self.filter]];
+    NSString *m = [NSString stringWithFormat:@"显示方式：%@", modes[self.mode]];
+    [ADOptionSheet showIn:self title:@"书架" options:@[f, m, @"刷新书架", @"设置"] destructive:-1 choose:^(NSInteger i) {
+        if (i == 0) [self pickFilter];
+        else if (i == 1) [self pickMode];
+        else if (i == 2) [self reloadData];
+        else [self goSettings];
+    }];
+}
 
-- (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {
-    ADShelfRow *c = [t dequeueReusableCellWithIdentifier:@"shelf"];
-    if (!c) c = [[ADShelfRow alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"shelf"];
-    [c fill:self.items[ip.row]];
+- (void)pickFilter {
+    NSArray *names = @[@"全部", @"收藏", @"想听", @"置顶", @"已下载", @"最近播放"];
+    NSMutableArray *opts = [NSMutableArray array];
+    for (NSInteger i = 0; i < (NSInteger)names.count; i++)
+        [opts addObject:[NSString stringWithFormat:@"%@%@", names[i], (i == self.filter ? @"  ✓" : @"")]];
+    [ADOptionSheet showIn:self title:@"分类" options:opts destructive:-1 choose:^(NSInteger i) {
+        self.filter = i;
+        [self reloadData];
+    }];
+}
+
+- (void)pickMode {
+    NSArray *modes = @[@"详细列表", @"紧凑列表", @"封面墙"];
+    NSMutableArray *opts = [NSMutableArray array];
+    for (NSInteger i = 0; i < (NSInteger)modes.count; i++)
+        [opts addObject:[NSString stringWithFormat:@"%@%@", modes[i], (i == self.mode ? @"  ✓" : @"")]];
+    [ADOptionSheet showIn:self title:@"显示方式" options:opts destructive:-1 choose:^(NSInteger i) {
+        self.mode = i;
+        [self reloadData];
+    }];
+}
+
+- (void)longPress:(UILongPressGestureRecognizer *)g {
+    if (g.state != UIGestureRecognizerStateBegan) return;
+    CGPoint p = [g locationInView:self.cv];
+    NSIndexPath *ip = [self.cv indexPathForItemAtPoint:p];
+    if (!ip || ip.item >= (NSInteger)self.items.count) return;
+    ADAlbum *a = self.items[ip.item];
+    [self menuFor:a];
+}
+
+- (void)menuFor:(ADAlbum *)a {
+    ADStore *st = [ADStore shared];
+    BOOL fav = [st isFavorite:a.albumId];
+    BOOL want = [st isWanted:a.albumId];
+    BOOL pin = [st isPinned:a.albumId];
+    ADTask *task = [[ADDownloader shared] taskForAlbum:a.albumId];
+    NSMutableArray *opts = [NSMutableArray array];
+    [opts addObject:(fav ? @"取消收藏" : @"收藏")];
+    [opts addObject:(want ? @"取消想听" : @"加入想听")];
+    [opts addObject:@"删除下载"];
+    [opts addObject:(pin ? @"取消置顶" : @"置顶")];
+    [opts addObject:@"从书架移除"];
+    NSInteger dl = 2, del = 4;
+    if (!task || task.done <= 0) opts[dl] = @"删除下载（未下载）";
+    [ADOptionSheet showIn:self title:a.title options:opts destructive:del choose:^(NSInteger i) {
+        if (i == 0) [st toggleFavorite:a];
+        else if (i == 1) [st toggleWant:a];
+        else if (i == dl) {
+            if (task && task.done > 0) [[ADDownloader shared] deleteTask:task];
+        }
+        else if (i == 3) [st togglePin:a.albumId];
+        else [st removeHistory:a.albumId];
+        [self reloadData];
+    }];
+}
+
+- (NSInteger)collectionView:(UICollectionView *)cv numberOfItemsInSection:(NSInteger)s { return self.items.count; }
+
+- (UICollectionViewCell *)collectionView:(UICollectionView *)cv cellForItemAtIndexPath:(NSIndexPath *)ip {
+    ADShelfCell *c = [cv dequeueReusableCellWithReuseIdentifier:@"shelf" forIndexPath:ip];
+    [c fill:self.items[ip.item] mode:self.mode width:self.lo.itemSize.width];
     return c;
 }
 
-- (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
-    [t deselectRowAtIndexPath:ip animated:YES];
+- (void)collectionView:(UICollectionView *)cv didSelectItemAtIndexPath:(NSIndexPath *)ip {
     ADAlbumController *vc = [ADAlbumController new];
-    vc.album = self.items[ip.row];
+    vc.album = self.items[ip.item];
     [self.navigationController pushViewController:vc animated:YES];
 }
 @end

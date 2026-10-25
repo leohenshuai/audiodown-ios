@@ -1083,15 +1083,22 @@
     [rateBtn setTitle:[NSString stringWithFormat:@"%.2gx", p.rate] forState:UIControlStateNormal];
     UIButton *sleepBtn = (UIButton *)[self.view viewWithTag:302];
     if (p.stopAfterChapter) {
+        [sleepBtn setTitle:@"" forState:UIControlStateNormal];
         [sleepBtn setImage:[UIImage systemImageNamed:@"moon.zzz.fill"] forState:UIControlStateNormal];
         sleepBtn.tintColor = [ADUtil brand];
         self.mid.text = [NSString stringWithFormat:@"%@ · 本集播完停", self.mid.text ?: @""];
     } else if (p.sleepDeadline > 0) {
         double left = p.sleepDeadline - [NSDate date].timeIntervalSince1970;
-        [sleepBtn setImage:[UIImage systemImageNamed:@"moon.zzz.fill"] forState:UIControlStateNormal];
+        // 开了定时就把按钮直接换成剩余时间（和听见有声一致）
+        [sleepBtn setImage:nil forState:UIControlStateNormal];
+        [sleepBtn setTitle:[ADUtil time:MAX(0, left)] forState:UIControlStateNormal];
+        sleepBtn.titleLabel.font = [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightMedium];
+        [sleepBtn setTitleColor:[ADUtil brand] forState:UIControlStateNormal];
         sleepBtn.tintColor = [ADUtil brand];
         self.mid.text = [NSString stringWithFormat:@"%@ · %@后停", self.mid.text ?: @"", [ADUtil time:left]];
     } else {
+        [sleepBtn setTitle:@"" forState:UIControlStateNormal];
+        [sleepBtn setImage:[UIImage systemImageNamed:@"moon.zzz.fill"] forState:UIControlStateNormal];
         sleepBtn.tintColor = UIColor.whiteColor;
     }
     BOOL fav = [[ADStore shared] isFavorite:p.album.albumId];
