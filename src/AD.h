@@ -58,6 +58,16 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)save;
 @end
 
+// ───────────────── 触感 / 提示音 ─────────────────
+@interface ADHaptic : NSObject
++ (void)tap;        // 轻点：按钮、行、卡片
++ (void)select;     // 选择：分段、分类、菜单项
++ (void)soft;       // 滑动、拖动结束
++ (void)success;    // 收藏、下载完成、保存成功
++ (void)warning;
++ (void)error;
+@end
+
 // ───────────────── 网络 ─────────────────
 typedef void (^ADErr)(NSString * _Nullable err);
 @interface ADApi : NSObject

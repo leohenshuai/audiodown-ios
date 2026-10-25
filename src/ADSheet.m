@@ -85,6 +85,7 @@ static ADSheetView *gSheet;
 
 - (void)tapRow:(UIButton *)b {
     NSInteger i = b.tag;
+    [ADHaptic select];
     void (^cb)(NSInteger) = self.onChoose;
     [self close];
     if (cb) cb(i);

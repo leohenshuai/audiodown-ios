@@ -1,6 +1,6 @@
 #import "AD.h"
 
-@interface AppDelegate : UIResponder <UIApplicationDelegate>
+@interface AppDelegate : UIResponder <UIApplicationDelegate, UITabBarControllerDelegate>
 @property (nonatomic, strong) UIWindow *window;
 @end
 
@@ -10,7 +10,9 @@
     [[NSUserDefaults standardUserDefaults] registerDefaults:@{@"ad_prefetch": @NO,
                                                             @"ad_prefetch_wifi": @YES,
                                                             @"ad_prefetch_count": @2,
-                                                            @"ad_prefetch_days": @3}];
+                                                            @"ad_prefetch_days": @3,
+                                                            @"ad_haptic": @YES,
+                                                            @"ad_sound": @YES}];
     self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
 
     UINavigationController *d = [[UINavigationController alloc] initWithRootViewController:[ADDiscoverController new]];
@@ -34,11 +36,19 @@
     s.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"搜索" image:[UIImage systemImageNamed:@"magnifyingglass"] tag:1];
     b.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"书架" image:[UIImage systemImageNamed:@"books.vertical"] tag:2];
 
+    tab.delegate = self;
     self.window.rootViewController = tab;
     self.window.backgroundColor = [ADUtil bg];
     [self.window makeKeyAndVisible];
     NSLog(@"[AD] launched");
     return YES;
+}
+
+- (void)tabBarController:(UITabBarController *)c didSelectViewController:(UIViewController *)v {
+    static NSInteger last = 0;
+    if (c.selectedIndex == last) return;
+    last = c.selectedIndex;
+    [ADHaptic select];
 }
 
 - (void)applicationDidEnterBackground:(UIApplication *)app { [[ADStore shared] save]; }

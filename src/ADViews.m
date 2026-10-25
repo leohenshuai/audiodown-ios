@@ -127,9 +127,10 @@
 - (void)handleLong:(UILongPressGestureRecognizer *)g {
     if (g.state == UIGestureRecognizerStateBegan && self.onMenu) self.onMenu();
 }
-- (void)tapPlay { if (self.onPlay) self.onPlay(); }
-- (void)tapMore { if (self.onMore) self.onMore(); }
+- (void)tapPlay { [ADHaptic tap]; if (self.onPlay) self.onPlay(); }
+- (void)tapMore { [ADHaptic tap]; if (self.onMore) self.onMore(); }
 - (void)tapCard {
+    [ADHaptic tap];
     UIWindow *win = UIApplication.sharedApplication.windows.firstObject;
     UIViewController *top = win.rootViewController;
     while (top.presentedViewController) top = top.presentedViewController;
@@ -250,9 +251,10 @@
     CGFloat full = self.bounds.size.width;
     _fill.frame = CGRectMake(0, self.bounds.size.height - 2, (dur > 0 && !isnan(dur)) ? full * cur / dur : 0, 2);
 }
-- (void)tapPlay { [ADPlayer.shared toggle]; [self refresh]; }
+- (void)tapPlay { [ADHaptic tap]; [ADPlayer.shared toggle]; [self refresh]; }
 - (void)tapBack { [ADPlayer.shared seekBy:-15]; }
 - (void)tapBar {
+    [ADHaptic tap];
     UIWindow *win = UIApplication.sharedApplication.windows.firstObject;
     UIViewController *top = win.rootViewController;
     while (top.presentedViewController) top = top.presentedViewController;
@@ -520,10 +522,12 @@
 }
 
 - (void)openHistory {
+    [ADHaptic tap];
     [self.navigationController pushViewController:[ADHistoryController new] animated:YES];
 }
 
 - (void)openDownloads {
+    [ADHaptic tap];
     [self.navigationController pushViewController:[ADDownloadsController new] animated:YES];
 }
 
@@ -770,6 +774,7 @@
 }
 
 - (void)tapChip:(UIButton *)b {
+    [ADHaptic select];
     self.catIndex = b.tag - 100;
     [self paintChips];
     [self.cv reloadData];
@@ -974,6 +979,7 @@
 }
 
 - (void)tapWord:(UIButton *)b {
+    [ADHaptic tap];
     NSInteger tag = b.tag;
     NSString *word = nil;
     if (tag >= 2000 && tag < 3000) {
@@ -988,6 +994,7 @@
 }
 
 - (void)tapRec:(UIButton *)b {
+    [ADHaptic tap];
     NSInteger i = b.tag - 3000;
     if (i < 0 || i >= (NSInteger)self.recs.count) return;
     ADAlbumController *vc = [ADAlbumController new];
@@ -996,6 +1003,7 @@
 }
 
 - (void)startSearch:(NSString *)q {
+    [ADHaptic heavy];
     q = [q stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
     if (!q.length) return;
     self.localMode = NO;
@@ -1121,6 +1129,7 @@
     return cell;
 }
 - (void)collectionView:(UICollectionView *)cv didSelectItemAtIndexPath:(NSIndexPath *)ip {
+    [ADHaptic tap];
     ADAlbumController *vc = [ADAlbumController new];
     vc.album = [self visible][ip.item];
     [self.navigationController pushViewController:vc animated:YES];
@@ -1465,6 +1474,7 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
 }
 
 - (void)showShelfMenu {
+    [ADHaptic tap];
     static NSArray *names = nil;
     static NSArray *modes = nil;
     static dispatch_once_t once;
@@ -1506,6 +1516,7 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
 
 - (void)longPress:(UILongPressGestureRecognizer *)g {
     if (g.state != UIGestureRecognizerStateBegan) return;
+    [ADHaptic heavy];
     CGPoint p = [g locationInView:self.cv];
     NSIndexPath *ip = [self.cv indexPathForItemAtPoint:p];
     if (!ip || ip.item >= (NSInteger)self.items.count) return;
@@ -1535,6 +1546,7 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
         }
         else if (i == 3) [st togglePin:a.albumId];
         else [st removeHistory:a.albumId];
+        if (i == del) [ADHaptic warning]; else [ADHaptic success];
         [self reloadData];
     }];
 }

@@ -175,6 +175,7 @@
 }
 
 - (void)showAlbumMenu {
+    [ADHaptic tap];
     [ADOptionSheet showIn:self title:self.album.title options:@[@"选择剧集下载", @"目录正序", @"目录倒序", @"缓存整本到本机", @"刷新目录", @"目录诊断"] destructive:-1 choose:^(NSInteger i) {
         if (i == 0) [self beginSelecting];
         else if (i == 1) { self.sortDesc = NO; [self.table reloadData]; }
@@ -254,6 +255,7 @@
 }
 
 - (void)tapRange:(UIButton *)b {
+    [ADHaptic select];
     NSInteger start = b.tag - 2000;
     for (UIScrollView *bar in @[self.rangeBar, self.floatBar]) {
         for (UIView *v in bar.subviews) {
@@ -423,6 +425,7 @@
     if (!self.selected.count) return;
     NSMutableArray *arr = [NSMutableArray array];
     for (ADTrack *t in self.tracks) if ([self.selected containsObject:t.trackId]) [arr addObject:t];
+    [ADHaptic success];
     [[ADDownloader shared] addTracks:self.album tracks:arr];
     NSUInteger n = arr.count;
     [self endSelecting];
@@ -435,6 +438,7 @@
 }
 
 - (void)downloadOne:(ADTrack *)t {
+    [ADHaptic tap];
     [[ADDownloader shared] addTracks:self.album tracks:@[t]];
     [self fillHeader];
     UIImpactFeedbackGenerator *g = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
@@ -471,6 +475,7 @@
 }
 
 - (void)toggleFav {
+    [ADHaptic tap];
     [[ADStore shared] toggleFavorite:self.album];
     [self fillHeader];
     UIImpactFeedbackGenerator *g = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
@@ -704,6 +709,7 @@
 }
 
 - (void)playFrom:(NSInteger)index {
+    [ADHaptic tap];
     ADPlayer *p = ADPlayer.shared;
     NSArray *order = [self ordered];
     ADTrack *target = order[index];
@@ -1115,6 +1121,7 @@
 }
 
 - (void)showMore {
+    [ADHaptic tap];
     ADPlayer *p = ADPlayer.shared;
     if (!p.album) return;
     [ADOptionSheet showIn:self title:p.album.title options:@[@"从头播放", @"缓存整本到本机", @"打开专辑（排序 / 选集 / 下载）"] destructive:-1 choose:^(NSInteger i) {
@@ -1139,6 +1146,7 @@
 }
 
 - (void)showRateMenu {
+    [ADHaptic tap];
     NSArray *rates = @[@0.5, @0.75, @1.0, @1.25, @1.5, @1.75, @2.0, @2.5, @3.0];
     NSMutableArray *opts = [NSMutableArray array];
     NSInteger cur = 0;
@@ -1155,6 +1163,7 @@
 }
 
 - (void)showSleepMenu {
+    [ADHaptic tap];
     NSMutableArray *opts = [NSMutableArray arrayWithObjects:@"15 分钟", @"30 分钟", @"45 分钟", @"60 分钟", @"90 分钟", @"自定义时长…", nil];
     NSInteger n = opts.count;
     if (ADPlayer.shared.sleepDeadline > 0) [opts addObject:@"取消定时关闭"];
@@ -1199,12 +1208,12 @@
 
 - (void)sliderBegin { self.dragging = YES; }
 - (void)sliderMoving { self.elapsed.text = [ADUtil time:self.slider.value]; }
-- (void)sliderEnd { self.dragging = NO; [ADPlayer.shared seekTo:self.slider.value]; }
-- (void)toggle { [ADPlayer.shared toggle]; [self sync]; }
-- (void)prev { [ADPlayer.shared prev]; [self sync]; }
-- (void)next { [ADPlayer.shared next]; [self sync]; }
-- (void)back15 { [ADPlayer.shared seekBy:-15]; }
-- (void)fwd15 { [ADPlayer.shared seekBy:15]; }
+- (void)sliderEnd { self.dragging = NO; [ADHaptic soft]; [ADPlayer.shared seekTo:self.slider.value]; }
+- (void)toggle { [ADHaptic tap]; [ADPlayer.shared toggle]; [self sync]; }
+- (void)prev { [ADHaptic tap]; [ADPlayer.shared prev]; [self sync]; }
+- (void)next { [ADHaptic tap]; [ADPlayer.shared next]; [self sync]; }
+- (void)back15 { [ADHaptic tap]; [ADPlayer.shared seekBy:-15]; }
+- (void)fwd15 { [ADHaptic tap]; [ADPlayer.shared seekBy:15]; }
 
 - (void)cycleRateUnused {
     NSArray *rates = @[@0.75, @1.0, @1.25, @1.5, @1.75, @2.0, @2.5, @3.0];
@@ -1461,6 +1470,16 @@
     [NSUserDefaults.standardUserDefaults setBool:sw.on forKey:@"ad_prefetch_wifi"];
 }
 
+- (void)hapticSwitch:(UISwitch *)sw {
+    [NSUserDefaults.standardUserDefaults setBool:sw.on forKey:@"ad_haptic"];
+    if (sw.on) [ADHaptic tap];
+}
+
+- (void)soundSwitch:(UISwitch *)sw {
+    [NSUserDefaults.standardUserDefaults setBool:sw.on forKey:@"ad_sound"];
+    if (sw.on) [ADHaptic tap];
+}
+
 - (void)prefetchStepper:(UIStepper *)st {
     [NSUserDefaults.standardUserDefaults setInteger:(NSInteger)st.value forKey:@"ad_prefetch_count"];
     [self.table reloadData];
@@ -1553,6 +1572,7 @@
 }
 
 - (void)save {
+    [ADHaptic success];
     [ADConfig shared].baseURL = self.baseField.text ?: @"";
     [ADConfig shared].token = self.token ?: @"";
     [[ADConfig shared] save];
@@ -1587,7 +1607,7 @@
 }
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s {
     if (s == 0) return 4;
-    if (s == 2) return 4;
+    if (s == 2) return 6;
     return MAX(1, (NSInteger)[ADDownloader shared].tasks.count) + 1;
 }
 
@@ -1629,6 +1649,24 @@
             st.tintColor = [ADUtil brand];
             [st addTarget:self action:@selector(prefetchStepper:) forControlEvents:UIControlEventValueChanged];
             c.accessoryView = st;
+        } else if (ip.row == 4) {
+            c.textLabel.text = @"触控反馈";
+            c.detailTextLabel.text = @"按钮、卡片、长按都有轻微震动";
+            UISwitch *sw = [[UISwitch alloc] init];
+            id hv = [ud objectForKey:@"ad_haptic"];
+            sw.on = hv ? [ud boolForKey:@"ad_haptic"] : YES;
+            sw.onTintColor = [ADUtil brand];
+            [sw addTarget:self action:@selector(hapticSwitch:) forControlEvents:UIControlEventValueChanged];
+            c.accessoryView = sw;
+        } else if (ip.row == 5) {
+            c.textLabel.text = @"提示音";
+            c.detailTextLabel.text = @"点按和选择时播放系统提示音";
+            UISwitch *sw = [[UISwitch alloc] init];
+            id sv = [ud objectForKey:@"ad_sound"];
+            sw.on = sv ? [ud boolForKey:@"ad_sound"] : YES;
+            sw.onTintColor = [ADUtil brand];
+            [sw addTarget:self action:@selector(soundSwitch:) forControlEvents:UIControlEventValueChanged];
+            c.accessoryView = sw;
         } else if (ip.row == 3) {
             NSInteger days = [ud integerForKey:@"ad_prefetch_days"];
             if (days < 0) days = 3;
