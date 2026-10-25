@@ -164,7 +164,8 @@ static NSString *ADFormEnc(NSString *s) {
 }
 
 - (void)panelTracksOf:(NSString *)albumId page:(NSInteger)page size:(NSInteger)size done:(void (^)(NSArray<ADTrack *> *, NSInteger, NSString *))cb {
-    NSString *path = [NSString stringWithFormat:@"/api/v1/albums/%@/tracks?page=%ld&pageSize=%ld", albumId, (long)page, (long)size];
+    NSString *path = [NSString stringWithFormat:@"/api/v1/albums/%@/tracks?page=%ld&pageSize=%ld&targetChapterIndex=%ld",
+                      albumId, (long)page, (long)size, (long)((page - 1) * size + 1)];
     [self rawGET:path timeout:25 done:^(NSInteger code, NSString *body, NSString *err) {
         if (code != 200) { cb(@[], 0, err.length ? err : [NSString stringWithFormat:@"HTTP %ld", (long)code]); return; }
         id json = [body dataUsingEncoding:NSUTF8StringEncoding] ? [NSJSONSerialization JSONObjectWithData:[body dataUsingEncoding:NSUTF8StringEncoding] options:NSJSONReadingAllowFragments error:nil] : nil;
@@ -288,7 +289,11 @@ static NSInteger ADPickInt(NSDictionary *json, NSArray *keys) {
 }
 
 - (void)tracksViaToken:(NSString *)albumId page:(NSInteger)page size:(NSInteger)size cb:(void (^)(NSArray<ADTrack *> *, NSInteger, BOOL, NSString *))cb {
-    NSString *path = [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=%ld&pageSize=%ld", albumId, (long)page, (long)size];
+    // 关键：必须带 targetChapterIndex。不带时服务端走“整页批量抓取”，VIP/音乐合集类专辑必失败
+    // （lastError: paged 目录未取全）；带上就走“按目标章节定位抓取”，能抓全。
+    NSInteger target = (page - 1) * size + 1;
+    NSString *path = [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=%ld&pageSize=%ld&targetChapterIndex=%ld",
+                      albumId, (long)page, (long)size, (long)target];
     NSString *key = [NSString stringWithFormat:@"tracks:%@:%ld:%ld", albumId, (long)size, (long)page];
     // 目录接口服务端要现场找源，比别的接口慢，给它 30 秒（其它接口仍是 12 秒）
     [self cachedGET:path key:key timeout:30 done:^(id json, BOOL cached, NSString *err) {
