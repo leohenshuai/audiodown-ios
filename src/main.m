@@ -7,6 +7,10 @@
 @implementation AppDelegate
 
 - (BOOL)application:(UIApplication *)app didFinishLaunchingWithOptions:(NSDictionary *)opts {
+    [[NSUserDefaults standardUserDefaults] registerDefaults:@{@"ad_prefetch": @NO,
+                                                            @"ad_prefetch_wifi": @YES,
+                                                            @"ad_prefetch_count": @2,
+                                                            @"ad_prefetch_days": @3}];
     self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
 
     UINavigationController *d = [[UINavigationController alloc] initWithRootViewController:[ADDiscoverController new]];

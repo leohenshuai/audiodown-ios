@@ -976,6 +976,10 @@
     if (sw.on) [ADPlayer.shared prefetchAhead];
 }
 
+- (void)prefetchWifi:(UISwitch *)sw {
+    [NSUserDefaults.standardUserDefaults setBool:sw.on forKey:@"ad_prefetch_wifi"];
+}
+
 - (void)prefetchStepper:(UIStepper *)st {
     [NSUserDefaults.standardUserDefaults setInteger:(NSInteger)st.value forKey:@"ad_prefetch_count"];
     [self.table reloadData];
@@ -1068,7 +1072,7 @@
 }
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s {
     if (s == 0) return 3;
-    if (s == 2) return 3;
+    if (s == 2) return 4;
     return MAX(1, (NSInteger)[ADDownloader shared].tasks.count) + 1;
 }
 
@@ -1095,14 +1099,14 @@
             c.textLabel.text = @"额外预加载后续集数";
             NSInteger n = [ud integerForKey:@"ad_prefetch_count"];
             if (n <= 0) n = 2;
-            c.detailTextLabel.text = [NSString stringWithFormat:@"当前 %ld 集（1–5）", (long)n];
+            c.detailTextLabel.text = [NSString stringWithFormat:@"当前 %ld 集（1–5），越大越占流量", (long)n];
             UIStepper *st = [[UIStepper alloc] init];
             st.minimumValue = 1; st.maximumValue = 5; st.stepValue = 1;
             st.value = n;
             st.tintColor = [ADUtil brand];
             [st addTarget:self action:@selector(prefetchStepper:) forControlEvents:UIControlEventValueChanged];
             c.accessoryView = st;
-        } else {
+        } else if (ip.row == 3) {
             NSInteger days = [ud integerForKey:@"ad_prefetch_days"];
             if (days < 0) days = 3;
             c.textLabel.text = @"自动清理预缓存";
@@ -1181,7 +1185,7 @@
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [t deselectRowAtIndexPath:ip animated:YES];
     if (ip.section == 2) {
-        if (ip.row == 2) {
+        if (ip.row == 3) {
             [ADOptionSheet showIn:self title:@"自动清理预缓存" options:@[@"不清理", @"3 天", @"7 天", @"30 天"] destructive:-1 choose:^(NSInteger i2) {
                 NSArray *v = @[@0, @3, @7, @30];
                 [NSUserDefaults.standardUserDefaults setInteger:[v[i2] integerValue] forKey:@"ad_prefetch_days"];

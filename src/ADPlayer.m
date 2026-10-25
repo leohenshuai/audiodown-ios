@@ -1,4 +1,6 @@
 #import "AD.h"
+#include <ifaddrs.h>
+#include <net/if.h>
 #import <AVFoundation/AVFoundation.h>
 #import <MediaPlayer/MediaPlayer.h>
 
@@ -93,9 +95,23 @@
     }
 }
 
++ (BOOL)isWiFi {
+    struct ifaddrs *addrs = NULL;
+    if (getifaddrs(&addrs) != 0) return NO;
+    BOOL on = NO;
+    for (struct ifaddrs *a = addrs; a; a = a->ifa_next) {
+        if (!a->ifa_addr || a->ifa_addr->sa_family != AF_INET) continue;
+        if (strcmp(a->ifa_name, "en0") == 0) { on = YES; break; }
+    }
+    freeifaddrs(addrs);
+    return on;
+}
+
 - (void)prefetchAhead {
-    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"ad_prefetch"]) return;
-    NSInteger n = [[NSUserDefaults standardUserDefaults] integerForKey:@"ad_prefetch_count"];
+    NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
+    if (![ud boolForKey:@"ad_prefetch"]) return;
+    if ([ud boolForKey:@"ad_prefetch_wifi"] && ![ADPlayer isWiFi]) return;
+    NSInteger n = [ud integerForKey:@"ad_prefetch_count"];
     if (n <= 0) n = 2;
     if (!self.prefetching) self.prefetching = [NSMutableSet set];
     for (NSInteger k = 1; k <= n; k++) {

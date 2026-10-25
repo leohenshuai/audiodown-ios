@@ -100,6 +100,7 @@ typedef NS_ENUM(NSInteger, ADTaskState) {
 @property (nonatomic, assign) float rate;
 @property (nonatomic, assign) double sleepDeadline;
 @property (nonatomic, strong) NSMutableSet *prefetching;
++ (BOOL)isWiFi;
 - (void)prefetchAhead;
 - (void)cleanPrefetch;
 - (NSString *)prefetchPath:(NSString *)trackId;
