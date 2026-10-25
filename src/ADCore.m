@@ -14,11 +14,15 @@ static NSString *ADPref(NSString *k, NSString *d) {
 - (void)load {
     _baseURL = ADPref(@"ad.base", @"https://audio.959935291.xyz:899");
     _token = ADPref(@"ad.token", @"");
+    _username = ADPref(@"ad.user", @"");
+    _password = ADPref(@"ad.pass", @"");
 }
 - (void)save {
     NSUserDefaults *u = NSUserDefaults.standardUserDefaults;
     [u setObject:_baseURL forKey:@"ad.base"];
     [u setObject:_token forKey:@"ad.token"];
+    [u setObject:_username ?: @"" forKey:@"ad.user"];
+    [u setObject:_password ?: @"" forKey:@"ad.pass"];
 }
 - (NSDictionary *)headers {
     NSMutableDictionary *h = [NSMutableDictionary dictionary];

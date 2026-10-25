@@ -8,6 +8,8 @@ NS_ASSUME_NONNULL_BEGIN
 @interface ADConfig : NSObject
 @property (nonatomic, copy) NSString *baseURL;
 @property (nonatomic, copy) NSString *token;
+@property (nonatomic, copy) NSString *username;   // 网页后台账号（可选，用来拿 VIP 专辑的目录）
+@property (nonatomic, copy) NSString *password;
 + (instancetype)shared;
 - (void)save;
 - (NSDictionary *)headers;
@@ -62,6 +64,9 @@ typedef void (^ADErr)(NSString * _Nullable err);
 - (void)playURLOf:(ADTrack *)t done:(void (^)(NSString * _Nullable url, NSDictionary * _Nullable headers, NSString * _Nullable err))cb;
 - (void)downloads:(void (^)(NSArray<NSDictionary *> *items, NSString * _Nullable err))cb;
 - (void)rawGET:(NSString *)path timeout:(NSTimeInterval)timeout done:(void (^)(NSInteger code, NSString *body, NSString * _Nullable err))cb;
+- (BOOL)hasAccount;
+- (void)panelLogin:(void (^)(BOOL ok, NSString * _Nullable err))cb;
+- (void)panelTracksOf:(NSString *)albumId page:(NSInteger)page size:(NSInteger)size done:(void (^)(NSArray<ADTrack *> *list, NSInteger total, NSString * _Nullable err))cb;
 @end
 
 

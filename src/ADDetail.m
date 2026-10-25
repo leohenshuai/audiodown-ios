@@ -357,7 +357,15 @@
         }];
     };
     (void)next;
-    step();
+    if ([[ADApi shared] hasAccount]) {
+        [[ADApi shared] panelLogin:^(BOOL ok, NSString *err) {
+            [out appendFormat:@"### 网页登录 %@ %@\n\n", ok ? @"成功" : @"失败", err ?: @""];
+            step();
+        }];
+    } else {
+        [out appendString:@"### 未填网页账号（只能在 token 接口下试）\n\n"];
+        step();
+    }
 }
 
 - (void)beginSelecting {
@@ -1503,6 +1511,40 @@
     [self presentViewController:a animated:YES completion:nil];
 }
 
+- (void)editAccount {
+    ADConfig *cfg = [ADConfig shared];
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"网页账号"
+                                                               message:@"填服务端网页后台的账号密码。VIP/付费专辑的目录只有登录态才取得到。"
+                                                        preferredStyle:UIAlertControllerStyleAlert];
+    [a addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.text = cfg.username;
+        tf.placeholder = @"用户名";
+        tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        tf.autocorrectionType = UITextAutocorrectionTypeNo;
+    }];
+    [a addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.text = cfg.password;
+        tf.placeholder = @"密码";
+        tf.secureTextEntry = YES;
+    }];
+    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [a addAction:[UIAlertAction actionWithTitle:@"保存并登录" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+        cfg.username = [a.textFields[0].text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] ?: @"";
+        cfg.password = a.textFields[1].text ?: @"";
+        [cfg save];
+        [[NSHTTPCookieStorage sharedHTTPCookieStorage] removeCookiesSinceDate:[NSDate dateWithTimeIntervalSince1970:0]];
+        [[ADApi shared] panelLogin:^(BOOL ok, NSString *err) {
+            UIAlertController *r = [UIAlertController alertControllerWithTitle:(ok ? @"登录成功" : @"登录失败")
+                                                                      message:(ok ? @"现在可以读取 VIP 专辑的目录了" : (err ?: @"请检查账号密码"))
+                                                               preferredStyle:UIAlertControllerStyleAlert];
+            [r addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+            [self presentViewController:r animated:YES completion:nil];
+            [self.table reloadData];
+        }];
+    }]];
+    [self presentViewController:a animated:YES completion:nil];
+}
+
 - (void)save {
     [ADConfig shared].baseURL = self.baseField.text ?: @"";
     [ADConfig shared].token = self.token ?: @"";
@@ -1537,7 +1579,7 @@
     return @"左滑删除或暂停，点击行可暂停/继续；本机下载不占用服务器";
 }
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s {
-    if (s == 0) return 3;
+    if (s == 0) return 4;
     if (s == 2) return 4;
     return MAX(1, (NSInteger)[ADDownloader shared].tasks.count) + 1;
 }
@@ -1625,6 +1667,18 @@
             [eye addTarget:self action:@selector(toggleToken) forControlEvents:UIControlEventTouchUpInside];
             [c.contentView addSubview:eye];
             c.selectionStyle = UITableViewCellSelectionStyleDefault;
+        } else if (ip.row == 2) {
+            c.textLabel.text = @"网页账号";
+            ADConfig *cfg = [ADConfig shared];
+            if (cfg.username.length) {
+                c.detailTextLabel.text = [NSString stringWithFormat:@"%@ · 用于读取 VIP 专辑目录", cfg.username];
+                c.textLabel.textColor = UIColor.whiteColor;
+            } else {
+                c.detailTextLabel.text = @"可选：填了才能取 VIP/付费专辑的目录";
+                c.textLabel.textColor = UIColor.whiteColor;
+            }
+            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            c.selectionStyle = UITableViewCellSelectionStyleDefault;
         } else {
             c.textLabel.text = @"测试连接";
             c.textLabel.textColor = [ADUtil brand];
@@ -1673,6 +1727,7 @@
     if (ip.section == 0) {
         if (ip.row == 0) [self.baseField becomeFirstResponder];
         else if (ip.row == 1) [self editToken];
+        else if (ip.row == 2) [self editAccount];
         else [self save];
         return;
     }

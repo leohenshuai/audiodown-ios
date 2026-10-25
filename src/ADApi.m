@@ -35,6 +35,7 @@ static void ADCacheSet(NSString *key, id json) {
 @property (nonatomic, strong) NSURLSession *session;
 - (void)JSON:(NSString *)path method:(NSString *)method body:(id)body timeout:(NSTimeInterval)timeout done:(void (^)(id json, NSString *err))cb;
 - (void)cachedGET:(NSString *)path key:(NSString *)key timeout:(NSTimeInterval)timeout done:(void (^)(id json, BOOL cached, NSString *err))cb;
+- (void)tracksViaToken:(NSString *)albumId page:(NSInteger)page size:(NSInteger)size cb:(void (^)(NSArray<ADTrack *> *, NSInteger, BOOL, NSString *))cb;
 @end
 
 @implementation ADApi
@@ -120,6 +121,62 @@ static void ADCacheSet(NSString *key, id json) {
         if (!body) body = [NSString stringWithFormat:@"<%lu bytes>", (unsigned long)data.length];
         dispatch_async(dispatch_get_main_queue(), ^{ cb(code, body ?: @"", err.localizedDescription); });
     }] resume];
+}
+
+// ── 网页后台登录（拿 xmd_panel_session），用来读 VIP 专辑的目录 ──
+static NSString *ADFormEnc(NSString *s) {
+    NSCharacterSet *ok = [NSCharacterSet characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"];
+    return [s stringByAddingPercentEncodingWithAllowedCharacters:ok] ?: @"";
+}
+
+- (BOOL)hasAccount {
+    return [ADConfig shared].username.length > 0 && [ADConfig shared].password.length > 0;
+}
+
+- (NSString *)panelCookie {
+    NSURL *u = [NSURL URLWithString:[[ADConfig shared] url:@"/"]];
+    if (!u) return nil;
+    for (NSHTTPCookie *c in [NSHTTPCookieStorage sharedHTTPCookieStorage].cookies) {
+        if ([c.name isEqualToString:@"xmd_panel_session"] && c.value.length) return c.value;
+    }
+    return nil;
+}
+
+- (void)panelLogin:(void (^)(BOOL, NSString *))cb {
+    if (![self hasAccount]) { cb(NO, @"没填账号密码"); return; }
+    if ([self panelCookie]) { cb(YES, nil); return; }
+    NSURL *u = [NSURL URLWithString:[[ADConfig shared] url:@"/actions/auth/login"]];
+    if (!u) { cb(NO, @"地址无效"); return; }
+    NSMutableURLRequest *r = [NSMutableURLRequest requestWithURL:u];
+    r.HTTPMethod = @"POST";
+    r.timeoutInterval = 20;
+    [r setValue:@"application/x-www-form-urlencoded" forHTTPHeaderField:@"Content-Type"];
+    NSString *body = [NSString stringWithFormat:@"username=%@&password=%@&next=%@",
+                      ADFormEnc([ADConfig shared].username), ADFormEnc([ADConfig shared].password), ADFormEnc(@"/app/discover")];
+    r.HTTPBody = [body dataUsingEncoding:NSUTF8StringEncoding];
+    [[self.session dataTaskWithRequest:r completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+        NSString *loc = [(NSHTTPURLResponse *)resp allHeaderFields][@"Location"] ?: @"";
+        BOOL ok = [self panelCookie] != nil && ![loc containsString:@"msg="];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            cb(ok, ok ? nil : ([loc containsString:@"msg="] ? @"账号或密码错误" : (err.localizedDescription ?: @"登录失败")));
+        });
+    }] resume];
+}
+
+- (void)panelTracksOf:(NSString *)albumId page:(NSInteger)page size:(NSInteger)size done:(void (^)(NSArray<ADTrack *> *, NSInteger, NSString *))cb {
+    NSString *path = [NSString stringWithFormat:@"/api/v1/albums/%@/tracks?page=%ld&pageSize=%ld", albumId, (long)page, (long)size];
+    [self rawGET:path timeout:25 done:^(NSInteger code, NSString *body, NSString *err) {
+        if (code != 200) { cb(@[], 0, err.length ? err : [NSString stringWithFormat:@"HTTP %ld", (long)code]); return; }
+        id json = [body dataUsingEncoding:NSUTF8StringEncoding] ? [NSJSONSerialization JSONObjectWithData:[body dataUsingEncoding:NSUTF8StringEncoding] options:NSJSONReadingAllowFragments error:nil] : nil;
+        NSArray *items = ADPickArray(json);
+        NSInteger total = ADPickInt(json, @[@"total", @"totalCount", @"count", @"trackCount", @"chapter_count"]);
+        ADAlbum *stub = [ADAlbum new];
+        stub.albumId = albumId;
+        stub.provider = [ADConfig shared].username.length ? @"" : @"";
+        NSMutableArray *out = [NSMutableArray array];
+        for (id o in items) { ADTrack *t = [ADTrack fromJSON:o album:stub]; if (t) [out addObject:t]; }
+        cb(out, total, out.count ? nil : @"会话接口返回空");
+    }];
 }
 
 - (void)discover:(void (^)(NSArray<NSDictionary *> *, BOOL, NSString *))cb {
@@ -211,6 +268,26 @@ static NSInteger ADPickInt(NSDictionary *json, NSArray *keys) {
 
 - (void)tracksOf:(NSString *)albumId page:(NSInteger)page pageSize:(NSInteger)size done:(void (^)(NSArray<ADTrack *> *, NSInteger, BOOL, NSString *))cb {
     if (size < 1) size = 50;
+    NSString *path = [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=%ld&pageSize=%ld", albumId, (long)page, (long)size];
+    NSString *key = [NSString stringWithFormat:@"tracks:%@:%ld:%ld", albumId, (long)size, (long)page];
+    if ([self hasAccount]) {
+        // VIP 专辑在 token 接口下服务端抓不到目录，先用网页会话试
+        __weak typeof(self) weakSelf = self;
+        [self panelLogin:^(BOOL ok, NSString *loginErr) {
+            __strong typeof(weakSelf) self = weakSelf; if (!self) return;
+            if (!ok) { [self tracksViaToken:albumId page:page size:size cb:cb]; return; }
+            [self panelTracksOf:albumId page:page size:size done:^(NSArray<ADTrack *> *list, NSInteger total, NSString *perr) {
+                __strong typeof(weakSelf) self = weakSelf; if (!self) return;
+                if (list.count) { cb(list, total, NO, nil); return; }
+                [self tracksViaToken:albumId page:page size:size cb:cb];
+            }];
+        }];
+        return;
+    }
+    [self tracksViaToken:albumId page:page size:size cb:cb];
+}
+
+- (void)tracksViaToken:(NSString *)albumId page:(NSInteger)page size:(NSInteger)size cb:(void (^)(NSArray<ADTrack *> *, NSInteger, BOOL, NSString *))cb {
     NSString *path = [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=%ld&pageSize=%ld", albumId, (long)page, (long)size];
     NSString *key = [NSString stringWithFormat:@"tracks:%@:%ld:%ld", albumId, (long)size, (long)page];
     // 目录接口服务端要现场找源，比别的接口慢，给它 30 秒（其它接口仍是 12 秒）
