@@ -146,18 +146,62 @@ static void ADCacheSet(NSString *key, id json) {
     }];
 }
 
+// 把响应里可能是“曲目数组”的地方都试一遍（服务端不同源包装不一样）
+static NSArray *ADPickArray(NSDictionary *json) {
+    if (![json isKindOfClass:NSDictionary.class]) return nil;
+    NSArray *keys = @[@"items", @"tracks", @"list", @"songs", @"trackList", @"data"];
+    NSMutableArray *dicts = [NSMutableArray array];
+    [dicts addObject:json];
+    for (NSString *k in @[@"data", @"result", @"payload"]) {
+        id v = json[k];
+        if ([v isKindOfClass:NSDictionary.class]) [dicts addObject:v];
+    }
+    for (NSDictionary *d in dicts) {
+        for (NSString *k in keys) {
+            id v = d[k];
+            if ([v isKindOfClass:NSArray.class] && [v count]) return v;
+        }
+    }
+    return nil;
+}
+static NSInteger ADPickInt(NSDictionary *json, NSArray *keys) {
+    if (![json isKindOfClass:NSDictionary.class]) return 0;
+    NSMutableArray *dicts = [NSMutableArray arrayWithObject:json];
+    for (NSString *k in @[@"data", @"result", @"payload"]) {
+        id v = json[k];
+        if ([v isKindOfClass:NSDictionary.class]) [dicts addObject:v];
+    }
+    for (NSDictionary *d in dicts)
+        for (NSString *k in keys) {
+            id v = d[k];
+            if ([v respondsToSelector:@selector(integerValue)] && [v integerValue] > 0) return [v integerValue];
+        }
+    return 0;
+}
+
 - (void)tracksOf:(NSString *)albumId page:(NSInteger)page done:(void (^)(NSArray<ADTrack *> *, NSInteger, BOOL, NSString *))cb {
     NSString *path = [NSString stringWithFormat:@"/open-api/v1/albums/%@/tracks?page=%ld&pageSize=50", albumId, (long)page];
     NSString *key = [NSString stringWithFormat:@"tracks:%@:%ld", albumId, (long)page];
     // 目录接口服务端要现场找源，比别的接口慢，给它 30 秒（其它接口仍是 12 秒）
     [self cachedGET:path key:key timeout:30 done:^(id json, BOOL cached, NSString *err) {
-        NSArray *items = [json isKindOfClass:NSDictionary.class] ? json[@"items"] : nil;
-        NSInteger total = [json[@"total"] respondsToSelector:@selector(integerValue)] ? [json[@"total"] integerValue] : 0;
+        NSArray *items = ADPickArray(json);
+        NSInteger total = ADPickInt(json, @[@"total", @"totalCount", @"count", @"trackCount"]);
         ADAlbum *stub = [ADAlbum new];
         stub.albumId = albumId;
-        stub.provider = [json[@"provider"] isKindOfClass:NSString.class] ? json[@"provider"] : @"";
+        stub.provider = [json isKindOfClass:NSDictionary.class] && [json[@"provider"] isKindOfClass:NSString.class] ? json[@"provider"] : @"";
         NSMutableArray *out = [NSMutableArray array];
         for (id o in items) { ADTrack *t = [ADTrack fromJSON:o album:stub]; if (t) [out addObject:t]; }
+        if (!err.length && !out.count && !cached && page == 1) {
+            // 目录为空：把服务端的原样返回写进 Documents/debug_tracks_<专辑>.txt，并在错误文案里带上一小段
+            NSData *raw = [NSJSONSerialization dataWithJSONObject:(json ?: @{}) options:0 error:nil];
+            NSString *text = raw ? [[NSString alloc] initWithData:raw encoding:NSUTF8StringEncoding] : @"(不是 JSON)";
+            NSString *dir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+            NSString *f = [dir stringByAppendingPathComponent:[NSString stringWithFormat:@"debug_tracks_%@.txt", albumId]];
+            [[NSString stringWithFormat:@"GET %@\n\n%@", path, text] writeToFile:f atomically:YES encoding:NSUTF8StringEncoding error:nil];
+            NSLog(@"[AD] 目录为空 %@ -> %@", path, text);
+            NSString *snip = text.length > 110 ? [[text substringToIndex:110] stringByAppendingString:@"…"] : text;
+            err = [NSString stringWithFormat:@"服务端返回空目录：%@", snip];
+        }
         cb(out, total, cached, err);
     }];
 }
