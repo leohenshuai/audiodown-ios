@@ -202,11 +202,7 @@
     return m;
 }
 - (void)build {
-    self.backgroundColor = [UIColor colorWithWhite:0.16 alpha:0.96];
-    self.layer.cornerRadius = 16;
-    self.clipsToBounds = YES;
-    self.layer.borderWidth = 0.5;
-    self.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.12].CGColor;
+    [ADGlass applyTo:self radius:16 tint:0.04];
     _cover = [[UIImageView alloc] initWithFrame:CGRectMake(8, 8, 42, 42)];
     _cover.layer.cornerRadius = 8; _cover.clipsToBounds = YES;
     _title = [ADUtil label:@"PingFangSC-Semibold" size:14 color:UIColor.whiteColor];
@@ -302,12 +298,12 @@
     void (^apply)(void) = ^{
         __strong typeof(wself) me = wself; if (!me) return;
         me.frame = target;
-        me.layer.cornerRadius = me->_collapsed ? 25 : 16;
-        me.clipsToBounds = !me->_collapsed;
+        [ADGlass setRadius:(me->_collapsed ? 25 : 16) on:me];
+        me.clipsToBounds = NO;
         me.layer.shadowColor = UIColor.blackColor.CGColor;
-        me.layer.shadowOpacity = me->_collapsed ? 0.35 : 0;
-        me.layer.shadowRadius = me->_collapsed ? 10 : 0;
-        me.layer.shadowOffset = CGSizeMake(0, 3);
+        me.layer.shadowOpacity = me->_collapsed ? 0.4 : 0.3;
+        me.layer.shadowRadius = me->_collapsed ? 12 : 18;
+        me.layer.shadowOffset = CGSizeMake(0, me->_collapsed ? 4 : 9);
     };
     if (CGRectEqualToRect(self.frame, target)) { apply(); return; }
     if (animated) {
@@ -434,7 +430,7 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithRed:0.043 green:0.035 blue:0.035 alpha:1];
+    [ADGlass background:self.view];
     self.navigationController.navigationBar.hidden = YES;
 
     self.scroll = [[UIScrollView alloc] initWithFrame:self.view.bounds];
@@ -559,6 +555,7 @@
             c.onPlay = ^{ [w playCard:a]; };
             c.onMore = ^{ [w moreCard:a]; };
             c.onMenu = ^{ [w menuCard:a]; };
+            [ADGlass press:c];
             [hs addSubview:c];
             [self.cards addObject:c];
         }
@@ -599,6 +596,7 @@
         for (NSInteger i = 0; i < (NSInteger)rec.count; i++) {
             NSInteger col = i / perRow, row = i % perRow;
             ADSmallCard *c = [[ADSmallCard alloc] initWithFrame:CGRectMake(16 + col * (cw + gap), row * (cw + 34), cw, cw + 34) album:rec[i]];
+            [ADGlass press:c];
             [hs addSubview:c];
         }
         [panel addSubview:hs];
@@ -624,6 +622,7 @@
             ADAlbum *a = [ADAlbum fromJSON:its[i]];
             if (!a) continue;
             ADSmallCard *c = [[ADSmallCard alloc] initWithFrame:CGRectMake(16 + i * (cw + gap), 0, cw, cw + 34) album:a];
+            [ADGlass press:c];
             [hs addSubview:c];
         }
         [panel addSubview:hs];
@@ -732,7 +731,7 @@
 @implementation ADSearchController
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithRed:0.043 green:0.035 blue:0.035 alpha:1];
+    [ADGlass background:self.view];
     self.navigationController.navigationBar.hidden = YES;
     self.bar = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 52)];
     self.bar.placeholder = @"书名 / 作者 / 主播";
@@ -1441,7 +1440,7 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithRed:0.043 green:0.035 blue:0.035 alpha:1];
+    [ADGlass background:self.view];
     self.navigationController.navigationBar.hidden = YES;
     self.mode = 0;
     self.filter = 0;
@@ -1455,8 +1454,7 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
     [self.view addSubview:self.countLabel];
 
     UIButton *gear = [UIButton buttonWithType:UIButtonTypeSystem];
-    gear.backgroundColor = [UIColor colorWithWhite:1 alpha:0.14];
-    gear.layer.cornerRadius = 22;
+    [ADGlass applyTo:gear radius:22 tint:0.06];
     gear.tag = 98;
     gear.tintColor = UIColor.whiteColor;
     [gear setImage:[UIImage systemImageNamed:@"line.3.horizontal" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];

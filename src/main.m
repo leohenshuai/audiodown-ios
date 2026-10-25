@@ -28,7 +28,7 @@
     if (@available(iOS 13.0, *)) {
         UITabBarAppearance *ap = [UITabBarAppearance new];
         [ap configureWithDefaultBackground];
-        ap.backgroundColor = [UIColor colorWithRed:0.043 green:0.035 blue:0.035 alpha:0.92];
+        ap.backgroundEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark];
         tab.tabBar.standardAppearance = ap;
         if (@available(iOS 15.0, *)) tab.tabBar.scrollEdgeAppearance = ap;
     }

@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root{ --bg:#0b0909; --card:#1f1f20; --brand:#ff7a45; --dim:rgba(255,255,255,.55); }
+  *{box-sizing:border-box; -webkit-font-smoothing:antialiased;}
+  body{margin:0;background:#151416;font-family:-apple-system,"PingFang SC",system-ui,sans-serif;color:#fff;
+       display:flex;gap:36px;padding:34px 36px 28px;align-items:flex-start;}
+  .col{display:flex;flex-direction:column;gap:12px;align-items:center;}
+  .cap{font-size:13px;color:rgba(255,255,255,.6);letter-spacing:.2px}
+  .phone{width:390px;height:844px;background:var(--bg);border-radius:44px;position:relative;overflow:hidden;
+         border:1px solid rgba(255,255,255,.09); box-shadow:0 24px 60px rgba(0,0,0,.55);}
+  .notch{position:absolute;top:10px;left:50%;transform:translateX(-50%);width:118px;height:30px;background:#000;border-radius:16px;z-index:5}
+  .status{position:absolute;top:16px;left:26px;right:26px;display:flex;justify-content:space-between;font-size:13px;color:#fff;opacity:.85;z-index:6}
+  /* 页面内容占位 */
+  .content{padding:64px 16px 0}
+  .searchbar{height:44px;border-radius:12px;background:rgba(255,255,255,.10);display:flex;align-items:center;gap:8px;padding:0 12px;color:rgba(255,255,255,.45);font-size:15px}
+  .seg{display:flex;gap:0;margin-top:14px;width:150px;height:34px;border-radius:9px;overflow:hidden;background:rgba(255,255,255,.10)}
+  .seg div{flex:1;display:flex;align-items:center;justify-content:center;font-size:14px;color:rgba(255,255,255,.7)}
+  .seg div.on{background:var(--brand);color:#fff}
+  .chips{display:flex;gap:9px;margin-top:14px;flex-wrap:wrap}
+  .chip{height:34px;padding:0 15px;border-radius:17px;background:rgba(255,255,255,.10);display:flex;align-items:center;font-size:14px;color:rgba(255,255,255,.8)}
+  .chip.on{background:var(--brand);color:#fff}
+  .sech{font-size:17px;font-weight:600;margin:22px 0 10px}
+  .row{display:flex;gap:12px;align-items:center;margin-bottom:16px}
+  .cov{width:48px;height:48px;border-radius:9px;background:linear-gradient(140deg,#2b5f7a,#6da9c4 60%,#0f2b38);flex:none}
+  .row .t{font-size:15px}
+  .row .s{font-size:11px;color:var(--dim);margin-top:4px}
+  /* tab bar */
+  .tabbar{position:absolute;left:0;right:0;bottom:0;height:84px;background:rgba(20,19,21,.96);border-top:1px solid rgba(255,255,255,.07);
+          display:flex;align-items:flex-start;padding-top:10px}
+  .tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11px;color:rgba(255,255,255,.5)}
+  .tab.on{color:var(--brand)}
+  .ico{font-size:19px}
+  /* 迷你条 */
+  .barwrap{position:absolute;left:8px;right:8px;bottom:100px;height:58px;z-index:8}
+  .bar{height:100%;border-radius:16px;background:rgba(41,41,42,.97);border:.5px solid rgba(255,255,255,.14);
+       display:flex;align-items:center;padding:0 6px 0 8px;position:relative;overflow:hidden;
+       box-shadow:0 10px 26px rgba(0,0,0,.4)}
+  .bar .c{width:42px;height:42px;border-radius:8px;flex:none;background:linear-gradient(140deg,#123a4d,#2f7e9e 55%,#08171f)}
+  .bar .txt{margin-left:8px;min-width:0;flex:1}
+  .bar .tt{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bar .ss{font-size:11px;color:rgba(255,255,255,.55);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .btn{width:34px;height:36px;display:flex;align-items:center;justify-content:center;color:#fff;opacity:.92;flex:none}
+  .fold{width:30px;height:36px;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.6);flex:none;font-size:15px;font-weight:700}
+  .prog{position:absolute;left:0;right:0;bottom:0;height:2px;background:rgba(255,255,255,.15)}
+  .prog i{display:block;height:100%;width:37%;background:rgba(255,255,255,.8)}
+  /* 收起态 */
+  .ball{position:absolute;right:6px;bottom:100px;width:50px;height:50px;border-radius:25px;z-index:8;
+        background:linear-gradient(140deg,#123a4d,#2f7e9e 55%,#08171f);
+        border:.5px solid rgba(255,255,255,.16);box-shadow:0 8px 22px rgba(0,0,0,.55)}
+  .ball:after{content:"";position:absolute;left:7px;top:7px;right:7px;bottom:7px;border-radius:50%;
+              border:1.5px solid rgba(255,255,255,.28)}
+  .arrow{position:absolute;color:rgba(255,255,255,.35);font-size:12px;bottom:104px}
+  .hint{position:absolute;left:0;right:0;bottom:172px;text-align:center;font-size:11px;color:rgba(255,255,255,.35)}
+  .badge{position:absolute;top:96px;left:50%;transform:translateX(-50%);font-size:11px;color:rgba(255,255,255,.45)}
+</style>
+</head>
+<body>
+
+  <div class="col">
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="status"><span>12:52</span><span>5G ▮▮ 82%</span></div>
+      <div class="content">
+        <div class="searchbar">🔍 书名 / 作者 / 主播</div>
+        <div class="seg"><div class="on">在线</div><div>本地</div></div>
+        <div class="chips"><div class="chip on">全部</div><div class="chip">有声书</div><div class="chip">相声评书</div><div class="chip">音乐</div></div>
+        <div class="sech">搜索历史</div>
+        <div class="chips"><div class="chip">郭德纲</div><div class="chip">绝世神探</div></div>
+        <div class="sech">推荐收听</div>
+        <div class="row"><div class="cov"></div><div><div class="t">黄金大谜案｜陈光演播</div><div class="s">悦库时光 · 24 集</div></div></div>
+        <div class="row"><div class="cov" style="background:linear-gradient(140deg,#3a1f1f,#a05a3c 60%,#2a1210)"></div><div><div class="t">杀妻谜云｜消失的她</div><div class="s">失控剧场 · 33 集</div></div></div>
+        <div class="row"><div class="cov" style="background:linear-gradient(140deg,#1f2b1b,#6f8f4a 60%,#101a0d)"></div><div><div class="t">下乡养儿</div><div class="s">悦库时光 · 34 集</div></div></div>
+      </div>
+      <div class="barwrap">
+        <div class="bar">
+          <div class="c"></div>
+          <div class="txt">
+            <div class="tt">005 鬼上门（多人剧开始替换…</div>
+            <div class="ss">会说话的石头_剧有范</div>
+          </div>
+          <div class="btn">⏱</div>
+          <div class="btn">❚❚</div>
+          <div class="fold">›</div>
+          <div class="prog"><i style="width:37%"></i></div>
+        </div>
+      </div>
+      <div class="tabbar">
+        <div class="tab"><div class="ico">✨</div>发现</div>
+        <div class="tab on"><div class="ico">🔍</div>搜索</div>
+        <div class="tab"><div class="ico">📚</div>书架</div>
+      </div>
+    </div>
+    <div class="cap">展开态：最右 › 点一下立刻收起；也支持向下滑</div>
+  </div>
+
+  <div class="col">
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="status"><span>12:52</span><span>5G ▮▮ 82%</span></div>
+      <div class="content">
+        <div class="searchbar">🔍 书名 / 作者 / 主播</div>
+        <div class="seg"><div class="on">在线</div><div>本地</div></div>
+        <div class="chips"><div class="chip on">全部</div><div class="chip">有声书</div><div class="chip">相声评书</div><div class="chip">音乐</div></div>
+        <div class="sech">搜索历史</div>
+        <div class="chips"><div class="chip">郭德纲</div><div class="chip">绝世神探</div></div>
+        <div class="sech">推荐收听</div>
+        <div class="row"><div class="cov"></div><div><div class="t">黄金大谜案｜陈光演播</div><div class="s">悦库时光 · 24 集</div></div></div>
+        <div class="row"><div class="cov" style="background:linear-gradient(140deg,#3a1f1f,#a05a3c 60%,#2a1210)"></div><div><div class="t">杀妻谜云｜消失的她</div><div class="s">失控剧场 · 33 集</div></div></div>
+        <div class="row"><div class="cov" style="background:linear-gradient(140deg,#1f2b1b,#6f8f4a 60%,#101a0d)"></div><div><div class="t">下乡养儿</div><div class="s">悦库时光 · 34 集</div></div></div>
+        <div class="row"><div class="cov" style="background:linear-gradient(140deg,#2a2036,#7a5c9e 60%,#141020)"></div><div><div class="t">嫡女来袭，王爷太腹黑</div><div class="s">畅读书城 · 192 集</div></div></div>
+      </div>
+      <div class="hint">闲置 8 秒（播放/暂停都算）自动变成小球 · 点球展开 · 上滑展开</div>
+      <div class="ball"></div>
+      <div class="tabbar">
+        <div class="tab"><div class="ico">✨</div>发现</div>
+        <div class="tab on"><div class="ico">🔍</div>搜索</div>
+        <div class="tab"><div class="ico">📚</div>书架</div>
+      </div>
+    </div>
+    <div class="cap">收起态：右边缘 50×50 小圆球，只留封面，点一下展开</div>
+  </div>
+
+</body>
+</html>
