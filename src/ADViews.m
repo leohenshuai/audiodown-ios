@@ -732,6 +732,7 @@
     NSString *q = [b.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
     if (!q.length) return;
     self.keyword = q; self.page = 1; self.more = YES; self.autoPages = 0;
+    self.list = [NSMutableArray array];
     if (self.catIndex != 0) { self.catIndex = 0; [self paintChips]; }
     [self.list removeAllObjects]; [self.cv reloadData];
     self.hint.text = @"搜索中…";
@@ -758,8 +759,25 @@
             [self.list addObjectsFromArray:list];
             self.page += 1;
         }
+        NSInteger hits = 0;
+        for (ADAlbum *a in self.list)
+            if (self.keyword.length && [a.title rangeOfString:self.keyword].location != NSNotFound) hits += 1;
+        if (hits == 0 && self.more && self.autoPages < 2) {
+            // 第一屏没有标题含关键词的，自动再翻两页
+            self.autoPages += 1;
+            [self loadPage];
+        }
+        if (self.keyword.length) {
+            NSString *kw = self.keyword;
+            [self.list sortUsingComparator:^NSComparisonResult(ADAlbum *x, ADAlbum *y) {
+                BOOL hx = [x.title rangeOfString:kw].location != NSNotFound;
+                BOOL hy = [y.title rangeOfString:kw].location != NSNotFound;
+                if (hx == hy) return NSOrderedSame;
+                return hx ? NSOrderedAscending : NSOrderedDescending;
+            }];
+        }
         NSArray *shown = [self visible];
-        if (self.catIndex != 0 && shown.count < 6 && self.more && self.autoPages < 3) {
+        if (self.catIndex != 0 && shown.count < 6 && self.more && self.autoPages < 6) {
             self.autoPages += 1;
             [self loadPage];
         }
