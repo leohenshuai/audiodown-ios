@@ -49,7 +49,7 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [ADUtil bg];
+    [ADGlass background:self.view];
     self.navigationController.navigationBar.tintColor = UIColor.whiteColor;
     self.navigationController.navigationBar.barStyle = UIBarStyleBlack;
     self.title = @"专辑";
@@ -230,7 +230,7 @@
         self.floatBar = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 44)];
         self.floatBar.showsHorizontalScrollIndicator = NO;
         self.floatBar.contentInset = UIEdgeInsetsMake(0, 16, 0, 16);
-        self.floatBar.backgroundColor = [ADUtil bg];
+        [ADGlass applyTo:self.floatBar radius:16 tint:0.04];
         self.floatBar.hidden = YES;
         [self.view addSubview:self.floatBar];
     }
@@ -914,6 +914,7 @@
     [self.view addSubview:self.routeView];
 
     self.queue = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
+    [ADGlass applyTo:self.queue radius:16 tint:0.03];
     self.queue.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.98];
     self.queue.dataSource = self;
     self.queue.delegate = self;
@@ -929,9 +930,7 @@
 
     self.queueSel = [NSMutableSet set];
     self.queueBar = [[UIView alloc] initWithFrame:CGRectZero];
-    self.queueBar.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.98];
-    self.queueBar.layer.cornerRadius = 14;
-    self.queueBar.clipsToBounds = YES;
+    [ADGlass applyTo:self.queueBar radius:14 tint:0.04];
     self.queueBar.hidden = YES;
     [self.view addSubview:self.queueBar];
     self.sortBtn = [self barButton:@"正序" action:@selector(toggleQueueSort)];
@@ -955,8 +954,7 @@
 
 - (UIButton *)circleButton:(NSString *)icon action:(SEL)sel {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-    b.backgroundColor = [UIColor colorWithWhite:1 alpha:0.12];
-    b.layer.cornerRadius = 22;
+    [ADGlass applyTo:b radius:22 tint:0.05];
     b.tintColor = UIColor.whiteColor;
     [b setImage:[UIImage systemImageNamed:icon withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
     [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
@@ -1443,7 +1441,7 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithRed:0.075 green:0.075 blue:0.082 alpha:1];
+    [ADGlass background:self.view];
     self.title = @"设置";
     self.navigationController.navigationBar.tintColor = UIColor.whiteColor;
     self.navigationController.navigationBar.barStyle = UIBarStyleBlack;

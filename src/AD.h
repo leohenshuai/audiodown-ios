@@ -58,6 +58,16 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)save;
 @end
 
+// ───────────────── 玻璃材质 ─────────────────
+@interface ADGlass : NSObject
++ (void)applyTo:(UIView *)v radius:(CGFloat)r;
++ (void)applyTo:(UIView *)v radius:(CGFloat)r tint:(CGFloat)alpha;
++ (void)setRadius:(CGFloat)r on:(UIView *)v;
++ (void)glassButton:(UIButton *)b;
++ (void)press:(UIView *)v;
++ (void)background:(UIView *)v;
+@end
+
 // ───────────────── 触感 / 提示音 ─────────────────
 @interface ADHaptic : NSObject
 + (void)tap;        // 轻点：按钮、行、卡片
