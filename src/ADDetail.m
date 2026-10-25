@@ -527,6 +527,11 @@
             self.loadingAll = NO;
             [self.table reloadData];
             [self fillHeader];
+            [self updateFooter];
+            if (self.sortDesc && self.tracks.count) {   // 拉全后把真正的最后一集顶到首位
+                [self.table scrollToRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:0]
+                                    atScrollPosition:UITableViewScrollPositionTop animated:NO];
+            }
             if (self.jumpTarget >= 0) {   // 想跳的那段超出了实际集数，至少落到最后一行
                 NSInteger last = MAX(0, (NSInteger)self.tracks.count - 1);
                 self.jumpTarget = -1;
