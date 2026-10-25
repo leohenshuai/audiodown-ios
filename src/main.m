@@ -19,7 +19,7 @@
     UINavigationController *s = [[UINavigationController alloc] initWithRootViewController:[ADSearchController new]];
     UINavigationController *b = [[UINavigationController alloc] initWithRootViewController:[ADShelfController new]];
 
-    UITabBarController *tab = [UITabBarController new];
+    ADTabController *tab = [ADTabController new];
     tab.viewControllers = @[d, s, b];
     tab.tabBar.barStyle = UIBarStyleBlack;
     tab.tabBar.tintColor = [ADUtil brand];
@@ -37,11 +37,22 @@
     b.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"书架" image:[UIImage systemImageNamed:@"books.vertical"] tag:2];
 
     tab.delegate = self;
+    tab.tabBar.hidden = YES;                       // 用自绘的悬浮玻璃条
+    tab.viewControllers = tab.viewControllers;     // 触发一次布局
+    for (UINavigationController *n in @[d, s, b]) n.delegate = self;
+    __weak ADTabController *wtab = tab;
+    [ADTabBar shared].onSelect = ^(NSInteger idx) { wtab.selectedIndex = idx; };
+    [ADTabBar shared].selectedIndex = 0;
     self.window.rootViewController = tab;
     self.window.backgroundColor = [ADUtil bg];
     [self.window makeKeyAndVisible];
     NSLog(@"[AD] launched");
     return YES;
+}
+
+- (void)navigationController:(UINavigationController *)nav willShowViewController:(UIViewController *)vc animated:(BOOL)animated {
+    BOOL root = (nav.viewControllers.count <= 1);
+    [[ADTabBar shared] showBar:root animated:animated];
 }
 
 - (void)tabBarController:(UITabBarController *)c didSelectViewController:(UIViewController *)v {

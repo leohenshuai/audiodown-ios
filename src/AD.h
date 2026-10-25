@@ -58,6 +58,18 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)save;
 @end
 
+@interface ADTabController : UITabBarController
+@end
+
+@interface ADTabBar : UIView
++ (instancetype)shared;
+@property (nonatomic, assign) NSInteger selectedIndex;
+@property (nonatomic, assign) BOOL barVisible;
+@property (nonatomic, copy) void (^onSelect)(NSInteger idx);
+- (void)showBar:(BOOL)show animated:(BOOL)animated;
+- (CGFloat)topY;
+@end
+
 // ───────────────── 玻璃材质 ─────────────────
 @interface ADGlass : NSObject
 + (void)applyTo:(UIView *)v radius:(CGFloat)r;
