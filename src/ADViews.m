@@ -537,6 +537,26 @@
     }
     y += 62;
 
+    UIButton *searchPill = [UIButton buttonWithType:UIButtonTypeCustom];
+    searchPill.frame = CGRectMake(16, y, W - 32, 44);
+    [ADLiquid glass:searchPill radius:22 alpha:0.05];
+    [ADLiquid float:searchPill];
+    searchPill.layer.shadowOpacity = 0.2;
+    [searchPill addTarget:self action:@selector(gotoSearch) forControlEvents:UIControlEventTouchUpInside];
+
+    UIImageView *mag = [[UIImageView alloc] initWithFrame:CGRectMake(16, 12, 20, 20)];
+    mag.image = [UIImage systemImageNamed:@"magnifyingglass"
+                        withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:16 weight:UIImageSymbolWeightSemibold]];
+    mag.tintColor = [UIColor colorWithWhite:1 alpha:0.55];
+    [searchPill addSubview:mag];
+    UILabel *ph = [ADUtil label:nil size:14 color:[UIColor colorWithWhite:1 alpha:0.42]];
+    ph.text = @"搜书名、作者或主播";
+    ph.frame = CGRectMake(46, 12, W - 32 - 80, 20);
+    [searchPill addSubview:ph];
+    [self.scroll addSubview:searchPill];
+    y += 44 + 18;
+    [ADLiquid rise:searchPill delay:0.02];
+
     // 继续收听
     NSArray<ADAlbum *> *hist = [ADStore shared].history;
     NSMutableArray *items = [NSMutableArray array];
@@ -676,6 +696,14 @@
         [[ADStore shared] save];
         [self build];
     }];
+}
+
+- (void)gotoSearch {
+    [ADHaptic tap];
+    UITabBarController *tab = (UITabBarController *)self.tabBarController;
+    if (!tab) return;
+    tab.selectedIndex = 1;
+    [ADNavDock shared].selectedIndex = 1;
 }
 
 - (void)openHistory {

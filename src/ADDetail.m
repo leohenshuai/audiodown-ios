@@ -73,6 +73,14 @@
     self.cover = [[UIImageView alloc] initWithFrame:CGRectMake(16, 16, 110, 110)];
     self.cover.layer.cornerRadius = 10;
     self.cover.clipsToBounds = YES;
+    UIView *infoCard = [[UIView alloc] initWithFrame:CGRectMake(8, 8, w - 16, 132)];
+    infoCard.tag = 880;
+    infoCard.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [ADLiquid glass:infoCard radius:24 alpha:0.04];
+    [ADLiquid float:infoCard];
+    infoCard.layer.shadowOpacity = 0.22;
+    [head addSubview:infoCard];
+
     self.titleLabel = [ADUtil label:@"PingFangSC-Semibold" size:17 color:UIColor.whiteColor];
     self.titleLabel.frame = CGRectMake(140, 16, w - 156, 46);
     self.meta = [ADUtil label:nil size:12 color:[ADUtil dim]];
@@ -93,6 +101,8 @@
     [head addSubview:self.titleLabel];
     [head addSubview:self.meta];
     [head addSubview:self.intro];
+    [head bringSubviewToFront:self.cover];
+    [head bringSubviewToFront:self.dlBtn];
     self.table.tableHeaderView = head;
 
     self.selected = [NSMutableSet set];
@@ -147,6 +157,8 @@
     self.intro.frame = CGRectMake(16, 170, w - 32, sz.height);
     UIView *head = self.table.tableHeaderView;
     CGFloat h = 170 + sz.height + 12 + 48;   // 48 给分段条，避免压在简介上
+    UIView *infoCard = [head viewWithTag:880];
+    if (infoCard) infoCard.frame = CGRectMake(8, 8, w - 16, MIN(h - 56, 148));
     head.frame = CGRectMake(0, 0, w, h);
     self.table.tableHeaderView = head;
 
@@ -908,6 +920,15 @@
     [self.view addSubview:self.sleepBtn];
     [self.view addSubview:list];
 
+    UIView *toolPill = [[UIView alloc] initWithFrame:CGRectZero];
+    toolPill.tag = 900;
+    toolPill.userInteractionEnabled = NO;
+    [ADLiquid glass:toolPill radius:24 alpha:0.05];
+    [ADLiquid float:toolPill];
+    toolPill.layer.shadowOpacity = 0.22;
+    [self.view addSubview:toolPill];
+    [self.view insertSubview:toolPill belowSubview:self.rateBtn];
+
     self.routeView = [[AVRoutePickerView alloc] initWithFrame:CGRectMake(0, 0, 44, 36)];
     self.routeView.tintColor = [UIColor colorWithWhite:1 alpha:0.85];
     self.routeView.activeTintColor = [ADUtil brand];
@@ -1029,6 +1050,8 @@
     [self.view viewWithTag:204].frame = CGRectMake(W - 62, y + 26, 34, 34);
     y += 80 + lastGap;
 
+    UIView *toolPill = [self.view viewWithTag:900];
+    toolPill.frame = CGRectMake(W / 2 - 156, y - 4, 312, 46);
     UIButton *rate = (UIButton *)[self.view viewWithTag:301];
     rate.frame = CGRectMake(W / 2 - 150, y + 2, 58, 36);
     [self.view viewWithTag:302].frame = CGRectMake(W / 2 - 62, y + 2, 44, 36);
