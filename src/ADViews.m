@@ -736,7 +736,10 @@
     }
     if (self.catIndex == 0) return self.list;
     NSMutableArray *arr = [NSMutableArray array];
-    for (ADAlbum *a in self.list) if ([self catMatch:a]) [arr addObject:a];
+    for (ADAlbum *a in self.list) {
+        // 关键词完全命中的结果永远保留，避免切分类后把要的书过滤掉
+        if ([self catMatch:a] || [self relevanceOf:a] == 0) [arr addObject:a];
+    }
     return arr;
 }
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; self.navigationController.navigationBar.hidden = YES; [self layoutChrome]; }
