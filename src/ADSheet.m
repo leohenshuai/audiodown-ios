@@ -31,7 +31,7 @@ static ADSheetView *gSheet;
         CGFloat W = f.size.width;
         CGFloat rowH = 52, th = title.length ? 38 : 6;
         CGFloat height = th + opts.count * rowH + 8 + 54 + 10;
-        CGFloat y0 = f.size.height;
+        CGFloat y0 = f.size.height - height;   // 可见位置，靠 transform 动画滑入
         _box = [[UIView alloc] initWithFrame:CGRectMake(8, y0, W - 16, height)];
         [self addSubview:_box];
 

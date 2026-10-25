@@ -204,9 +204,16 @@
     [self jumpTo:start];
 }
 
+- (NSInteger)rowForIndex:(NSInteger)idx {
+    NSInteger n = self.tracks.count;
+    if (n <= 0) return 0;
+    if (idx >= n) idx = n - 1;
+    return self.sortDesc ? (n - 1 - idx) : idx;
+}
+
 - (void)jumpTo:(NSInteger)idx {
     if (idx < (NSInteger)self.tracks.count) {
-        NSIndexPath *ip = [NSIndexPath indexPathForRow:idx inSection:0];
+        NSIndexPath *ip = [NSIndexPath indexPathForRow:[self rowForIndex:idx] inSection:0];
         [self.table scrollToRowAtIndexPath:ip atScrollPosition:UITableViewScrollPositionTop animated:YES];
         return;
     }
@@ -344,7 +351,7 @@
         [self.table reloadData];
         [self fillHeader];
         if (self.jumpTarget >= 0 && (NSInteger)self.tracks.count > self.jumpTarget) {
-            NSIndexPath *ip = [NSIndexPath indexPathForRow:self.jumpTarget inSection:0];
+            NSIndexPath *ip = [NSIndexPath indexPathForRow:[self rowForIndex:self.jumpTarget] inSection:0];
             self.jumpTarget = -1;
             [self.table scrollToRowAtIndexPath:ip atScrollPosition:UITableViewScrollPositionTop animated:YES];
         }
