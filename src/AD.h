@@ -115,6 +115,7 @@ typedef NS_ENUM(NSInteger, ADTaskState) {
 - (BOOL)isPlaying;
 - (void)playAlbum:(ADAlbum *)album tracks:(NSArray<ADTrack *> *)tracks at:(NSInteger)index;
 - (void)playAt:(NSInteger)index;
+- (void)ensureFullQueue;      // 队列被截断（只有前 50/100 集）时把后面的目录补齐
 - (void)toggle;
 - (void)pause;
 - (void)next;
