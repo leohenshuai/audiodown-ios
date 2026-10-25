@@ -91,7 +91,7 @@
 
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {
     UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
-    c.backgroundColor = [UIColor colorWithWhite:0.12 alpha:1];
+    c.backgroundColor = [UIColor colorWithWhite:1 alpha:0.055];
     c.textLabel.textColor = UIColor.whiteColor;
     c.detailTextLabel.textColor = [UIColor colorWithWhite:1 alpha:0.5];
     c.textLabel.font = [UIFont systemFontOfSize:15];

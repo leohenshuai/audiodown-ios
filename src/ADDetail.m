@@ -81,8 +81,7 @@
     self.intro.frame = CGRectMake(16, 170, w - 32, 0);
     self.dlBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     self.dlBtn.frame = CGRectMake(140, 92, 130, 30);
-    self.dlBtn.backgroundColor = [UIColor colorWithWhite:1 alpha:0.12];
-    self.dlBtn.layer.cornerRadius = 15;
+    [ADGlass applyTo:self.dlBtn radius:15 tint:0.05];
     [self.dlBtn setTitle:@"缓存到本机" forState:UIControlStateNormal];
     [self.dlBtn setTitleColor:[ADUtil brand] forState:UIControlStateNormal];
     self.dlBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
@@ -400,7 +399,7 @@
     if (self.actionBar) return;
     CGFloat h = 56;
     self.actionBar = [[UIView alloc] initWithFrame:CGRectMake(0, self.view.bounds.size.height - h, self.view.bounds.size.width, h)];
-    self.actionBar.backgroundColor = [UIColor colorWithWhite:0.14 alpha:0.98];
+    [ADGlass applyTo:self.actionBar radius:0 tint:0.03];
     self.actionLabel = [ADUtil label:nil size:14 color:[UIColor colorWithWhite:1 alpha:0.7]];
     self.actionLabel.frame = CGRectMake(16, 18, 160, 20);
     [self.actionBar addSubview:self.actionLabel];
@@ -907,6 +906,13 @@
     [self.view addSubview:self.sleepBtn];
     [self.view addSubview:list];
 
+    UIView *toolPill = [[UIView alloc] initWithFrame:CGRectZero];
+    toolPill.tag = 900;
+    toolPill.userInteractionEnabled = NO;
+    [ADGlass applyTo:toolPill radius:22 tint:0.045];
+    [self.view addSubview:toolPill];
+    [self.view insertSubview:toolPill belowSubview:self.rateBtn];
+
     self.routeView = [[AVRoutePickerView alloc] initWithFrame:CGRectMake(0, 0, 44, 36)];
     self.routeView.tintColor = [UIColor colorWithWhite:1 alpha:0.85];
     self.routeView.activeTintColor = [ADUtil brand];
@@ -1026,6 +1032,8 @@
     [self.view viewWithTag:204].frame = CGRectMake(W - 62, y + 26, 34, 34);
     y += 80 + lastGap;
 
+    UIView *toolPill = [self.view viewWithTag:900];
+    toolPill.frame = CGRectMake(W / 2 - 154, y - 2, 308, 44);
     UIButton *rate = (UIButton *)[self.view viewWithTag:301];
     rate.frame = CGRectMake(W / 2 - 150, y + 2, 58, 36);
     [self.view viewWithTag:302].frame = CGRectMake(W / 2 - 62, y + 2, 44, 36);
@@ -1617,7 +1625,7 @@
 
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {
     UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
-    c.backgroundColor = [UIColor colorWithWhite:0.12 alpha:1];
+    c.backgroundColor = [UIColor colorWithWhite:1 alpha:0.055];
     c.textLabel.textColor = UIColor.whiteColor;
     c.detailTextLabel.textColor = [UIColor colorWithWhite:1 alpha:0.5];
     c.textLabel.font = [UIFont systemFontOfSize:15];
