@@ -188,7 +188,7 @@
 @implementation ADMiniBar {
     UIImageView *_cover;
     UILabel *_title, *_sub;
-    UIButton *_btn, *_back;
+    UIButton *_btn, *_back, *_fold;
     UIView *_track, *_fill;
     BOOL _collapsed;
     NSTimer *_collapseTimer;
@@ -223,8 +223,20 @@
     _fill = [UIView new];
     _fill.backgroundColor = [UIColor colorWithWhite:1 alpha:0.75];
     [self addSubview:_cover]; [self addSubview:_title]; [self addSubview:_sub];
-    [self addSubview:_btn]; [self addSubview:_back]; [self addSubview:_track]; [self addSubview:_fill];
+    _fold = [UIButton buttonWithType:UIButtonTypeSystem];
+    _fold.tintColor = [UIColor colorWithWhite:1 alpha:0.6];
+    [_fold setImage:[UIImage systemImageNamed:@"chevron.right" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:15 weight:UIImageSymbolWeightSemibold]] forState:UIControlStateNormal];
+    [_fold addTarget:self action:@selector(foldNow) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:_btn]; [self addSubview:_back]; [self addSubview:_fold]; [self addSubview:_track]; [self addSubview:_fill];
     [self addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(tapBar)]];
+
+    // 下滑 = 立刻收起，上滑 = 展开
+    UISwipeGestureRecognizer *swDown = [[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(foldNow)];
+    swDown.direction = UISwipeGestureRecognizerDirectionDown;
+    [self addGestureRecognizer:swDown];
+    UISwipeGestureRecognizer *swUp = [[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(unfoldNow)];
+    swUp.direction = UISwipeGestureRecognizerDirectionUp;
+    [self addGestureRecognizer:swUp];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:@"ADPlayerTick" object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:@"ADPlayerChanged" object:nil];
 }
@@ -239,6 +251,7 @@
         _sub.hidden = YES;
         _btn.hidden = YES;
         _back.hidden = YES;
+        _fold.hidden = YES;
         _track.hidden = YES;
         _fill.hidden = YES;
         return;
@@ -247,14 +260,16 @@
     _sub.hidden = NO;
     _btn.hidden = NO;
     _back.hidden = NO;
+    _fold.hidden = NO;
     _track.hidden = NO;
     _fill.hidden = NO;
     _cover.layer.cornerRadius = 8;
     _cover.frame = CGRectMake(8, (h - 42) / 2, 42, 42);
-    _btn.frame = CGRectMake(w - 46, (h - 36) / 2, 36, 36);
-    _back.frame = CGRectMake(w - 82, (h - 36) / 2, 32, 36);
-    _title.frame = CGRectMake(58, 10, w - 148, 18);
-    _sub.frame = CGRectMake(58, 29, w - 148, 15);
+    _fold.frame = CGRectMake(w - 32, (h - 36) / 2, 30, 36);
+    _btn.frame = CGRectMake(w - 66, (h - 36) / 2, 34, 36);
+    _back.frame = CGRectMake(w - 100, (h - 36) / 2, 32, 36);
+    _title.frame = CGRectMake(58, 10, w - 166, 18);
+    _sub.frame = CGRectMake(58, 29, w - 166, 15);
     _track.frame = CGRectMake(0, h - 2, w, 2);
     double cur = ADPlayer.shared.player ? CMTimeGetSeconds(ADPlayer.shared.player.currentTime) : 0;
     double dur = ADPlayer.shared.player.currentItem ? CMTimeGetSeconds(ADPlayer.shared.player.currentItem.duration) : 0;
@@ -307,13 +322,13 @@
 - (void)scheduleCollapse {
     [_collapseTimer invalidate];
     _collapseTimer = nil;
-    if (_collapsed || !ADPlayer.shared.isPlaying) return;
+    if (_collapsed) return;
     _collapseTimer = [NSTimer scheduledTimerWithTimeInterval:8.0 target:self selector:@selector(collapseNow) userInfo:nil repeats:NO];
 }
 
 - (void)collapseNow {
     _collapseTimer = nil;
-    if (_collapsed || !ADPlayer.shared.current || !ADPlayer.shared.isPlaying) return;
+    if (_collapsed || !ADPlayer.shared.current) return;
     _collapsed = YES;
     [self applyFrame:YES];
     [UIView animateWithDuration:0.2 animations:^{ [self layoutIfNeeded]; }];
@@ -360,15 +375,23 @@
     CGFloat full = self.bounds.size.width;
     _fill.frame = CGRectMake(0, self.bounds.size.height - 2, (dur > 0 && !isnan(dur)) ? full * cur / dur : 0, 2);
 
-    // 暂停时保持展开，播放中闲置 8 秒收缩
-    if (!p.isPlaying) {
-        [_collapseTimer invalidate];
-        _collapseTimer = nil;
-        if (_collapsed) { _collapsed = NO; [self applyFrame:YES]; }
-    } else if (!_collapsed && !_collapseTimer) {
-        [self scheduleCollapse];
-    }
+    // 不管播放还是暂停，闲置 8 秒都会收缩
+    if (!_collapsed && !_collapseTimer) [self scheduleCollapse];
     [self applyFrame:NO];
+}
+
+- (void)foldNow {
+    [ADHaptic select];
+    [_collapseTimer invalidate];
+    _collapseTimer = nil;
+    if (_collapsed || !ADPlayer.shared.current) return;
+    _collapsed = YES;
+    [self applyFrame:YES];
+    [UIView animateWithDuration:0.2 animations:^{ [self layoutIfNeeded]; }];
+}
+
+- (void)unfoldNow {
+    if (_collapsed) [self expandNow];
 }
 
 - (void)tapPlay {
