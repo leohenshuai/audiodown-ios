@@ -425,7 +425,7 @@
 @end
 
 // ───────────── 首页 ─────────────
-@interface ADDiscoverController () <UICollectionViewDataSource, UICollectionViewDelegate>
+@interface ADDiscoverController () <UICollectionViewDataSource, UICollectionViewDelegate, UIScrollViewDelegate>
 @property (nonatomic, strong) UIScrollView *scroll;
 @property (nonatomic, strong) NSArray<NSDictionary *> *sections;
 @property (nonatomic, strong) UIRefreshControl *refresh;
@@ -443,6 +443,7 @@
     self.navigationController.navigationBar.hidden = YES;
 
     self.scroll = [[UIScrollView alloc] initWithFrame:self.view.bounds];
+    self.scroll.delegate = self;
     self.scroll.alwaysBounceVertical = YES;
     self.scroll.showsVerticalScrollIndicator = NO;
     self.refresh = [UIRefreshControl new];
@@ -693,6 +694,19 @@
         [[ADStore shared] save];
         [self build];
     }];
+}
+
+- (void)scrollViewDidScroll:(UIScrollView *)s {
+    static CGFloat lastY = 0;
+    [ADLiquid followScroll:s lastY:&lastY];
+}
+
+- (void)scrollViewDidEndDecelerating:(UIScrollView *)s {
+    [UIView animateWithDuration:0.3 animations:^{ ADNavDock.shared.transform = CGAffineTransformIdentity; ADNavDock.shared.alpha = 1; }];
+}
+
+- (void)scrollViewDidEndDragging:(UIScrollView *)s willDecelerate:(BOOL)d {
+    if (!d) [self scrollViewDidEndDecelerating:s];
 }
 
 - (void)gotoSearch {
@@ -1280,6 +1294,11 @@
 }
 - (void)scrollViewDidScroll:(UIScrollView *)s {
     if (s.contentOffset.y + s.bounds.size.height > s.contentSize.height - 300) [self loadPage];
+    static CGFloat lastY = 0;
+    [ADLiquid followScroll:s lastY:&lastY];
+}
+- (void)scrollViewDidEndDecelerating:(UIScrollView *)s {
+    [UIView animateWithDuration:0.3 animations:^{ ADNavDock.shared.transform = CGAffineTransformIdentity; ADNavDock.shared.alpha = 1; }];
 }
 - (NSInteger)collectionView:(UICollectionView *)cv numberOfItemsInSection:(NSInteger)s { return [self visible].count; }
 - (UICollectionViewCell *)collectionView:(UICollectionView *)cv cellForItemAtIndexPath:(NSIndexPath *)ip {
@@ -1367,9 +1386,7 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
         CGFloat insetY = (mode == 1) ? 4 : 5;
         UIView *card = [[UIView alloc] initWithFrame:CGRectMake(8, insetY, w - 16, self.contentView.bounds.size.height - insetY * 2)];
         card.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-        [ADLiquid glass:card radius:22 alpha:0.03];
-        [ADLiquid float:card];
-        card.layer.shadowOpacity = 0.22;
+        [ADLiquid glassLite:card radius:22];
         [self.contentView insertSubview:card atIndex:0];
     }
 

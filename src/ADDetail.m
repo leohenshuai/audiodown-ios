@@ -1,4 +1,5 @@
 #import "AD.h"
+#import <objc/runtime.h>
 #import <MediaPlayer/MediaPlayer.h>
 #import <AVKit/AVKit.h>
 #import <AVFoundation/AVFoundation.h>
@@ -141,6 +142,13 @@
 
 - (void)fillHeader {
     [ADUtil cover:self.cover url:self.album.cover];
+    {
+        UIImage *img = self.cover.image;
+        if (img) {
+            UIColor *c = [ADLiquid tintFromImage:img];
+            if (c) [ADLiquid recolor:self.view with:c];
+        }
+    }
     self.titleLabel.text = self.album.title;
     NSMutableArray *bits = [NSMutableArray array];
     if (self.album.anchor.length) [bits addObject:self.album.anchor];
@@ -1067,6 +1075,16 @@
     }
 }
 
+- (void)tintFromCover {
+    UIImage *img = self.cover.image;
+    if (!img) return;
+    NSString *key = [NSString stringWithFormat:@"%p", img];
+    if ([objc_getAssociatedObject(self, "tintKey") isEqual:key]) return;
+    objc_setAssociatedObject(self, "tintKey", key, OBJC_ASSOCIATION_COPY_NONATOMIC);
+    UIColor *c = [ADLiquid tintFromImage:img];
+    if (c) [ADLiquid recolor:self.view with:c];
+}
+
 - (void)sync {
     ADPlayer *p = ADPlayer.shared;
     ADTrack *t = p.current;
@@ -1075,6 +1093,28 @@
     self.subLabel.text = p.album.anchor.length ? p.album.anchor : (p.album.title ?: @"");
     self.status.text = p.statusText ?: @"";
     [ADUtil cover:self.cover url:p.album.cover];
+    // 封面保持裁圆角；投影放在它后面单独一层，避免 clipsToBounds 吃掉阴影
+    self.cover.layer.cornerCurve = kCACornerCurveContinuous;
+    self.cover.layer.cornerRadius = 26;
+    self.cover.clipsToBounds = YES;
+    UIView *shadow = [self.view viewWithTag:8802];
+    if (!shadow) {
+        shadow = [UIView new];
+        shadow.tag = 8802;
+        shadow.userInteractionEnabled = NO;
+        shadow.backgroundColor = [UIColor colorWithWhite:0.1 alpha:1];
+        shadow.layer.cornerCurve = kCACornerCurveContinuous;
+        shadow.layer.cornerRadius = 26;
+        shadow.layer.shadowColor = UIColor.blackColor.CGColor;
+        shadow.layer.shadowOpacity = 0.6;
+        shadow.layer.shadowRadius = 30;
+        shadow.layer.shadowOffset = CGSizeMake(0, 18);
+        [self.view insertSubview:shadow belowSubview:self.cover];
+    }
+    shadow.frame = self.cover.frame;
+    [ADLiquid breathe:shadow on:p.isPlaying];
+    [ADLiquid breathe:self.cover on:p.isPlaying];
+    [self tintFromCover];
     if (!self.coverLabel) {
         self.coverLabel = [ADUtil label:@"PingFangSC-Semibold" size:44 color:[UIColor colorWithWhite:1 alpha:0.28]];
         self.coverLabel.textAlignment = NSTextAlignmentCenter;

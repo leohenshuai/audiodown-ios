@@ -64,10 +64,15 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)glass:(UIView *)v radius:(CGFloat)r;                 // 玻璃面
 + (void)glass:(UIView *)v radius:(CGFloat)r alpha:(CGFloat)alpha;
 + (void)corner:(CGFloat)r on:(UIView *)v;
++ (void)glassLite:(UIView *)v radius:(CGFloat)r;               // 轻量玻璃（无实时模糊，列表行用）
 + (void)glassButton:(UIButton *)b radius:(CGFloat)r;          // 按钮用的玻璃（不遮挡图标）
++ (nullable UIColor *)tintFromImage:(nullable UIImage *)img;    // 封面主色
++ (void)recolor:(UIView *)v with:(UIColor *)color;             // 光斑换成封面色（渐变过渡）
++ (void)followScroll:(UIScrollView *)sv lastY:(CGFloat *)lastY; // 导航随滚动呼吸
 + (void)float:(UIView *)v;                                   // 悬浮投影
 + (void)press:(UIView *)v;                                   // 按压缩放
 + (void)pulse:(UIView *)v;
++ (void)breathe:(UIView *)v on:(BOOL)on;                      // 播放中封面呼吸
 + (void)rise:(UIView *)v delay:(NSTimeInterval)delay;        // 入场
 @end
 
