@@ -1,4 +1,5 @@
 #import "AD.h"
+#import <CoreImage/CoreImage.h>
 #import <objc/runtime.h>
 #import <MediaPlayer/MediaPlayer.h>
 #import <AVKit/AVKit.h>

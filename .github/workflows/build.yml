@@ -18,7 +18,7 @@ jobs:
           xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=14.0 \
             -isysroot "$SDK" -fobjc-arc -O2 \
             -framework UIKit -framework Foundation -framework AVFoundation \
-            -framework MediaPlayer -framework CoreMedia -framework CoreGraphics -framework QuartzCore -framework AVKit -framework Security -framework AudioToolbox \
+            -framework MediaPlayer -framework CoreMedia -framework CoreGraphics -framework QuartzCore -framework AVKit -framework Security -framework AudioToolbox -framework CoreImage \
             -o build/Payload/ADBook.app/ADBook \
             src/*.m
           cp src/Info.plist build/Payload/ADBook.app/
