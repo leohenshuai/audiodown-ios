@@ -355,6 +355,27 @@ id ADUnarchive(NSData *data, NSSet *classes) {
     return d;
 }
 
+static NSCache *ADCoverCache(void) {
+    static NSCache *cache; static dispatch_once_t once;
+    dispatch_once(&once, ^{ cache = [NSCache new]; cache.countLimit = 400; });
+    return cache;
+}
+// 不依赖图片视图取封面:内存 → 磁盘 → 网络,回调在主线程
++ (void)coverImage:(NSString *)url done:(void (^)(UIImage *img))done {
+    if (!url.length) { done(nil); return; }
+    UIImage *hit = [ADCoverCache() objectForKey:url];
+    if (hit) { done(hit); return; }
+    NSString *path = [[self coverDir] stringByAppendingPathComponent:[NSString stringWithFormat:@"%lu.jpg", (unsigned long)url.hash]];
+    UIImage *disk = [UIImage imageWithContentsOfFile:path];
+    if (disk) { [ADCoverCache() setObject:disk forKey:url]; done(disk); return; }
+    NSURL *u = [url hasPrefix:@"http"] ? [NSURL URLWithString:url] : [NSURL URLWithString:[[ADConfig shared] url:url]];
+    if (!u) { done(nil); return; }
+    [[[NSURLSession sharedSession] dataTaskWithURL:u completionHandler:^(NSData *data, NSURLResponse *r, NSError *e) {
+        UIImage *img = data.length ? [UIImage imageWithData:data] : nil;
+        if (img) { [ADCoverCache() setObject:img forKey:url]; [data writeToFile:path atomically:YES]; }
+        dispatch_async(dispatch_get_main_queue(), ^{ done(img); });
+    }] resume];
+}
 + (void)cover:(UIImageView *)iv url:(NSString *)url {
     iv.contentMode = UIViewContentModeScaleAspectFill;
     iv.clipsToBounds = YES;
@@ -363,8 +384,7 @@ id ADUnarchive(NSData *data, NSSet *classes) {
     if (!url.length) return;
     NSURL *u = [url hasPrefix:@"http"] ? [NSURL URLWithString:url] : [NSURL URLWithString:[[ADConfig shared] url:url]];
     if (!u) return;
-    static NSCache *cache; static dispatch_once_t once;
-    dispatch_once(&once, ^{ cache = [NSCache new]; cache.countLimit = 400; });
+    NSCache *cache = ADCoverCache();
     UIImage *hit = [cache objectForKey:url];
     if (hit) { iv.image = hit; [self togglePlaceholder:iv hidden:YES]; return; }
     NSString *path = [[self coverDir] stringByAppendingPathComponent:

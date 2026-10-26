@@ -15,6 +15,9 @@
 // 播放队列补全：专辑页只加载了前几十集时，播放器自己把后面的目录补齐，
 // 否则队列的「倒序」「快速选集」「缓存整本」都只能看到前 50 集。
 @property (nonatomic, assign) BOOL filling;
+// 锁屏/控制中心封面:按封面地址缓存一份 MPMediaItemArtwork,换书时才重新取
+@property (nonatomic, strong) MPMediaItemArtwork *artwork;
+@property (nonatomic, copy) NSString *artworkURL, *artworkLoading;
 - (void)ensureFullQueue;
 - (void)loadPagesOf:(NSString *)albumId upTo:(NSInteger)lastPage page:(NSInteger)page acc:(NSMutableArray *)acc tries:(NSInteger)tries done:(void (^)(NSArray *list))done;
 - (void)fillQueuePage:(NSInteger)page tries:(NSInteger)tries forAlbum:(NSString *)albumId;
@@ -466,8 +469,36 @@
         }
     }
     info[MPNowPlayingInfoPropertyPlaybackRate] = @(_player ? _player.rate : 0);
+    info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = @1.0;
+    NSString *cv = _album.cover ?: @"";
+    if (self.artwork && [self.artworkURL isEqualToString:cv]) info[MPMediaItemPropertyArtwork] = self.artwork;
+    else [self loadArtwork:cv];
     MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo = info;
     MPNowPlayingInfoCenter.defaultCenter.playbackState = (_player.rate > 0) ? MPNowPlayingPlaybackStatePlaying : MPNowPlayingPlaybackStatePaused;
+}
+
+- (void)loadArtwork:(NSString *)url {
+    if (!url.length || [self.artworkLoading isEqualToString:url]) return;
+    self.artworkLoading = url;
+    __weak typeof(self) w = self;
+    [ADUtil coverImage:url done:^(UIImage *img) {
+        __strong typeof(w) self = w; if (!self) return;
+        self.artworkLoading = nil;
+        if (!img || ![url isEqualToString:self.album.cover ?: @""]) return;
+        // 统一成正方形,锁屏里显示更饱满
+        CGFloat side = MIN(img.size.width, img.size.height);
+        CGFloat out = MIN(side, 600);
+        UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(out, out)];
+        UIImage *sq = [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+            CGFloat s = out / side;
+            [img drawInRect:CGRectMake(-(img.size.width - side) / 2 * s, -(img.size.height - side) / 2 * s, img.size.width * s, img.size.height * s)];
+        }];
+        self.artwork = [[MPMediaItemArtwork alloc] initWithBoundsSize:sq.size requestHandler:^UIImage *(CGSize size) { return sq; }];
+        self.artworkURL = url;
+        NSMutableDictionary *info = [MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo mutableCopy] ?: [NSMutableDictionary dictionary];
+        info[MPMediaItemPropertyArtwork] = self.artwork;
+        MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo = info;
+    }];
 }
 
 - (void)remoteCommands {
