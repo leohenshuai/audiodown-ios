@@ -81,11 +81,17 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) NSInteger selectedIndex;
 @property (nonatomic, assign) BOOL dockVisible;
 @property (nonatomic, copy) void (^onSelect)(NSInteger index);
+@property (nonatomic, weak, nullable) UIViewController *hostSelected;   // 当前页的根控制器（用来“再点回根”）
 - (void)show:(BOOL)show animated:(BOOL)animated;
 - (CGFloat)topY;
 @end
 
-@interface ADDockController : UITabBarController
+// 自建容器：不再继承 UITabBarController，系统底栏不存在，也就不会重影
+@interface ADDockController : UIViewController
+@property (nonatomic, strong) NSArray<UIViewController *> *pages;
+@property (nonatomic, assign) NSInteger selectedIndex;
+@property (nonatomic, readonly, nullable) UIViewController *selectedViewController;
+@property (nonatomic, copy, nullable) void (^onChange)(NSInteger idx);
 @end
 
 // ───────────────── 触感 / 提示音 ─────────────────

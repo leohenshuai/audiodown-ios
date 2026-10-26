@@ -168,7 +168,6 @@
         _cover.layer.shadowOpacity = 0.35;
         _cover.layer.shadowRadius = 14;
         _cover.layer.shadowOffset = CGSizeMake(0, 8);
-        [ADLiquid press:self];
         self.album = a;
     }
     return self;
@@ -177,7 +176,7 @@
     UIWindow *win = UIApplication.sharedApplication.windows.firstObject;
     UINavigationController *nav = nil;
     UIViewController *vc = win.rootViewController;
-    if ([vc isKindOfClass:UITabBarController.class]) vc = ((UITabBarController *)vc).selectedViewController;
+    if ([vc isKindOfClass:ADDockController.class]) vc = ((ADDockController *)vc).selectedViewController;
     if ([vc isKindOfClass:UINavigationController.class]) nav = (UINavigationController *)vc;
     ADAlbumController *a = [ADAlbumController new];
     a.album = self.album;
@@ -285,12 +284,12 @@
     UIWindow *key = UIApplication.sharedApplication.windows.firstObject;
     UIViewController *root = key.rootViewController;
     CGRect target = self.frame;
-    if ([root isKindOfClass:UITabBarController.class]) {
-        UITabBarController *tab = (UITabBarController *)root;
+    if ([root isKindOfClass:ADDockController.class]) {
+        UIViewController *tab = root;
         if (self.superview != tab.view) {
             [tab.view addSubview:self];
-            [tab.view bringSubviewToFront:self];
         }
+        [tab.view bringSubviewToFront:ADNavDock.shared];
         CGFloat W = tab.view.bounds.size.width;
         CGFloat h = _collapsed ? 50 : 58;
         CGFloat w = _collapsed ? 50 : W - 16;
@@ -711,10 +710,8 @@
 
 - (void)gotoSearch {
     [ADHaptic tap];
-    UITabBarController *tab = (UITabBarController *)self.tabBarController;
-    if (!tab) return;
-    tab.selectedIndex = 1;
-    [ADNavDock shared].selectedIndex = 1;
+    UIViewController *root = UIApplication.sharedApplication.windows.firstObject.rootViewController;
+    if ([root isKindOfClass:ADDockController.class]) ((ADDockController *)root).selectedIndex = 1;
 }
 
 - (void)openHistory {

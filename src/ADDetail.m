@@ -1191,8 +1191,8 @@
         [self dismissViewControllerAnimated:YES completion:^{
             UIViewController *root = UIApplication.sharedApplication.keyWindow.rootViewController;
             UINavigationController *nav = nil;
-            if ([root isKindOfClass:UITabBarController.class]) {
-                UIViewController *sel = ((UITabBarController *)root).selectedViewController;
+            if ([root isKindOfClass:ADDockController.class]) {
+                UIViewController *sel = ((ADDockController *)root).selectedViewController;
                 if ([sel isKindOfClass:UINavigationController.class]) nav = (UINavigationController *)sel;
             } else if ([root isKindOfClass:UINavigationController.class]) {
                 nav = (UINavigationController *)root;

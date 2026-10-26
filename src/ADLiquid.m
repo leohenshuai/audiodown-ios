@@ -26,14 +26,17 @@ static NSInteger const kLiteTag  = 9825;
 #pragma mark - 悬浮导航胶囊
 
 @interface ADNavDock ()
-- (void)layoutIn:(UITabBarController *)tab;
-- (void)movePill:(BOOL)animated;
-- (void)paint:(BOOL)animated;
+- (void)layoutInHost:(UIView *)host;
+- (void)moveLens:(NSInteger)idx animated:(BOOL)animated pressing:(BOOL)pressing;
 @end
 
+#pragma mark - 悬浮底栏（参照订货单 App 的“液态玻璃光圈”底栏）
+
 @implementation ADNavDock {
-    UIView *_pill;
+    UIView *_lens;
+    ADGradientView *_lensGrad;
     NSMutableArray<UIButton *> *_items;
+    NSInteger _pressIdx;
 }
 
 + (instancetype)shared {
@@ -47,31 +50,39 @@ static NSInteger const kLiteTag  = 9825;
 
 - (void)build {
     _dockVisible = YES;
-    [ADLiquid glass:self radius:31 alpha:0.05];
+    _pressIdx = -1;
+    [ADLiquid glass:self radius:30 alpha:0.045];
     self.layer.shadowColor = UIColor.blackColor.CGColor;
-    self.layer.shadowOpacity = 0.55;
-    self.layer.shadowRadius = 28;
-    self.layer.shadowOffset = CGSizeMake(0, 14);
+    self.layer.shadowOpacity = 0.5;
+    self.layer.shadowRadius = 30;
+    self.layer.shadowOffset = CGSizeMake(0, 12);
 
-    _pill = [[UIView alloc] initWithFrame:CGRectZero];
-    _pill.layer.cornerRadius = 21;
-    _pill.layer.cornerCurve = kCACornerCurveContinuous;
-    _pill.layer.borderWidth = 0.6;
-    _pill.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.20].CGColor;
-    _pill.userInteractionEnabled = NO;
-    ADGradientView *pg = [[ADGradientView alloc] initWithFrame:CGRectZero];
-    pg.tag = 7701;
-    pg.userInteractionEnabled = NO;
-    pg.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    pg.grad.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.20].CGColor,
-                       (id)[UIColor colorWithWhite:1 alpha:0.06].CGColor];
-    pg.grad.startPoint = CGPointMake(0.2, 0);
-    pg.grad.endPoint = CGPointMake(0.8, 1);
-    pg.layer.cornerRadius = 21;
-    pg.layer.cornerCurve = kCACornerCurveContinuous;
-    pg.clipsToBounds = YES;
-    [_pill addSubview:pg];
-    [self addSubview:_pill];
+    // 光圈：径向高光 + 内高光，按下时滑到所按按钮，带过冲
+    _lens = [[UIView alloc] initWithFrame:CGRectZero];
+    _lens.userInteractionEnabled = NO;
+    _lens.layer.cornerCurve = kCACornerCurveContinuous;
+    _lens.layer.cornerRadius = 24;
+    _lens.layer.borderWidth = 0.6;
+    _lens.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.28].CGColor;
+    _lens.layer.shadowColor = UIColor.blackColor.CGColor;
+    _lens.layer.shadowOpacity = 0.3;
+    _lens.layer.shadowRadius = 10;
+    _lens.layer.shadowOffset = CGSizeMake(0, 5);
+    _lensGrad = [[ADGradientView alloc] initWithFrame:CGRectZero];
+    _lensGrad.userInteractionEnabled = NO;
+    _lensGrad.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    _lensGrad.grad.type = kCAGradientLayerRadial;
+    _lensGrad.grad.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.30].CGColor,
+                              (id)[UIColor colorWithWhite:1 alpha:0.12].CGColor,
+                              (id)[UIColor colorWithRed:1.0 green:0.62 blue:0.4 alpha:0.14].CGColor];
+    _lensGrad.grad.locations = @[@0, @0.55, @1];
+    _lensGrad.grad.startPoint = CGPointMake(0.3, 0.2);
+    _lensGrad.grad.endPoint = CGPointMake(1.2, 1.4);
+    _lensGrad.layer.cornerRadius = 24;
+    _lensGrad.layer.cornerCurve = kCACornerCurveContinuous;
+    _lensGrad.clipsToBounds = YES;
+    [_lens addSubview:_lensGrad];
+    [self addSubview:_lens];
 
     _items = [NSMutableArray array];
     NSArray *icons = @[@"sparkles", @"magnifyingglass", @"books.vertical"];
@@ -79,99 +90,108 @@ static NSInteger const kLiteTag  = 9825;
     for (NSInteger i = 0; i < 3; i++) {
         UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
         b.tag = i;
-        [b addTarget:self action:@selector(tap:) forControlEvents:UIControlEventTouchUpInside];
+        [b addTarget:self action:@selector(down:) forControlEvents:UIControlEventTouchDown];
+        [b addTarget:self action:@selector(up:) forControlEvents:UIControlEventTouchUpInside];
+        [b addTarget:self action:@selector(cancel:) forControlEvents:UIControlEventTouchUpOutside | UIControlEventTouchCancel];
         UIImageView *iv = [UIImageView new];
         iv.tag = 31;
+        iv.userInteractionEnabled = NO;
         iv.contentMode = UIViewContentModeScaleAspectFit;
         iv.image = [UIImage systemImageNamed:icons[i]
                          withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:20 weight:UIImageSymbolWeightMedium]];
         [b addSubview:iv];
         UILabel *l = [ADUtil label:nil size:10 color:UIColor.whiteColor];
         l.tag = 32;
+        l.userInteractionEnabled = NO;
         l.text = names[i];
         l.textAlignment = NSTextAlignmentCenter;
+        l.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
         [b addSubview:l];
         [self addSubview:b];
         [_items addObject:b];
     }
-    [self paint:NO];
+    [self paint];
 }
 
-- (void)layoutIn:(UITabBarController *)tab {
-    if (!tab) return;
-    CGFloat W = tab.view.bounds.size.width;
-    CGFloat H = tab.view.bounds.size.height;
-    CGFloat sb = tab.view.safeAreaInsets.bottom;
-    CGFloat h = 62, side = 26;
-    CGFloat y = H - sb - 12 - h;
-    self.frame = CGRectMake(side, y, W - side * 2, h);
-    [ADLiquid corner:h / 2.0 on:self];
+- (void)layoutInHost:(UIView *)host {
+    CGFloat W = host.bounds.size.width;
+    CGFloat H = host.bounds.size.height;
+    CGFloat sb = host.safeAreaInsets.bottom;
+    CGFloat h = 62, side = 14;
+    CGFloat y = H - sb - 6 - h;
+    self.bounds = CGRectMake(0, 0, W - side * 2, h);
+    self.center = CGPointMake(W / 2.0, y + h / 2.0);
+    [ADLiquid corner:30 on:self];
 
-    CGFloat seg = (W - side * 2) / 3.0;
+    CGFloat seg = self.bounds.size.width / 3.0;
     for (NSInteger i = 0; i < (NSInteger)_items.count; i++) {
         UIButton *b = _items[i];
         b.frame = CGRectMake(seg * i, 0, seg, h);
-        [b viewWithTag:31].frame = CGRectMake((seg - 22) / 2, 11, 22, 22);
-        [b viewWithTag:32].frame = CGRectMake(0, 35, seg, 13);
+        [b viewWithTag:31].frame = CGRectMake((seg - 24) / 2, 10, 24, 24);
+        [b viewWithTag:32].frame = CGRectMake(0, 36, seg, 14);
     }
-    [self movePill:NO];
+    [self moveLens:self.selectedIndex animated:NO pressing:NO];
 }
 
-- (void)layoutSubviews {
-    [super layoutSubviews];
-    UIView *g = [_pill viewWithTag:7701];
-    g.frame = _pill.bounds;
+- (CGFloat)topY {
+    return self.center.y - self.bounds.size.height / 2.0;
 }
 
-- (CGFloat)topY { return self.frame.origin.y; }
-
-- (void)movePill:(BOOL)animated {
+- (CGRect)lensRect:(NSInteger)idx {
     CGFloat seg = self.bounds.size.width / 3.0;
-    CGRect r = CGRectMake(seg * self.selectedIndex + (seg - 62) / 2, 9, 62, 44);
-    if (!animated || CGRectIsEmpty(_pill.frame)) { _pill.frame = r; return; }
-    CGFloat dist = fabs(r.origin.x - _pill.frame.origin.x);
-    if (dist < 1) { _pill.frame = r; return; }
-    // 第一段：向目标方向拉长（液滴被拖拽）；第二段：弹簧收回到目标宽度
-    CGFloat minX = MIN(r.origin.x, _pill.frame.origin.x);
-    CGRect stretch = CGRectMake(minX, 11, dist + 62, 40);
-    [UIView animateWithDuration:0.14 delay:0 options:UIViewAnimationOptionCurveEaseIn | UIViewAnimationOptionBeginFromCurrentState animations:^{
-        _pill.frame = stretch;
-        _pill.alpha = 0.85;
-    } completion:^(BOOL f) {
-        [UIView animateWithDuration:0.42 delay:0 usingSpringWithDamping:0.62 initialSpringVelocity:0.7
-                            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
-                         animations:^{ _pill.frame = r; _pill.alpha = 1; } completion:nil];
-    }];
+    return CGRectMake(seg * idx + 5, 5, seg - 10, self.bounds.size.height - 10);
 }
 
-- (void)paint:(BOOL)animated {
+- (void)moveLens:(NSInteger)idx animated:(BOOL)animated pressing:(BOOL)pressing {
+    CGRect r = [self lensRect:idx];
+    void (^apply)(void) = ^{
+        _lens.frame = r;
+        _lensGrad.frame = _lens.bounds;
+        _lens.alpha = 1;
+        _lens.transform = pressing ? CGAffineTransformMakeScale(1.06, 1.06) : CGAffineTransformIdentity;
+    };
+    if (!animated || CGRectIsEmpty(_lens.frame)) { apply(); return; }
+    // 与订货单一致：cubic-bezier(.3,1.5,.5,1)，用弹簧近似过冲
+    [UIView animateWithDuration:0.42 delay:0 usingSpringWithDamping:0.64 initialSpringVelocity:0.9
+                        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+                     animations:apply completion:nil];
+}
+
+- (void)paint {
     for (NSInteger i = 0; i < (NSInteger)_items.count; i++) {
         UIButton *b = _items[i];
         BOOL on = (i == self.selectedIndex);
-        UIColor *c = on ? [ADUtil brand] : [UIColor colorWithWhite:1 alpha:0.55];
+        UIColor *c = on ? [ADUtil brand] : [UIColor colorWithWhite:1 alpha:0.58];
         UIImageView *iv = [b viewWithTag:31];
         UILabel *l = [b viewWithTag:32];
-        iv.tintColor = c;
-        l.textColor = c;
-        [UIView animateWithDuration:0.2 animations:^{
-            iv.transform = on ? CGAffineTransformMakeScale(1.06, 1.06) : CGAffineTransformIdentity;
-        }];
+        [UIView transitionWithView:b duration:0.2 options:UIViewAnimationOptionTransitionCrossDissolve animations:^{
+            iv.tintColor = c;
+            l.textColor = c;
+        } completion:nil];
     }
-    [self movePill:YES];
 }
 
 - (void)setSelectedIndex:(NSInteger)selectedIndex {
+    BOOL changed = (_selectedIndex != selectedIndex);
     _selectedIndex = selectedIndex;
-    [self paint:YES];
+    [self paint];
+    if (changed) [self moveLens:selectedIndex animated:YES pressing:NO];
 }
 
-- (void)tap:(UIButton *)b {
+// 按下：光圈立刻滑到所按按钮并略放大
+- (void)down:(UIButton *)b {
+    _pressIdx = b.tag;
     [ADHaptic select];
+    [self moveLens:b.tag animated:YES pressing:YES];
+}
+
+- (void)up:(UIButton *)b {
     NSInteger idx = b.tag;
+    _pressIdx = -1;
     if (idx == self.selectedIndex) {
-        UITabBarController *tab = (UITabBarController *)self.window.rootViewController;
-        UINavigationController *nav = [tab.selectedViewController isKindOfClass:UINavigationController.class]
-            ? (UINavigationController *)tab.selectedViewController : nil;
+        [self moveLens:idx animated:YES pressing:NO];
+        UINavigationController *nav = [self.hostSelected isKindOfClass:UINavigationController.class]
+            ? (UINavigationController *)self.hostSelected : nil;
         if (nav && nav.viewControllers.count > 1) [nav popToRootViewControllerAnimated:YES];
         return;
     }
@@ -179,48 +199,108 @@ static NSInteger const kLiteTag  = 9825;
     if (self.onSelect) self.onSelect(idx);
 }
 
+- (void)cancel:(UIButton *)b {
+    _pressIdx = -1;
+    [self moveLens:self.selectedIndex animated:YES pressing:NO];
+}
+
 - (void)show:(BOOL)show animated:(BOOL)animated {
     _dockVisible = show;
+    self.userInteractionEnabled = show;
+    CGAffineTransform t = show ? CGAffineTransformIdentity : CGAffineTransformMakeTranslation(0, 50);
     if (!animated) {
         self.alpha = show ? 1 : 0;
-        self.transform = show ? CGAffineTransformIdentity : CGAffineTransformMakeTranslation(0, 40);
+        self.transform = t;
         return;
     }
-    [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.88 initialSpringVelocity:0.3
+    [UIView animateWithDuration:0.32 delay:0 usingSpringWithDamping:0.86 initialSpringVelocity:0.3
                         options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState
                      animations:^{
         self.alpha = show ? 1 : 0;
-        self.transform = show ? CGAffineTransformIdentity : CGAffineTransformMakeTranslation(0, 40);
+        self.transform = t;
     } completion:nil];
 }
 @end
 
-#pragma mark - 承载悬浮导航的 Tab 控制器
+#pragma mark - 自建容器（不使用 UITabBarController，彻底没有系统底栏）
 
-@implementation ADDockController
+@implementation ADDockController {
+    UIView *_content;
+}
+
+- (instancetype)init {
+    if ((self = [super init])) { _selectedIndex = -1; }
+    return self;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = [ADUtil bg];
+    _content = [[UIView alloc] initWithFrame:self.view.bounds];
+    _content.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [self.view addSubview:_content];
+    ADNavDock *dock = [ADNavDock shared];
+    [self.view addSubview:dock];
+    __weak typeof(self) w = self;
+    dock.onSelect = ^(NSInteger idx) { [w switchTo:idx]; };
+    dock.hostSelected = nil;
+    if (self.pages.count) [self switchTo:0];
+}
+
+- (void)setPages:(NSArray<UIViewController *> *)pages {
+    _pages = pages;
+    if (self.isViewLoaded && pages.count && _selectedIndex < 0) [self switchTo:0];
+}
+
+- (UIViewController *)selectedViewController {
+    return (_selectedIndex >= 0 && _selectedIndex < (NSInteger)_pages.count) ? _pages[_selectedIndex] : nil;
+}
+
+- (void)setSelectedIndex:(NSInteger)idx { [self switchTo:idx]; }
+
+- (void)switchTo:(NSInteger)idx {
+    if (idx < 0 || idx >= (NSInteger)_pages.count || idx == _selectedIndex) return;
+    UIViewController *old = self.selectedViewController;
+    UIViewController *neu = _pages[idx];
+    if (old) {
+        [old willMoveToParentViewController:nil];
+        [old.view removeFromSuperview];
+        [old removeFromParentViewController];
+    }
+    [self addChildViewController:neu];
+    neu.view.frame = _content.bounds;
+    neu.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    neu.view.alpha = 0;
+    [_content addSubview:neu.view];
+    [neu didMoveToParentViewController:self];
+    [UIView animateWithDuration:0.22 animations:^{ neu.view.alpha = 1; }];
+    _selectedIndex = idx;
+
+    ADNavDock *dock = [ADNavDock shared];
+    dock.hostSelected = neu;
+    dock.selectedIndex = idx;
+    BOOL atRoot = YES;
+    if ([neu isKindOfClass:UINavigationController.class])
+        atRoot = ((UINavigationController *)neu).viewControllers.count <= 1;
+    [dock show:atRoot animated:NO];
+    [self.view bringSubviewToFront:dock];
+    if (self.onChange) self.onChange(idx);
+}
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     ADNavDock *dock = [ADNavDock shared];
-    if (dock.superview != self.view) {
-        [self.view addSubview:dock];
-        dock.selectedIndex = self.selectedIndex;
-    }
-    [dock layoutIn:self];
+    if (dock.superview != self.view) [self.view addSubview:dock];
+    [dock layoutInHost:self.view];
     [self.view bringSubviewToFront:dock];
-}
-
-- (void)setSelectedIndex:(NSUInteger)selectedIndex {
-    NSInteger old = self.selectedIndex;
-    [super setSelectedIndex:selectedIndex];
-    if (old != (NSInteger)selectedIndex) [ADNavDock shared].selectedIndex = (NSInteger)selectedIndex;
 }
 
 @end
 
 #pragma mark - 设计系统
 
-@interface ADLiquid ()
+@interface ADLiquid () <UIGestureRecognizerDelegate>
++ (id<UIGestureRecognizerDelegate>)pressDelegate;
 + (void)retint:(UIView *)v alpha:(CGFloat)alpha;
 + (void)onPress:(UILongPressGestureRecognizer *)g;
 @end
@@ -457,10 +537,23 @@ static NSInteger const kLiteTag  = 9825;
     m.userInteractionEnabled = NO;
     [v addSubview:m];
     UILongPressGestureRecognizer *g = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(onPress:)];
-    g.minimumPressDuration = 0;
-    g.allowableMovement = 24;
+    g.minimumPressDuration = 0.12;          // 稍作延迟：快速轻点不进入手势，交还给点击
+    g.allowableMovement = 14;
     g.cancelsTouchesInView = NO;
+    g.delaysTouchesBegan = NO;
+    g.delaysTouchesEnded = NO;
+    g.delegate = [ADLiquid pressDelegate];
     [v addGestureRecognizer:g];
+}
+
++ (id<UIGestureRecognizerDelegate>)pressDelegate {
+    static ADLiquid *d; static dispatch_once_t once;
+    dispatch_once(&once, ^{ d = [ADLiquid new]; });
+    return d;
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)a shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)b {
+    return YES;      // 与点击/滚动并存，互不吞事件
 }
 
 + (void)onPress:(UILongPressGestureRecognizer *)g {
