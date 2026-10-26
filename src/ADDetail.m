@@ -1382,7 +1382,7 @@
     self.playBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     self.playBtn.tintColor = [UIColor colorWithWhite:0.09 alpha:1];
     self.playBtn.backgroundColor = UIColor.whiteColor;
-    self.playBtn.layer.cornerRadius = 36;
+    self.playBtn.layer.cornerRadius = 32;
     self.playBtn.layer.shadowColor = UIColor.blackColor.CGColor;
     self.playBtn.layer.shadowOpacity = 0.35; self.playBtn.layer.shadowRadius = 18; self.playBtn.layer.shadowOffset = CGSizeMake(0, 8);
     [self.playBtn addTarget:self action:@selector(toggle) forControlEvents:UIControlEventTouchUpInside];
@@ -1395,10 +1395,10 @@
     }
 
     // 控制行
-    UIButton *prev = [self iconButton:@"backward.end.fill" size:22 action:@selector(prev)];
-    UIButton *back = [self iconButton:@"gobackward.15" size:30 action:@selector(back15)];
-    UIButton *fwd = [self iconButton:@"goforward.15" size:30 action:@selector(fwd15)];
-    UIButton *next = [self iconButton:@"forward.end.fill" size:22 action:@selector(next)];
+    UIButton *prev = [self iconButton:@"backward.end.fill" size:19 action:@selector(prev)];
+    UIButton *back = [self iconButton:@"gobackward.15" size:26 action:@selector(back15)];
+    UIButton *fwd = [self iconButton:@"goforward.15" size:26 action:@selector(fwd15)];
+    UIButton *next = [self iconButton:@"forward.end.fill" size:19 action:@selector(next)];
     prev.tag = 201; back.tag = 202; fwd.tag = 203; next.tag = 204;
     for (UIButton *b in @[prev, back, fwd, next]) {
         b.tintColor = [UIColor colorWithWhite:1 alpha:0.92];
@@ -1505,7 +1505,7 @@
     CGFloat top = safeTop + 16;
     CGFloat bottomPad = safeBottom + 16;
     CGFloat blockH = 70 + 28 + 30 + 80 + 40;
-    CGFloat lastGap = 18;                 // 控制行与底部工具行固定贴近
+    CGFloat lastGap = 30;                 // 控制行与底部工具行：工具条整体比之前再下移约 12pt
     CGFloat coverMax = MIN(W - 24, H * 0.52);
     CGFloat leftover = H - top - bottomPad - blockH - coverMax - lastGap;
     CGFloat coverH = coverMax;
@@ -1539,11 +1539,11 @@
 
     // 播放控件整体上移约 10pt：主键 72 圆形白底，副键 48 点击区域，间距均匀
     CGFloat cy = y + 36;
-    self.playBtn.frame = CGRectMake(W / 2 - 36, cy - 36, 72, 72);
-    [self.view viewWithTag:202].frame = CGRectMake(W / 2 - 36 - 22 - 48, cy - 24, 48, 48);
-    [self.view viewWithTag:203].frame = CGRectMake(W / 2 + 36 + 22, cy - 24, 48, 48);
-    [self.view viewWithTag:201].frame = CGRectMake(W / 2 - 36 - 22 - 48 - 14 - 48, cy - 24, 48, 48);
-    [self.view viewWithTag:204].frame = CGRectMake(W / 2 + 36 + 22 + 48 + 14, cy - 24, 48, 48);
+    self.playBtn.frame = CGRectMake(W / 2 - 32, cy - 32, 64, 64);
+    [self.view viewWithTag:202].frame = CGRectMake(W / 2 - 32 - 20 - 44, cy - 22, 44, 44);
+    [self.view viewWithTag:203].frame = CGRectMake(W / 2 + 32 + 20, cy - 22, 44, 44);
+    [self.view viewWithTag:201].frame = CGRectMake(W / 2 - 32 - 20 - 44 - 12 - 44, cy - 22, 44, 44);
+    [self.view viewWithTag:204].frame = CGRectMake(W / 2 + 32 + 20 + 44 + 12, cy - 22, 44, 44);
     y += 80 + lastGap;
 
     UIView *toolPill = [self.view viewWithTag:900];
@@ -1635,7 +1635,7 @@
     self.mid.text = mid ?: @"在线播放";
 
     [self.playBtn setImage:[UIImage systemImageNamed:(p.isPlaying ? @"pause.fill" : @"play.fill")
-                                withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:30 weight:UIImageSymbolWeightBold]]
+                                withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:27 weight:UIImageSymbolWeightBold]]
                    forState:UIControlStateNormal];
     self.playBtn.imageEdgeInsets = p.isPlaying ? UIEdgeInsetsZero : UIEdgeInsetsMake(0, 3, 0, 0);   // 三角形视觉居中
     UIButton *rateBtn = (UIButton *)[self.view viewWithTag:301];

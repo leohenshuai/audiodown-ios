@@ -202,8 +202,9 @@
     UILabel *_title, *_sub;
     UIButton *_btn, *_back, *_fold;
     UIView *_track, *_fill;
-    BOOL _collapsed;
+    BOOL _collapsed, _spinPaused, _skipping;
     NSTimer *_collapseTimer;
+    UIView *_hole;
 }
 + (instancetype)shared {
     static ADMiniBar *m; static dispatch_once_t once;
@@ -247,8 +248,85 @@
     UISwipeGestureRecognizer *swUp = [[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(unfoldNow)];
     swUp.direction = UISwipeGestureRecognizerDirectionUp;
     [self addGestureRecognizer:swUp];
+    // 左滑 = 下一集，右滑 = 上一集
+    UISwipeGestureRecognizer *swL = [[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(swipeNext)];
+    swL.direction = UISwipeGestureRecognizerDirectionLeft;
+    [self addGestureRecognizer:swL];
+    UISwipeGestureRecognizer *swR = [[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(swipePrev)];
+    swR.direction = UISwipeGestureRecognizerDirectionRight;
+    [self addGestureRecognizer:swR];
+    // 收起成圆球后像唱片：中间一个小孔
+    _hole = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 11, 11)];
+    _hole.backgroundColor = [UIColor colorWithRed:0.08 green:0.06 blue:0.05 alpha:0.95];
+    _hole.layer.cornerRadius = 5.5;
+    _hole.layer.borderWidth = 1.2;
+    _hole.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.35].CGColor;
+    _hole.userInteractionEnabled = NO;
+    _hole.hidden = YES;
+    [self addSubview:_hole];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:@"ADPlayerTick" object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:@"ADPlayerChanged" object:nil];
+}
+
+- (void)swipeSkip:(BOOL)next {
+    if (_collapsed || _skipping) return;
+    ADPlayer *p = ADPlayer.shared;
+    NSInteger i = p.index, n = (NSInteger)p.tracks.count;
+    BOOL ok = next ? (i + 1 < n) : (i > 0);
+    CGFloat dx = next ? -28 : 28;
+    if (!ok) {   // 到头了：橡皮筋回弹 + 警示触感
+        [ADHaptic warning];
+        [UIView animateWithDuration:0.12 animations:^{ for (UIView *v in @[_cover, _title, _sub]) v.transform = CGAffineTransformMakeTranslation(-dx * 0.35, 0); }
+                         completion:^(BOOL f) {
+            [UIView animateWithDuration:0.4 delay:0 usingSpringWithDamping:0.5 initialSpringVelocity:0.8 options:0 animations:^{ for (UIView *v in @[_cover, _title, _sub]) v.transform = CGAffineTransformIdentity; } completion:nil];
+        }];
+        return;
+    }
+    _skipping = YES;
+    [ADHaptic select];
+    [_collapseTimer invalidate]; _collapseTimer = nil;
+    [UIView animateWithDuration:0.14 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+        for (UIView *v in @[_title, _sub, _cover]) { v.transform = CGAffineTransformMakeTranslation(dx, 0); v.alpha = 0; }
+    } completion:^(BOOL f) {
+        if (next) [p next]; else [p playAt:i - 1];
+        for (UIView *v in @[_title, _sub, _cover]) v.transform = CGAffineTransformMakeTranslation(-dx, 0);
+        [UIView animateWithDuration:0.38 delay:0.05 usingSpringWithDamping:0.78 initialSpringVelocity:0.4 options:0 animations:^{
+            for (UIView *v in @[_title, _sub, _cover]) { v.transform = CGAffineTransformIdentity; v.alpha = 1; }
+        } completion:^(BOOL f2) { _skipping = NO; }];
+        [self scheduleCollapse];
+    }];
+}
+- (void)swipeNext { [self swipeSkip:YES]; }
+- (void)swipePrev { [self swipeSkip:NO]; }
+
+// 收起成圆球后：播放时封面缓慢旋转，暂停时停在当前角度
+- (void)updateSpin {
+    CALayer *L = _cover.layer;
+    BOOL playing = ADPlayer.shared.isPlaying;
+    if (!_collapsed) {
+        if ([L animationForKey:@"spin"]) {
+            [L removeAnimationForKey:@"spin"];
+            L.speed = 1; L.timeOffset = 0; L.beginTime = 0; _spinPaused = NO;
+        }
+        return;
+    }
+    if (![L animationForKey:@"spin"]) {
+        CABasicAnimation *a = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
+        a.fromValue = @0; a.toValue = @(M_PI * 2); a.duration = 9; a.repeatCount = HUGE_VALF;
+        a.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionLinear];
+        a.removedOnCompletion = NO;
+        [L addAnimation:a forKey:@"spin"];
+        L.speed = 1; L.timeOffset = 0; L.beginTime = 0; _spinPaused = NO;
+    }
+    if (playing && _spinPaused) {
+        CFTimeInterval paused = L.timeOffset;
+        L.speed = 1; L.timeOffset = 0; L.beginTime = 0;
+        L.beginTime = [L convertTime:CACurrentMediaTime() fromLayer:nil] - paused;
+        _spinPaused = NO;
+    } else if (!playing && !_spinPaused) {
+        L.timeOffset = [L convertTime:CACurrentMediaTime() fromLayer:nil];
+        L.speed = 0; _spinPaused = YES;
+    }
 }
 
 - (void)layoutSubviews {
@@ -257,6 +335,10 @@
     if (_collapsed) {
         _cover.frame = CGRectMake(7, 7, h - 14, h - 14);
         _cover.layer.cornerRadius = (h - 14) / 2;
+        _cover.layer.borderWidth = 1.5;
+        _cover.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.28].CGColor;
+        _hole.hidden = NO;
+        _hole.center = CGPointMake(w / 2, h / 2);
         _title.hidden = YES;
         _sub.hidden = YES;
         _btn.hidden = YES;
@@ -274,6 +356,8 @@
     _track.hidden = NO;
     _fill.hidden = NO;
     _cover.layer.cornerRadius = 8;
+    _cover.layer.borderWidth = 0;
+    _hole.hidden = YES;
     _cover.frame = CGRectMake(8, (h - 42) / 2, 42, 42);
     _fold.frame = CGRectMake(w - 32, (h - 36) / 2, 30, 36);
     _btn.frame = CGRectMake(w - 66, (h - 36) / 2, 34, 36);
@@ -343,6 +427,7 @@
     _collapsed = YES;
     [self applyFrame:YES];
     [UIView animateWithDuration:0.2 animations:^{ [self layoutIfNeeded]; }];
+    [self updateSpin];
 }
 
 - (void)expandNow {
@@ -352,6 +437,7 @@
     _collapsed = NO;
     [self applyFrame:YES];
     [UIView animateWithDuration:0.2 animations:^{ [self layoutIfNeeded]; }];
+    [self updateSpin];
     [self scheduleCollapse];
 }
 
@@ -389,6 +475,7 @@
     // 不管播放还是暂停，闲置 8 秒都会收缩
     if (!_collapsed && !_collapseTimer) [self scheduleCollapse];
     [self applyFrame:NO];
+    [self updateSpin];
 }
 
 - (void)foldNow {
@@ -399,6 +486,7 @@
     _collapsed = YES;
     [self applyFrame:YES];
     [UIView animateWithDuration:0.2 animations:^{ [self layoutIfNeeded]; }];
+    [self updateSpin];
 }
 
 - (void)unfoldNow {
@@ -763,6 +851,101 @@
 - (void)moreCard:(ADAlbum *)a { [ADHaptic tap]; [self menuCard:a]; }
 @end
 
+// ───────────── 搜索结果行 ─────────────
+@interface ADSearchCell : UICollectionViewCell
+- (void)fill:(ADAlbum *)a keyword:(NSString *)kw;
+@end
+@implementation ADSearchCell {
+    UIView *_card;
+    UIImageView *_cover, *_chev;
+    UILabel *_title, *_sub, *_meta;
+    UILabel *_p[3];
+}
+- (instancetype)initWithFrame:(CGRect)f {
+    if ((self = [super initWithFrame:f])) {
+        _card = [UIView new];
+        [ADLiquid glassLite:_card radius:20];
+        [self.contentView addSubview:_card];
+        _cover = [UIImageView new];
+        _cover.layer.cornerRadius = 12; _cover.clipsToBounds = YES;
+        _cover.backgroundColor = [UIColor colorWithWhite:1 alpha:0.06];
+        _title = [ADUtil label:nil size:16 color:UIColor.whiteColor]; _title.numberOfLines = 1;
+        _sub = [ADUtil label:nil size:12.5 color:[UIColor colorWithWhite:1 alpha:0.7]]; _sub.numberOfLines = 1;
+        _meta = [ADUtil label:nil size:11.5 color:[UIColor colorWithWhite:1 alpha:0.45]]; _meta.numberOfLines = 1;
+        _chev = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"chevron.right" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:12 weight:UIImageSymbolWeightSemibold]]];
+        _chev.tintColor = [UIColor colorWithWhite:1 alpha:0.28];
+        for (UIView *v in @[_cover, _title, _sub, _meta, _chev]) [_card addSubview:v];
+        for (int i = 0; i < 3; i++) {
+            UILabel *l = [ADUtil label:nil size:10.5 color:UIColor.whiteColor];
+            l.font = [UIFont systemFontOfSize:10.5 weight:UIFontWeightSemibold];
+            l.numberOfLines = 1; l.textAlignment = NSTextAlignmentCenter;
+            l.layer.cornerRadius = 9; l.clipsToBounds = YES; l.hidden = YES;
+            [_card addSubview:l]; _p[i] = l;
+        }
+    }
+    return self;
+}
+- (void)setHighlighted:(BOOL)h {
+    [super setHighlighted:h];
+    [UIView animateWithDuration:h ? 0.12 : 0.38 delay:0 usingSpringWithDamping:h ? 1 : 0.6 initialSpringVelocity:0
+                        options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState
+                     animations:^{ self.transform = h ? CGAffineTransformMakeScale(0.975, 0.975) : CGAffineTransformIdentity; } completion:nil];
+}
+- (void)fill:(ADAlbum *)a keyword:(NSString *)kw {
+    [ADUtil cover:_cover url:a.cover];
+    NSDictionary *base = @{NSFontAttributeName: [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold], NSForegroundColorAttributeName: UIColor.whiteColor};
+    NSMutableAttributedString *as = [[NSMutableAttributedString alloc] initWithString:a.title ?: @"" attributes:base];
+    if (kw.length && a.title.length) {
+        NSRange r = [a.title rangeOfString:kw options:NSCaseInsensitiveSearch];
+        if (r.location != NSNotFound) [as addAttribute:NSForegroundColorAttributeName value:[ADUtil brand] range:r];
+    }
+    _title.attributedText = as;
+    NSString *who = a.anchor.length ? a.anchor : (a.author.length ? a.author : @"");
+    _sub.text = who.length ? who : @"有声书";
+    NSMutableArray *bits = [NSMutableArray array];
+    if (a.trackCount > 0) [bits addObject:[NSString stringWithFormat:@"%ld 集", (long)a.trackCount]];
+    if (a.playCount > 0) [bits addObject:[NSString stringWithFormat:@"%@播放", [ADUtil count:a.playCount]]];
+    if (a.provider.length) [bits addObject:a.provider];
+    _meta.text = [bits componentsJoinedByString:@" · "];
+    ADStore *st = [ADStore shared];
+    NSMutableArray *tags = [NSMutableArray array];   // @[文字, 是否强调]
+    if ([st isAlbumDone:a.albumId]) [tags addObject:@[@"已听完", @YES]];
+    if (a.isPaid) [tags addObject:@[@"VIP", @YES]];
+    if ([st isFavorite:a.albumId]) [tags addObject:@[@"已收藏", @NO]];
+    ADTask *tk = [[ADDownloader shared] taskForAlbum:a.albumId];
+    if (tk && tk.done > 0) [tags addObject:@[@"已缓存", @NO]];
+    for (int i = 0; i < 3; i++) {
+        UILabel *l = _p[i];
+        if (i < (NSInteger)tags.count) {
+            BOOL hot = [tags[i][1] boolValue];
+            l.text = tags[i][0]; l.hidden = NO;
+            l.backgroundColor = hot ? [ADUtil brand] : [UIColor colorWithWhite:1 alpha:0.12];
+            l.textColor = hot ? UIColor.whiteColor : [UIColor colorWithWhite:1 alpha:0.78];
+        } else l.hidden = YES;
+    }
+    [self setNeedsLayout];
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGFloat W = self.contentView.bounds.size.width, H = self.contentView.bounds.size.height;
+    _card.frame = CGRectMake(12, 4, W - 24, H - 8);
+    CGFloat cw = _card.bounds.size.width, ch = _card.bounds.size.height;
+    _cover.frame = CGRectMake(12, (ch - 76) / 2, 76, 76);
+    CGFloat x = 102, tw = cw - x - 30;
+    _title.frame = CGRectMake(x, 12, tw, 20);
+    _sub.frame = CGRectMake(x, 34, tw, 16);
+    _meta.frame = CGRectMake(x, 52, tw, 16);
+    _chev.frame = CGRectMake(cw - 26, (ch - 14) / 2, 14, 14);
+    CGFloat px = x;
+    for (int i = 0; i < 3; i++) {
+        UILabel *l = _p[i]; if (l.hidden) continue;
+        CGSize sz = [l.text sizeWithAttributes:@{NSFontAttributeName: l.font}];
+        l.frame = CGRectMake(px, ch - 12 - 18, sz.width + 16, 18);
+        px += sz.width + 16 + 6;
+    }
+}
+@end
+
 // ───────────── 搜索 ─────────────
 @interface ADSearchController () <UICollectionViewDataSource, UICollectionViewDelegate, UISearchBarDelegate, UIScrollViewDelegate>
 @property (nonatomic, strong) UISearchBar *bar;
@@ -788,23 +971,36 @@
     [super viewDidLoad];
     [ADLiquid canvas:self.view];
     self.navigationController.navigationBar.hidden = YES;
-    self.bar = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 52)];
+    UILabel *stitle = [ADUtil label:@"PingFangSC-Semibold" size:34 color:UIColor.whiteColor];
+    stitle.text = @"搜索"; stitle.tag = 76; stitle.numberOfLines = 1;
+    [self.view addSubview:stitle];
+    UIView *spill = [UIView new];
+    spill.tag = 77; spill.userInteractionEnabled = NO;
+    [ADLiquid glassLite:spill radius:22];
+    [self.view addSubview:spill];
+    self.bar = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 44)];
     self.bar.placeholder = @"书名 / 作者 / 主播";
     self.bar.searchBarStyle = UISearchBarStyleMinimal;
     self.bar.delegate = self;
     self.bar.tintColor = [ADUtil brand];
+    self.bar.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    [self.bar setSearchFieldBackgroundImage:[UIImage new] forState:UIControlStateNormal];
+    self.bar.backgroundImage = [UIImage new];
+    self.bar.searchTextField.textColor = UIColor.whiteColor;
+    self.bar.searchTextField.backgroundColor = UIColor.clearColor;
     [self.view addSubview:self.bar];
     [self layoutChrome];
     CGFloat w = (self.view.bounds.size.width - 16 * 2 - 12 * 2) / 3;
+    (void)w;
     UICollectionViewFlowLayout *lo = [UICollectionViewFlowLayout new];
-    lo.itemSize = CGSizeMake(w, w + 40);
-    lo.minimumInteritemSpacing = 12;
-    lo.minimumLineSpacing = 16;
+    lo.itemSize = CGSizeMake(self.view.bounds.size.width, 108);
+    lo.minimumInteritemSpacing = 0;
+    lo.minimumLineSpacing = 0;
     self.cv = [[UICollectionView alloc] initWithFrame:CGRectMake(0, 108, self.view.bounds.size.width, self.view.bounds.size.height - 108) collectionViewLayout:lo];
     self.cv.backgroundColor = UIColor.clearColor;
-    self.cv.contentInset = UIEdgeInsetsMake(8, 16, 120, 16);
+    self.cv.contentInset = UIEdgeInsetsMake(4, 0, 140, 0);
     self.cv.dataSource = self; self.cv.delegate = self;
-    [self.cv registerClass:UICollectionViewCell.class forCellWithReuseIdentifier:@"c"];
+    [self.cv registerClass:ADSearchCell.class forCellWithReuseIdentifier:@"c"];
     self.cv.refreshControl = [[UIRefreshControl alloc] init];
     self.cv.refreshControl.tintColor = [UIColor colorWithWhite:1 alpha:0.5];
     [self.cv.refreshControl addTarget:self action:@selector(refreshSearch) forControlEvents:UIControlEventValueChanged];
@@ -815,7 +1011,7 @@
     self.list = [NSMutableArray array];
     self.seg = [[UISegmentedControl alloc] initWithItems:@[@"在线", @"本地"]];
     self.seg.selectedSegmentIndex = 0;
-    self.seg.frame = CGRectMake(16, 0, 150, 32);
+    self.seg.frame = CGRectMake(16, 0, 130, 32);
     if (@available(iOS 13.0, *)) {
         self.seg.selectedSegmentTintColor = [ADUtil brand];
         self.seg.backgroundColor = [UIColor colorWithWhite:1 alpha:0.1];
@@ -1069,8 +1265,9 @@
         b.titleLabel.font = f;
         [b setTitle:w forState:UIControlStateNormal];
         [b setTitleColor:[UIColor colorWithWhite:1 alpha:0.85] forState:UIControlStateNormal];
-        b.backgroundColor = [UIColor colorWithWhite:1 alpha:0.09];
+        b.backgroundColor = [UIColor colorWithWhite:1 alpha:0.08];
         b.layer.cornerRadius = 15;
+        b.layer.borderWidth = 0.6; b.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.12].CGColor;
         [b addTarget:self action:@selector(tapWord:) forControlEvents:UIControlEventTouchUpInside];
         [self.panel addSubview:b];
         x += bw + 8;
@@ -1118,35 +1315,37 @@
         for (NSInteger i = 0; i < (NSInteger)self.recs.count; i++) {
             ADAlbum *a = self.recs[i];
             UIButton *row = [UIButton buttonWithType:UIButtonTypeCustom];
-            row.frame = CGRectMake(0, y, W, 64);
+            row.frame = CGRectMake(16, y, W - 32, 62);
+            [ADLiquid glassLite:row radius:16];
             row.tag = 3000 + i;
             [row addTarget:self action:@selector(tapRec:) forControlEvents:UIControlEventTouchUpInside];
 
-            UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(16, 8, 48, 48)];
-            iv.layer.cornerRadius = 8;
+            UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(8, 7, 48, 48)];
+            iv.layer.cornerRadius = 9;
             iv.clipsToBounds = YES;
             iv.backgroundColor = [UIColor colorWithWhite:1 alpha:0.06];
             [ADUtil cover:iv url:a.cover];
             [row addSubview:iv];
 
             UILabel *t = [ADUtil label:nil size:14 color:UIColor.whiteColor];
-            t.frame = CGRectMake(74, 8, W - 74 - 40, 20);
+            t.frame = CGRectMake(66, 9, W - 32 - 66 - 34, 20);
+            t.numberOfLines = 1;
             t.text = a.title;
             [row addSubview:t];
 
             UILabel *sub = [ADUtil label:nil size:11 color:[ADUtil dim]];
-            sub.frame = CGRectMake(74, 30, W - 74 - 40, 18);
+            sub.frame = CGRectMake(66, 31, W - 32 - 66 - 34, 18);
             sub.text = [NSString stringWithFormat:@"%@%@", a.anchor.length ? a.anchor : @"有声书",
                         a.trackCount > 0 ? [NSString stringWithFormat:@" · %ld 集", (long)a.trackCount] : @""];
             [row addSubview:sub];
 
-            UIImageView *chev = [[UIImageView alloc] initWithFrame:CGRectMake(W - 30, 24, 16, 16)];
+            UIImageView *chev = [[UIImageView alloc] initWithFrame:CGRectMake(W - 32 - 28, 23, 16, 16)];
             chev.image = [UIImage systemImageNamed:@"chevron.right" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:12 weight:UIImageSymbolWeightSemibold]];
             chev.tintColor = [UIColor colorWithWhite:1 alpha:0.3];
             [row addSubview:chev];
 
             [self.panel addSubview:row];
-            y += 64;
+            y += 70;
         }
     }
 
@@ -1238,12 +1437,17 @@
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; self.navigationController.navigationBar.hidden = YES; [self layoutChrome]; }
 - (void)layoutChrome {
     CGFloat top = MAX(self.view.safeAreaInsets.top, 47);
-    self.bar.frame = CGRectMake(0, top - 6, self.view.bounds.size.width, 52);
-    self.seg.frame = CGRectMake(16, top + 46, 150, 32);
-    self.cats.frame = CGRectMake(0, top + 82, self.view.bounds.size.width, 40);
+    CGFloat W = self.view.bounds.size.width;
+    [self.view viewWithTag:76].frame = CGRectMake(16, top - 4, 120, 42);
+    self.seg.frame = CGRectMake(W - 16 - 130, top + 2, 130, 32);
+    [self.view viewWithTag:77].frame = CGRectMake(16, top + 46, W - 32, 44);
+    self.bar.frame = CGRectMake(10, top + 46, W - 20, 44);
+    self.cats.frame = CGRectMake(0, top + 98, W, 40);
     self.cats.hidden = self.localMode;
-    CGFloat gridTop = self.localMode ? top + 82 : top + 122;
-    self.cv.frame = CGRectMake(0, gridTop, self.view.bounds.size.width, self.view.bounds.size.height - gridTop);
+    CGFloat gridTop = self.localMode ? top + 98 : top + 138;
+    self.cv.frame = CGRectMake(0, gridTop, W, self.view.bounds.size.height - gridTop);
+    UICollectionViewFlowLayout *lo = (UICollectionViewFlowLayout *)self.cv.collectionViewLayout;
+    if ([lo isKindOfClass:UICollectionViewFlowLayout.class] && lo.itemSize.width != W) { lo.itemSize = CGSizeMake(W, 108); [lo invalidateLayout]; }
     self.panel.frame = self.cv.frame;
 }
 - (void)viewWillLayoutSubviews {
@@ -1310,28 +1514,11 @@
 }
 - (NSInteger)collectionView:(UICollectionView *)cv numberOfItemsInSection:(NSInteger)s { return [self visible].count; }
 - (UICollectionViewCell *)collectionView:(UICollectionView *)cv cellForItemAtIndexPath:(NSIndexPath *)ip {
-    UICollectionViewCell *cell = [cv dequeueReusableCellWithReuseIdentifier:@"c" forIndexPath:ip];
-    [cell.contentView.subviews makeObjectsPerformSelector:@selector(removeFromSuperview)];
-    ADAlbum *a = [self visible][ip.item];
-    CGFloat w = cell.contentView.bounds.size.width;
-    UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, w, w)];
-    iv.layer.cornerRadius = 12; iv.clipsToBounds = YES;
-    [ADUtil cover:iv url:a.cover];
-    UILabel *t = [ADUtil label:nil size:12 color:[UIColor colorWithWhite:1 alpha:0.85]];
-    t.frame = CGRectMake(0, w + 6, w, 32);
-    t.numberOfLines = 2;
-    t.text = a.title;
-    [cell.contentView addSubview:iv]; [cell.contentView addSubview:t];
-    if ([[ADStore shared] isAlbumDone:a.albumId]) {
-        UILabel *badge = [ADUtil label:nil size:10 color:UIColor.whiteColor];
-        badge.text = @"已听完";
-        badge.textAlignment = NSTextAlignmentCenter;
-        badge.backgroundColor = [ADUtil brand];
-        badge.layer.cornerRadius = 9;
-        badge.clipsToBounds = YES;
-        badge.frame = CGRectMake(w - 52, 6, 46, 18);
-        [cell.contentView addSubview:badge];
-    }
+    ADSearchCell *cell = [cv dequeueReusableCellWithReuseIdentifier:@"c" forIndexPath:ip];
+    NSArray *vis = [self visible];
+    if (ip.item >= (NSInteger)vis.count) return cell;
+    NSString *kw = self.localMode ? [self.bar.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet] : self.keyword;
+    [cell fill:vis[ip.item] keyword:kw];
     return cell;
 }
 - (void)collectionView:(UICollectionView *)cv didSelectItemAtIndexPath:(NSIndexPath *)ip {
@@ -1370,129 +1557,167 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
 @implementation ADShelfCell
 
 - (UILabel *)pill:(NSString *)t {
-    UILabel *l = [ADUtil label:nil size:11 color:[UIColor colorWithWhite:1 alpha:0.8]];
-    l.text = t;
+    UILabel *l = [ADUtil label:nil size:10.5 color:UIColor.whiteColor];
+    l.font = [UIFont systemFontOfSize:10.5 weight:UIFontWeightSemibold];
+    l.text = t; l.numberOfLines = 1;
     l.textAlignment = NSTextAlignmentCenter;
-    l.backgroundColor = [UIColor colorWithWhite:1 alpha:0.12];
-    l.layer.cornerRadius = 10;
-    l.clipsToBounds = YES;
+    l.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
+    l.layer.cornerRadius = 9; l.clipsToBounds = YES;
+    CGSize sz = [t sizeWithAttributes:@{NSFontAttributeName: l.font}];
+    l.frame = CGRectMake(0, 0, sz.width + 14, 18);
     return l;
 }
 
-- (void)pill:(UILabel *)l at:(CGFloat *)x y:(CGFloat)y {
-    if (l.hidden) return;
-    CGSize sz = [l.text sizeWithAttributes:@{NSFontAttributeName: l.font}];
-    l.frame = CGRectMake(*x, y, sz.width + 20, 20);
-    *x += sz.width + 20 + 8;
+- (UIImageView *)icon:(NSString *)n color:(UIColor *)c {
+    UIImageView *v = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:n withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:11 weight:UIImageSymbolWeightSemibold]]];
+    v.tintColor = c; v.contentMode = UIViewContentModeScaleAspectFit;
+    v.frame = CGRectMake(0, 0, 14, 14);
+    return v;
+}
+
+- (void)setHighlighted:(BOOL)h {
+    [super setHighlighted:h];
+    [UIView animateWithDuration:h ? 0.12 : 0.38 delay:0 usingSpringWithDamping:h ? 1 : 0.6 initialSpringVelocity:0
+                        options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState
+                     animations:^{ self.transform = h ? CGAffineTransformMakeScale(0.975, 0.975) : CGAffineTransformIdentity; } completion:nil];
+}
+
+- (UIView *)bar:(CGRect)f prog:(double)prog {
+    UIView *bar = [[UIView alloc] initWithFrame:f];
+    bar.backgroundColor = [UIColor colorWithWhite:1 alpha:0.14];
+    bar.layer.cornerRadius = f.size.height / 2;
+    UIView *fill = [[UIView alloc] initWithFrame:CGRectMake(0, 0, MAX(prog > 0 ? f.size.height : 0, f.size.width * prog), f.size.height)];
+    fill.backgroundColor = [ADUtil brand];
+    fill.layer.cornerRadius = f.size.height / 2;
+    [bar addSubview:fill];
+    return bar;
 }
 
 - (void)fill:(ADAlbum *)a mode:(NSInteger)mode width:(CGFloat)w {
     [self.contentView.subviews makeObjectsPerformSelector:@selector(removeFromSuperview)];
     self.contentView.backgroundColor = UIColor.clearColor;
-
-    if (mode != 2) {
-        CGFloat insetY = (mode == 1) ? 4 : 5;
-        UIView *card = [[UIView alloc] initWithFrame:CGRectMake(8, insetY, w - 16, self.contentView.bounds.size.height - insetY * 2)];
-        card.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-        [ADLiquid glassLite:card radius:22];
-        [self.contentView insertSubview:card atIndex:0];
-    }
-
+    ADStore *st = [ADStore shared];
     NSInteger listened = 0, total = 0;
     double prog = 0;
     ADAlbumProgress(a, &listened, &total, &prog);
+    BOOL fav = [st isFavorite:a.albumId], pin = [st isPinned:a.albumId], done = [st isAlbumDone:a.albumId];
+    ADTask *task = [[ADDownloader shared] taskForAlbum:a.albumId];
+    BOOL dl = (task && task.done > 0);
+    NSDictionary *info = [st lastInfoOf:a.albumId];
 
     if (mode == 2) {
-        // 封面墙
+        // 封面墙：进度条压在封面底部，状态用角标
         UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, w, w)];
-        iv.layer.cornerRadius = 12;
-        iv.clipsToBounds = YES;
+        iv.layer.cornerRadius = 14; iv.clipsToBounds = YES;
         iv.backgroundColor = [UIColor colorWithWhite:1 alpha:0.06];
         [ADUtil cover:iv url:a.cover];
         [self.contentView addSubview:iv];
-
-        UILabel *t = [ADUtil label:nil size:12 color:[UIColor colorWithWhite:1 alpha:0.85]];
-        t.frame = CGRectMake(0, w + 6, w, 32);
-        t.numberOfLines = 2;
-        t.text = a.title;
-        [self.contentView addSubview:t];
-
-        if ([[ADStore shared] isAlbumDone:a.albumId]) {
-            UILabel *b = [self pill:@"已听完"];
-            b.frame = CGRectMake(w - 52, 6, 46, 18);
-            [self.contentView addSubview:b];
-        } else if ([[ADStore shared] isPinned:a.albumId]) {
-            UILabel *b = [self pill:@"置顶"];
-            b.frame = CGRectMake(w - 46, 6, 40, 18);
-            [self.contentView addSubview:b];
+        if (prog > 0.001 && !done) {
+            UIView *shade = [[UIView alloc] initWithFrame:CGRectMake(0, w - 22, w, 22)];
+            shade.backgroundColor = [UIColor colorWithWhite:0 alpha:0.35];
+            [iv addSubview:shade];
+            [iv addSubview:[self bar:CGRectMake(8, w - 10, w - 16, 3) prog:prog]];
         }
+        CGFloat bx = w - 6;
+        NSMutableArray *views = [NSMutableArray array];
+        if (done) [views addObject:[self pill:@"已听完"]];
+        if (pin) { UIImageView *p = [self icon:@"pin.fill" color:UIColor.whiteColor]; [views addObject:p]; }
+        if (dl) { UIImageView *p = [self icon:@"arrow.down.circle.fill" color:UIColor.whiteColor]; [views addObject:p]; }
+        for (UIView *v in views) {
+            bx -= v.bounds.size.width;
+            v.frame = CGRectMake(bx, 8, v.bounds.size.width, v.bounds.size.height);
+            if ([v isKindOfClass:UIImageView.class]) {
+                UIView *bg = [[UIView alloc] initWithFrame:CGRectInset(v.frame, -4, -4)];
+                bg.backgroundColor = [UIColor colorWithWhite:0 alpha:0.5]; bg.layer.cornerRadius = bg.bounds.size.width / 2;
+                [iv addSubview:bg];
+            }
+            [iv addSubview:v];
+            bx -= 8;
+        }
+        if (fav) { UIImageView *h = [self icon:@"heart.fill" color:[ADUtil brand]]; h.frame = CGRectMake(8, 8, 15, 15); [iv addSubview:h]; }
+        UILabel *t = [ADUtil label:nil size:12.5 color:[UIColor colorWithWhite:1 alpha:0.9]];
+        t.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightMedium];
+        t.frame = CGRectMake(2, w + 7, w - 4, 34);
+        t.numberOfLines = 2; t.text = a.title;
+        [self.contentView addSubview:t];
         return;
     }
 
     BOOL compact = (mode == 1);
-    CGFloat coverSide = compact ? 48 : 76;
-    CGFloat coverY = compact ? 14 : 12;
-    CGFloat tx = compact ? 76 : 104;
+    CGFloat H = compact ? 68 : 124;
+    CGFloat inY = compact ? 4 : 5;
+    UIView *card = [[UIView alloc] initWithFrame:CGRectMake(12, inY, w - 24, H - inY * 2)];
+    [ADLiquid glassLite:card radius:compact ? 18 : 22];
+    [self.contentView addSubview:card];
+    CGFloat cw = card.bounds.size.width, ch = card.bounds.size.height;
 
-    UIImageView *cv = [[UIImageView alloc] initWithFrame:CGRectMake(16, coverY, coverSide, coverSide)];
-    cv.layer.cornerRadius = compact ? 8 : 10;
-    cv.clipsToBounds = YES;
+    NSString *who = a.anchor.length ? a.anchor : (a.author.length ? a.author : @"");
+    NSString *curText = info ? [NSString stringWithFormat:@"第 %ld 集 · %@", (long)[info[@"index"] integerValue] + 1, info[@"title"] ?: @""] : @"还没开始听";
+    UIColor *pctColor = (prog >= 1 || done) ? [ADUtil brand] : [UIColor colorWithWhite:1 alpha:0.85];
+
+    if (compact) {
+        UIImageView *cv = [[UIImageView alloc] initWithFrame:CGRectMake(10, (ch - 44) / 2, 44, 44)];
+        cv.layer.cornerRadius = 9; cv.clipsToBounds = YES;
+        cv.backgroundColor = [UIColor colorWithWhite:1 alpha:0.06];
+        [ADUtil cover:cv url:a.cover];
+        [card addSubview:cv];
+        UILabel *pct = [ADUtil label:nil size:13 color:pctColor];
+        pct.font = [UIFont monospacedDigitSystemFontOfSize:13 weight:UIFontWeightSemibold];
+        pct.textAlignment = NSTextAlignmentRight; pct.numberOfLines = 1;
+        pct.frame = CGRectMake(cw - 12 - 44, 0, 44, ch);
+        pct.text = [NSString stringWithFormat:@"%ld%%", (long)lround(prog * 100.0)];
+        [card addSubview:pct];
+        UILabel *t = [ADUtil label:@"PingFangSC-Semibold" size:15 color:UIColor.whiteColor];
+        t.numberOfLines = 1; t.frame = CGRectMake(66, 8, cw - 66 - 62, 20); t.text = a.title;
+        [card addSubview:t];
+        UILabel *s = [ADUtil label:nil size:12 color:[ADUtil dim]];
+        s.numberOfLines = 1; s.frame = CGRectMake(66, 29, cw - 66 - 62, 16);
+        s.text = info ? [NSString stringWithFormat:@"%@%@第 %ld 集", who, who.length ? @" · " : @"", (long)[info[@"index"] integerValue] + 1] : (who.length ? who : @"还没开始听");
+        [card addSubview:s];
+        if (prog > 0.001) [card addSubview:[self bar:CGRectMake(66, ch - 9, cw - 66 - 62, 2) prog:prog]];
+        return;
+    }
+
+    UIImageView *cv = [[UIImageView alloc] initWithFrame:CGRectMake(14, 15, 84, 84)];
+    cv.layer.cornerRadius = 14; cv.clipsToBounds = YES;
     cv.backgroundColor = [UIColor colorWithWhite:1 alpha:0.06];
     [ADUtil cover:cv url:a.cover];
-    [self.contentView addSubview:cv];
+    [card addSubview:cv];
+    CGFloat x = 112, tw = cw - x - 14;
 
-    UILabel *pct = [ADUtil label:nil size:compact ? 12 : 13 color:(prog >= 1 ? [ADUtil brand] : [UIColor colorWithWhite:1 alpha:0.9])];
-    pct.textAlignment = NSTextAlignmentRight;
-    pct.frame = CGRectMake(w - 66, coverY - 2, 50, 20);
-    pct.text = [NSString stringWithFormat:@"%ld%%", (long)lround(prog * 100.0)];
-    [self.contentView addSubview:pct];
+    UILabel *title = [ADUtil label:@"PingFangSC-Semibold" size:16.5 color:UIColor.whiteColor];
+    title.numberOfLines = 1; title.frame = CGRectMake(x, 14, tw, 21); title.text = a.title;
+    [card addSubview:title];
 
-    UILabel *title = [ADUtil label:@"PingFangSC-Semibold" size:compact ? 15 : 16 color:UIColor.whiteColor];
-    title.frame = CGRectMake(tx, coverY - 2, w - tx - 70, 22);
-    title.text = a.title;
-    [self.contentView addSubview:title];
+    // 状态小图标放在作者行右端
+    NSMutableArray *icons = [NSMutableArray array];
+    if (done) [icons addObject:[self icon:@"checkmark.seal.fill" color:[ADUtil brand]]];
+    if (fav) [icons addObject:[self icon:@"heart.fill" color:[ADUtil brand]]];
+    if (pin) [icons addObject:[self icon:@"pin.fill" color:[UIColor colorWithWhite:1 alpha:0.7]]];
+    if (dl) [icons addObject:[self icon:@"arrow.down.circle.fill" color:[UIColor colorWithWhite:1 alpha:0.7]]];
+    CGFloat ix = cw - 14;
+    for (UIImageView *ic in icons) { ix -= 14; ic.frame = CGRectMake(ix, 39, 14, 14); [card addSubview:ic]; ix -= 6; }
+    UILabel *author = [ADUtil label:nil size:12.5 color:[ADUtil dim]];
+    author.numberOfLines = 1; author.frame = CGRectMake(x, 37, MAX(40, ix - x), 17);
+    author.text = who.length ? who : @"有声书";
+    [card addSubview:author];
 
-    UILabel *author = [ADUtil label:nil size:12 color:[ADUtil dim]];
-    author.frame = CGRectMake(tx, coverY + 21, w - tx - 24, 17);
-    author.text = a.anchor.length ? a.anchor : (a.author.length ? a.author : @"");
-    [self.contentView addSubview:author];
+    UILabel *cur = [ADUtil label:nil size:12 color:[UIColor colorWithWhite:1 alpha:0.5]];
+    cur.numberOfLines = 1; cur.frame = CGRectMake(x, 57, tw, 16); cur.text = curText;
+    [card addSubview:cur];
 
-    NSDictionary *info = [[ADStore shared] lastInfoOf:a.albumId];
-    UILabel *cur = [ADUtil label:nil size:12 color:[ADUtil dim]];
-    cur.frame = CGRectMake(tx, coverY + 40, w - tx - 24, 17);
-    cur.text = info ? [NSString stringWithFormat:@"当前：%@", info[@"title"] ?: @"—"] : @"还没开始听";
-    [self.contentView addSubview:cur];
+    [card addSubview:[self bar:CGRectMake(x, 82, tw, 4) prog:prog]];
 
-    CGFloat by = coverY + coverSide + 2;
-    UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(tx, by, w - tx - 20, 4)];
-    bar.backgroundColor = [UIColor colorWithWhite:1 alpha:0.16];
-    bar.layer.cornerRadius = 2;
-    [self.contentView addSubview:bar];
-    UIView *fill = [[UIView alloc] initWithFrame:CGRectMake(0, 0, bar.bounds.size.width * prog, 4)];
-    fill.backgroundColor = [UIColor colorWithWhite:1 alpha:0.95];
-    fill.layer.cornerRadius = 2;
-    [bar addSubview:fill];
-
-    UILabel *cnt = [ADUtil label:nil size:11 color:[ADUtil dim]];
-    cnt.textAlignment = NSTextAlignmentRight;
-    cnt.frame = CGRectMake(w - 216, by + 8, 196, 16);
+    UILabel *cnt = [ADUtil label:nil size:11 color:[UIColor colorWithWhite:1 alpha:0.5]];
+    cnt.numberOfLines = 1; cnt.frame = CGRectMake(x, 91, tw * 0.7, 15);
     cnt.text = total > 0 ? [NSString stringWithFormat:@"已听 %ld/%ld 章", (long)listened, (long)total] : @"";
-    [self.contentView addSubview:cnt];
-
-    if (!compact) {
-        ADTask *task = [[ADDownloader shared] taskForAlbum:a.albumId];
-        UILabel *dl = [self pill:@"已下载"];
-        dl.hidden = !(task && task.done > 0);
-        UILabel *fav = [self pill:@"收藏"];
-        fav.hidden = ![[ADStore shared] isFavorite:a.albumId];
-        UILabel *pin = [self pill:@"置顶"];
-        pin.hidden = ![[ADStore shared] isPinned:a.albumId];
-        CGFloat x = 104;
-        for (UILabel *l in @[dl, fav, pin]) {
-            [self.contentView addSubview:l];
-            [self pill:l at:&x y:by + 26];
-        }
-    }
+    [card addSubview:cnt];
+    UILabel *pct = [ADUtil label:nil size:12 color:pctColor];
+    pct.font = [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightSemibold];
+    pct.textAlignment = NSTextAlignmentRight; pct.numberOfLines = 1;
+    pct.frame = CGRectMake(cw - 14 - 60, 91, 60, 15);
+    pct.text = [NSString stringWithFormat:@"%ld%%", (long)lround(prog * 100.0)];
+    [card addSubview:pct];
 }
 @end
 
@@ -1502,6 +1727,7 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
 @property (nonatomic, strong) NSArray *items;
 @property (nonatomic, strong) UILabel *hint, *countLabel;
 @property (nonatomic, assign) NSInteger mode, filter;
+@property (nonatomic, strong) UIScrollView *chips;
 @end
 
 @implementation ADShelfController
@@ -1528,6 +1754,23 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
     [gear setImage:[UIImage systemImageNamed:@"line.3.horizontal" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
     [gear addTarget:self action:@selector(showShelfMenu) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:gear];
+
+    UIButton *modeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    [ADLiquid glassButton:modeBtn radius:22];
+    modeBtn.tag = 97; modeBtn.tintColor = UIColor.whiteColor;
+    [modeBtn addTarget:self action:@selector(cycleMode) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:modeBtn];
+    [self paintModeButton];
+
+    self.chips = [[UIScrollView alloc] initWithFrame:CGRectZero];
+    self.chips.showsHorizontalScrollIndicator = NO;
+    self.chips.contentInset = UIEdgeInsetsMake(0, 12, 0, 12);
+    [self.view addSubview:self.chips];
+    [self buildFilterChips];
+
+    UIImageView *emptyIcon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"books.vertical" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:44 weight:UIImageSymbolWeightLight]]];
+    emptyIcon.tag = 96; emptyIcon.tintColor = [UIColor colorWithWhite:1 alpha:0.22]; emptyIcon.contentMode = UIViewContentModeCenter;
+    [self.view addSubview:emptyIcon];
 
     self.lo = [UICollectionViewFlowLayout new];
     self.lo.minimumInteritemSpacing = 12;
@@ -1559,6 +1802,58 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
     [self layoutChrome];
 }
 
+- (NSArray *)filterNames { return @[@"全部", @"收藏", @"想听", @"置顶", @"已下载", @"最近播放"]; }
+
+- (void)buildFilterChips {
+    for (UIView *v in self.chips.subviews) [v removeFromSuperview];
+    NSArray *names = [self filterNames];
+    CGFloat x = 12;
+    for (NSInteger i = 0; i < (NSInteger)names.count; i++) {
+        UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+        b.tag = 500 + i;
+        b.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+        [b setTitle:names[i] forState:UIControlStateNormal];
+        CGSize sz = [names[i] sizeWithAttributes:@{NSFontAttributeName: b.titleLabel.font}];
+        b.frame = CGRectMake(x, 5, sz.width + 28, 32);
+        b.layer.cornerRadius = 16;
+        b.layer.borderWidth = 0.6;
+        [b addTarget:self action:@selector(tapFilterChip:) forControlEvents:UIControlEventTouchUpInside];
+        [self.chips addSubview:b];
+        x += sz.width + 28 + 8;
+    }
+    self.chips.contentSize = CGSizeMake(x + 4, 42);
+    [self paintFilterChips];
+}
+
+- (void)paintFilterChips {
+    for (NSInteger i = 0; i < (NSInteger)[self filterNames].count; i++) {
+        UIButton *b = (UIButton *)[self.chips viewWithTag:500 + i];
+        BOOL on = (i == self.filter);
+        b.backgroundColor = on ? [ADUtil brand] : [UIColor colorWithWhite:1 alpha:0.08];
+        b.layer.borderColor = (on ? UIColor.clearColor : [UIColor colorWithWhite:1 alpha:0.12]).CGColor;
+        [b setTitleColor:(on ? UIColor.whiteColor : [UIColor colorWithWhite:1 alpha:0.75]) forState:UIControlStateNormal];
+    }
+}
+
+- (void)tapFilterChip:(UIButton *)b {
+    [ADHaptic select];
+    self.filter = b.tag - 500;
+    [self reloadData];
+}
+
+- (void)paintModeButton {
+    UIButton *m = (UIButton *)[self.view viewWithTag:97];
+    NSArray *icons = @[@"list.bullet.rectangle", @"list.bullet", @"square.grid.3x3.fill"];
+    [m setImage:[UIImage systemImageNamed:icons[self.mode] withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:17 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
+}
+
+- (void)cycleMode {
+    [ADHaptic select];
+    self.mode = (self.mode + 1) % 3;
+    [self paintModeButton];
+    [UIView transitionWithView:self.cv duration:0.25 options:UIViewAnimationOptionTransitionCrossDissolve animations:^{ [self reloadData]; } completion:nil];
+}
+
 - (void)applyLayout {
     CGFloat W = self.view.bounds.size.width;
     if (self.mode == 2) {
@@ -1569,13 +1864,13 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
         self.lo.sectionInset = UIEdgeInsetsMake(8, 16, 0, 16);
         self.cv.contentInset = UIEdgeInsetsMake(0, 0, 130, 0);
     } else if (self.mode == 1) {
-        self.lo.itemSize = CGSizeMake(W, 76);
+        self.lo.itemSize = CGSizeMake(W, 68);
         self.lo.minimumInteritemSpacing = 0;
         self.lo.minimumLineSpacing = 0;
         self.lo.sectionInset = UIEdgeInsetsZero;
         self.cv.contentInset = UIEdgeInsetsMake(6, 0, 130, 0);
     } else {
-        self.lo.itemSize = CGSizeMake(W, 132);
+        self.lo.itemSize = CGSizeMake(W, 124);
         self.lo.minimumInteritemSpacing = 0;
         self.lo.minimumLineSpacing = 0;
         self.lo.sectionInset = UIEdgeInsetsZero;
@@ -1643,7 +1938,10 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
     });
     if (self.items.count) self.hint.text = @"";
     else self.hint.text = emptyHint[self.filter];
-    self.countLabel.text = [NSString stringWithFormat:@"%ld 本 · %@", (long)self.items.count, names[self.filter]];
+    self.countLabel.text = [NSString stringWithFormat:@"%ld 本", (long)self.items.count];
+    [self paintFilterChips];
+    [self paintModeButton];
+    [self.view viewWithTag:96].hidden = self.items.count > 0;
     [self applyLayout];
     [self.cv reloadData];
 }
@@ -1656,8 +1954,11 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
     self.countLabel.frame = CGRectMake(20 + sz.width, top + 14, 240, 22);
     UIButton *gear = (UIButton *)[self.view viewWithTag:98];
     gear.frame = CGRectMake(self.view.bounds.size.width - 60, top + 4, 44, 44);
-    self.cv.frame = CGRectMake(0, top + 46, self.view.bounds.size.width, self.view.bounds.size.height - top - 46);
-    self.hint.frame = CGRectMake(30, self.view.bounds.size.height / 2 - 60, self.view.bounds.size.width - 60, 60);
+    [self.view viewWithTag:97].frame = CGRectMake(self.view.bounds.size.width - 60 - 52, top + 4, 44, 44);
+    self.chips.frame = CGRectMake(0, top + 54, self.view.bounds.size.width, 42);
+    self.cv.frame = CGRectMake(0, top + 100, self.view.bounds.size.width, self.view.bounds.size.height - top - 100);
+    self.hint.frame = CGRectMake(30, self.view.bounds.size.height / 2 - 20, self.view.bounds.size.width - 60, 60);
+    [self.view viewWithTag:96].frame = CGRectMake(0, self.view.bounds.size.height / 2 - 90, self.view.bounds.size.width, 60);
     [self applyLayout];
 }
 
