@@ -96,6 +96,10 @@
     self.list = [NSMutableArray array];
     self.seen = [NSMutableSet set];
     self.page = 0; self.more = YES;
+    for (ADAlbum *a in self.seed) {
+        if (!a.albumId.length || [self.seen containsObject:a.albumId]) continue;
+        [self.seen addObject:a.albumId]; [self.list addObject:a];
+    }
 
     UICollectionViewFlowLayout *fl = [UICollectionViewFlowLayout new];
     fl.minimumInteritemSpacing = 12; fl.minimumLineSpacing = 18;
@@ -117,7 +121,9 @@
     self.head.text = self.catTitle;
     [self.view addSubview:self.head];
     self.sub = [ADUtil label:nil size:12.5 color:[UIColor colorWithWhite:1 alpha:0.5]];
-    self.sub.text = [NSString stringWithFormat:@"按「%@」整理", [self.keywords componentsJoinedByString:@"」「"]];
+    self.sub.text = self.seed.count
+        ? [NSString stringWithFormat:@"精选 %lu 部 · 往下滑按热搜词继续加载", (unsigned long)self.seed.count]
+        : [NSString stringWithFormat:@"按「%@」整理", [self.keywords componentsJoinedByString:@"」「"]];
     [self.view addSubview:self.sub];
 
     self.hint = [ADUtil label:nil size:15 color:[UIColor colorWithWhite:1 alpha:0.45]];
@@ -126,7 +132,8 @@
     self.spin = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     self.spin.color = UIColor.whiteColor;
     [self.view addSubview:self.spin];
-    [self loadMore];
+    if (self.list.count) [self.cv reloadData];
+    else [self loadMore];
 }
 
 - (void)viewWillAppear:(BOOL)a {

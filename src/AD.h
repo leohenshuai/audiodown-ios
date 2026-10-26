@@ -233,6 +233,7 @@ NS_ASSUME_NONNULL_END
 @interface ADCategoryController : UIViewController
 @property (nonatomic, copy) NSString *catTitle;
 @property (nonatomic, strong) NSArray<NSString *> *keywords;
+@property (nonatomic, strong) NSArray<ADAlbum *> *seed;   // 发现页板块自带的书,排在最前
 + (NSArray<NSString *> *)keywordsFor:(NSString *)title;
 + (NSString *)iconFor:(NSString *)title;
 + (UIColor *)colorFor:(NSString *)title;

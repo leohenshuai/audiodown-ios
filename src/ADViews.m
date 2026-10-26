@@ -537,6 +537,7 @@
 @property (nonatomic, strong) NSArray<NSDictionary *> *sections;
 @property (nonatomic, strong) NSArray<NSDictionary *> *cats;
 @property (nonatomic, assign) BOOL catsOpen;
+@property (nonatomic, assign) NSInteger catSel;
 @property (nonatomic, strong) UIRefreshControl *refresh;
 @property (nonatomic, strong) UILabel *hint;
 @property (nonatomic, strong) UIActivityIndicatorView *spin;
@@ -612,89 +613,235 @@
         }
         self.hint.text = sections.count ? @"" : (err ?: @"没有内容");
     }];
-    [[ADApi shared] categories:^(NSArray<NSDictionary *> *list, NSString *err) {
-        __strong typeof(w) self = w; if (!self) return;
-        if (list.count) {
-            NSArray *sorted = [list sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
-                return [@([a[@"orderNum"] integerValue]) compare:@([b[@"orderNum"] integerValue])];
-            }];
             if (![sorted isEqualToArray:self.cats ?: @[]]) { self.cats = sorted; [self build]; }
         }
     }];
 }
 
-// 首页分类区:两行图标格,默认显示 8 个,"全部"展开
+// 首页分类(E 样式):文字页签 → 本类精选大卡 → 热门榜前 5,数据全部来自发现页板块
+- (NSArray<ADAlbum *> *)albumsOfSection:(NSDictionary *)sec {
+    NSMutableArray *out = [NSMutableArray array];
+    NSArray *its = sec[@"items"];
+    if ([its isKindOfClass:NSArray.class]) for (id o in its) { ADAlbum *a = [ADAlbum fromJSON:o]; if (a) [out addObject:a]; }
+    return out;
+}
+- (NSArray<NSDictionary *> *)catSections {
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSDictionary *sec in self.sections) {
+        NSArray *its = sec[@"items"];
+        if ([its isKindOfClass:NSArray.class] && its.count && [sec[@"title"] length]) [out addObject:sec];
+    }
+    return out;
+}
+
 - (CGFloat)buildCats:(CGFloat)y width:(CGFloat)W {
-    NSArray *cats = self.cats;
-    if (!cats.count) {
-        // 接口还没回来时用固定分类兜底,避免页面跳动
-        NSMutableArray *fb = [NSMutableArray array];
-        for (NSString *t in @[@"有声书", @"儿童", @"相声评书", @"音乐", @"历史", @"悬疑", @"外语", @"个人成长"]) [fb addObject:@{@"title": t}];
-        cats = fb;
-    }
-    UILabel *t = [ADUtil label:@"PingFangSC-Semibold" size:24 color:UIColor.whiteColor];
-    t.frame = CGRectMake(16, y, W - 120, 32);
-    t.text = @"分类";
-    [self.scroll addSubview:t];
-    if (cats.count > 8) {
-        UIButton *all = [UIButton buttonWithType:UIButtonTypeSystem];
-        all.frame = CGRectMake(W - 16 - 80, y + 2, 80, 28);
-        all.contentHorizontalAlignment = UIControlContentHorizontalAlignmentRight;
-        all.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
-        all.tintColor = [UIColor colorWithWhite:1 alpha:0.6];
-        [all setTitle:(self.catsOpen ? @"收起 ▴" : [NSString stringWithFormat:@"全部 %lu ▾", (unsigned long)cats.count]) forState:UIControlStateNormal];
-        [all addTarget:self action:@selector(toggleCats) forControlEvents:UIControlEventTouchUpInside];
-        [self.scroll addSubview:all];
-    }
-    y += 42;
-    NSInteger show = self.catsOpen ? cats.count : MIN(8, (NSInteger)cats.count);
-    NSInteger cols = 4;
-    CGFloat gap = 10, cw = floor((W - 32 - gap * (cols - 1)) / cols), ch = 78;
-    for (NSInteger i = 0; i < show; i++) {
-        NSString *title = cats[i][@"title"];
-        NSInteger r = i / cols, c = i % cols;
+    NSArray<NSDictionary *> *secs = [self catSections];
+    if (!secs.count) return y;
+    if (self.catSel >= (NSInteger)secs.count) self.catSel = 0;
+    NSDictionary *sec = secs[self.catSel];
+    UIColor *brand = [ADUtil brand];
+
+    // 文字页签
+    UIScrollView *tabs = [[UIScrollView alloc] initWithFrame:CGRectMake(0, y, W, 40)];
+    tabs.showsHorizontalScrollIndicator = NO;
+    CGFloat x = 16;
+    for (NSInteger i = 0; i < (NSInteger)secs.count; i++) {
+        BOOL on = (i == self.catSel);
         UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
-        b.frame = CGRectMake(16 + c * (cw + gap), y + r * (ch + gap), cw, ch);
-        [ADLiquid glassButton:b radius:16];
+        UIFont *fnt = on ? [UIFont systemFontOfSize:18 weight:UIFontWeightBold] : [UIFont systemFontOfSize:16 weight:UIFontWeightMedium];
+        NSString *t = secs[i][@"title"];
+        CGFloat tw = ceil([t sizeWithAttributes:@{NSFontAttributeName: fnt}].width);
+        b.frame = CGRectMake(x, 0, tw, 34);
+        b.titleLabel.font = fnt;
+        [b setTitle:t forState:UIControlStateNormal];
+        [b setTitleColor:(on ? UIColor.whiteColor : [UIColor colorWithWhite:1 alpha:0.45]) forState:UIControlStateNormal];
         b.tag = 7000 + i;
-        b.accessibilityLabel = title;
-        UIColor *col = [ADCategoryController colorFor:title];
-        UIView *bg = [[UIView alloc] initWithFrame:CGRectMake((cw - 34) / 2, 11, 34, 34)];
-        bg.userInteractionEnabled = NO;
-        bg.layer.cornerRadius = 10;
-        if (@available(iOS 13.0, *)) bg.layer.cornerCurve = kCACornerCurveContinuous;
-        bg.backgroundColor = [col colorWithAlphaComponent:0.22];
-        UIImageView *ic = [[UIImageView alloc] initWithFrame:bg.bounds];
-        ic.contentMode = UIViewContentModeCenter;
-        ic.tintColor = col;
-        ic.image = [UIImage systemImageNamed:[ADCategoryController iconFor:title] withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:16 weight:UIImageSymbolWeightSemibold]];
-        [bg addSubview:ic];
-        [b addSubview:bg];
-        UILabel *l = [ADUtil label:nil size:12.5 color:[UIColor colorWithWhite:1 alpha:0.86]];
-        l.textAlignment = NSTextAlignmentCenter;
-        l.adjustsFontSizeToFitWidth = YES; l.minimumScaleFactor = 0.8;
-        l.frame = CGRectMake(4, 51, cw - 8, 18);
-        l.text = title;
-        [b addSubview:l];
-        [b addTarget:self action:@selector(openCat:) forControlEvents:UIControlEventTouchUpInside];
-        [self.scroll addSubview:b];
+        [b addTarget:self action:@selector(tapCatTab:) forControlEvents:UIControlEventTouchUpInside];
+        [tabs addSubview:b];
+        if (on) {
+            UIView *bar = [[UIView alloc] initWithFrame:CGRectMake(x + tw / 2 - 10, 34, 20, 3)];
+            bar.backgroundColor = brand; bar.layer.cornerRadius = 1.5;
+            [tabs addSubview:bar];
+        }
+        x += tw + 22;
     }
-    NSInteger rows = (show + cols - 1) / cols;
-    return y + rows * (ch + gap) - gap + 24;
+    tabs.contentSize = CGSizeMake(x, 40);
+    [self.scroll addSubview:tabs];
+    y += 52;
+
+    NSArray<ADAlbum *> *all = [self albumsOfSection:sec];
+    NSArray<ADAlbum *> *rank = [all sortedArrayUsingComparator:^NSComparisonResult(ADAlbum *a, ADAlbum *b) {
+        return [@(b.playCount) compare:@(a.playCount)];
+    }];
+    ADAlbum *hero = rank.firstObject;
+
+    // 精选大卡:虚化封面做底
+    if (hero) {
+        UIControl *card = [[UIControl alloc] initWithFrame:CGRectMake(16, y, W - 32, 200)];
+        card.layer.cornerRadius = 24; card.clipsToBounds = YES;
+        if (@available(iOS 13.0, *)) card.layer.cornerCurve = kCACornerCurveContinuous;
+        card.backgroundColor = [UIColor colorWithWhite:1 alpha:0.06];
+        UIImageView *bg = [[UIImageView alloc] initWithFrame:CGRectInset(card.bounds, -40, -40)];
+        bg.contentMode = UIViewContentModeScaleAspectFill;
+        bg.userInteractionEnabled = NO;
+        [ADUtil cover:bg url:hero.cover];
+        [card addSubview:bg];
+        UIVisualEffectView *blur = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleDark]];
+        blur.frame = card.bounds; blur.userInteractionEnabled = NO;
+        [card addSubview:blur];
+        UIView *dim = [[UIView alloc] initWithFrame:card.bounds];
+        dim.backgroundColor = [UIColor colorWithWhite:0 alpha:0.18]; dim.userInteractionEnabled = NO;
+        [card addSubview:dim];
+        card.layer.borderWidth = 0.6; card.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.12].CGColor;
+
+        UIView *shadow = [[UIView alloc] initWithFrame:CGRectMake(16, 24, 132, 132)];
+        shadow.userInteractionEnabled = NO;
+        shadow.layer.shadowColor = UIColor.blackColor.CGColor; shadow.layer.shadowOpacity = 0.45;
+        shadow.layer.shadowRadius = 10; shadow.layer.shadowOffset = CGSizeMake(0, 6);
+        UIImageView *cv = [[UIImageView alloc] initWithFrame:shadow.bounds];
+        cv.layer.cornerRadius = 14; cv.clipsToBounds = YES; cv.contentMode = UIViewContentModeScaleAspectFill;
+        [ADUtil cover:cv url:hero.cover];
+        [shadow addSubview:cv];
+        [card addSubview:shadow];
+
+        CGFloat tx = 166, tw = W - 32 - tx - 14;
+        UILabel *k = [ADUtil label:nil size:11.5 color:brand];
+        k.font = [UIFont systemFontOfSize:11.5 weight:UIFontWeightBold];
+        k.text = [NSString stringWithFormat:@"%@精选", sec[@"title"]];
+        k.frame = CGRectMake(tx, 26, tw, 16);
+        UILabel *tt = [ADUtil label:@"PingFangSC-Semibold" size:19 color:UIColor.whiteColor];
+        tt.numberOfLines = 2; tt.text = hero.title;
+        CGSize ts = [tt sizeThatFits:CGSizeMake(tw, 54)];
+        tt.frame = CGRectMake(tx, 46, tw, MIN(ts.height, 52));
+        UILabel *intro = [ADUtil label:nil size:12.5 color:[UIColor colorWithWhite:1 alpha:0.72]];
+        intro.numberOfLines = 2;
+        intro.text = hero.intro.length ? hero.intro : (hero.anchor ?: @"");
+        intro.frame = CGRectMake(tx, CGRectGetMaxY(tt.frame) + 4, tw, 36);
+        UILabel *meta = [ADUtil label:nil size:11.5 color:[UIColor colorWithWhite:1 alpha:0.5]];
+        NSMutableArray *m = [NSMutableArray array];
+        if (hero.trackCount > 0) [m addObject:[NSString stringWithFormat:@"%ld 集", (long)hero.trackCount]];
+        if (hero.playCount > 0) [m addObject:[NSString stringWithFormat:@"%@次播放", [ADUtil count:hero.playCount]]];
+        meta.text = [m componentsJoinedByString:@" · "];
+        meta.frame = CGRectMake(tx, 136, tw, 16);
+        for (UIView *v in @[k, tt, intro, meta]) { v.userInteractionEnabled = NO; [card addSubview:v]; }
+
+        UIButton *play = [UIButton buttonWithType:UIButtonTypeSystem];
+        play.frame = CGRectMake(16, 164, 104, 26);
+        play.backgroundColor = [UIColor colorWithWhite:1 alpha:0.94];
+        play.layer.cornerRadius = 13;
+        play.tintColor = [UIColor colorWithWhite:0.08 alpha:1];
+        play.titleLabel.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightSemibold];
+        [play setImage:[UIImage systemImageNamed:@"play.fill" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:11 weight:UIImageSymbolWeightBold]] forState:UIControlStateNormal];
+        [play setTitle:@" 立即收听" forState:UIControlStateNormal];
+        [play addTarget:self action:@selector(playHero) forControlEvents:UIControlEventTouchUpInside];
+        [card addSubview:play];
+
+        [card addTarget:self action:@selector(openHero) forControlEvents:UIControlEventTouchUpInside];
+        [self.scroll addSubview:card];
+        y += 200 + 24;
+    }
+
+    // 热门榜
+    UILabel *rt = [ADUtil label:@"PingFangSC-Semibold" size:20 color:UIColor.whiteColor];
+    rt.frame = CGRectMake(16, y, 200, 28);
+    rt.text = sec[@"rankTitle"] && [sec[@"rankTitle"] length] ? sec[@"rankTitle"] : @"热门榜";
+    [self.scroll addSubview:rt];
+    UIButton *more = [UIButton buttonWithType:UIButtonTypeSystem];
+    more.frame = CGRectMake(W - 16 - 110, y, 110, 28);
+    more.contentHorizontalAlignment = UIControlContentHorizontalAlignmentRight;
+    more.titleLabel.font = [UIFont systemFontOfSize:13.5 weight:UIFontWeightMedium];
+    more.tintColor = [UIColor colorWithWhite:1 alpha:0.55];
+    [more setTitle:@"全部 ›" forState:UIControlStateNormal];
+    [more addTarget:self action:@selector(openCatAll) forControlEvents:UIControlEventTouchUpInside];
+    [self.scroll addSubview:more];
+    y += 40;
+
+    NSInteger n = MIN(5, (NSInteger)rank.count);
+    for (NSInteger i = 0; i < n; i++) {
+        ADAlbum *a = rank[i];
+        UIControl *row = [[UIControl alloc] initWithFrame:CGRectMake(0, y, W, 70)];
+        row.tag = 7100 + i;
+        UILabel *no = [ADUtil label:nil size:22 color:(i < 3 ? brand : [UIColor colorWithWhite:1 alpha:0.35])];
+        no.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
+        no.textAlignment = NSTextAlignmentCenter;
+        no.text = [NSString stringWithFormat:@"%ld", (long)i + 1];
+        no.frame = CGRectMake(10, 14, 28, 28);
+        UIImageView *cv = [[UIImageView alloc] initWithFrame:CGRectMake(44, 0, 56, 56)];
+        cv.layer.cornerRadius = 10; cv.clipsToBounds = YES; cv.contentMode = UIViewContentModeScaleAspectFill;
+        cv.backgroundColor = [UIColor colorWithWhite:1 alpha:0.06];
+        [ADUtil cover:cv url:a.cover];
+        UILabel *tt = [ADUtil label:nil size:15 color:UIColor.whiteColor];
+        tt.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+        tt.text = a.title; tt.frame = CGRectMake(112, 7, W - 112 - 16, 20);
+        UILabel *sb = [ADUtil label:nil size:12 color:[UIColor colorWithWhite:1 alpha:0.48]];
+        NSMutableArray *m = [NSMutableArray array];
+        if (a.trackCount > 0) [m addObject:[NSString stringWithFormat:@"%ld 集", (long)a.trackCount]];
+        if (a.playCount > 0) [m addObject:[NSString stringWithFormat:@"%@次", [ADUtil count:a.playCount]]];
+        if (a.anchor.length) [m addObject:a.anchor];
+        sb.text = [m componentsJoinedByString:@" · "]; sb.frame = CGRectMake(112, 31, W - 112 - 16, 16);
+        for (UIView *v in @[no, cv, tt, sb]) { v.userInteractionEnabled = NO; [row addSubview:v]; }
+        if (i < n - 1) {
+            UIView *line = [[UIView alloc] initWithFrame:CGRectMake(112, 63, W - 112 - 16, 0.5)];
+            line.backgroundColor = [UIColor colorWithWhite:1 alpha:0.1]; line.userInteractionEnabled = NO;
+            [row addSubview:line];
+        }
+        [row addTarget:self action:@selector(openRank:) forControlEvents:UIControlEventTouchUpInside];
+        [self.scroll addSubview:row];
+        y += 70;
+    }
+    return y + 22;
 }
 
-- (void)toggleCats {
+- (NSArray<ADAlbum *> *)curRank {
+    NSArray *secs = [self catSections];
+    if (self.catSel >= (NSInteger)secs.count) return @[];
+    return [[self albumsOfSection:secs[self.catSel]] sortedArrayUsingComparator:^NSComparisonResult(ADAlbum *a, ADAlbum *b) {
+        return [@(b.playCount) compare:@(a.playCount)];
+    }];
+}
+- (void)tapCatTab:(UIButton *)b {
+    NSInteger i = b.tag - 7000;
+    if (i == self.catSel) return;
     [ADHaptic select];
-    self.catsOpen = !self.catsOpen;
+    self.catSel = i;
     CGPoint off = self.scroll.contentOffset;
-    [self build];
-    self.scroll.contentOffset = off;
+    [UIView transitionWithView:self.scroll duration:0.22 options:UIViewAnimationOptionTransitionCrossDissolve animations:^{
+        [self build];
+        self.scroll.contentOffset = off;
+    } completion:nil];
 }
-
-- (void)openCat:(UIButton *)b {
+- (void)openAlbumVC:(ADAlbum *)a {
+    if (!a) return;
+    [ADHaptic tap];
+    ADAlbumController *vc = [ADAlbumController new]; vc.album = a;
+    [self.navigationController pushViewController:vc animated:YES];
+}
+- (void)openHero { [self openAlbumVC:[self curRank].firstObject]; }
+- (void)playHero {
+    ADAlbum *a = [self curRank].firstObject;
+    if (!a) return;
+    [ADHaptic tap];
+    if ([[ADStore shared] lastInfoOf:a.albumId]) [self playCard:a];
+    else [self playFromStart:a];
+}
+- (void)openRank:(UIControl *)r {
+    NSArray *rk = [self curRank];
+    NSInteger i = r.tag - 7100;
+    if (i >= 0 && i < (NSInteger)rk.count) [self openAlbumVC:rk[i]];
+}
+- (void)openCatAll {
+    NSArray *secs = [self catSections];
+    if (self.catSel >= (NSInteger)secs.count) return;
+    NSDictionary *sec = secs[self.catSel];
     [ADHaptic tap];
     ADCategoryController *vc = [ADCategoryController new];
-    vc.catTitle = b.accessibilityLabel;
+    vc.catTitle = sec[@"title"];
+    vc.seed = [self curRank];
+    NSArray *hw = sec[@"hotWords"];
+    NSMutableArray *kw = [NSMutableArray array];
+    if ([hw isKindOfClass:NSArray.class]) for (id w in hw) if ([w isKindOfClass:NSString.class] && [w length]) [kw addObject:w];
+    if (!kw.count) [kw addObjectsFromArray:[ADCategoryController keywordsFor:sec[@"title"]]];
+    vc.keywords = kw;
     [self.navigationController pushViewController:vc animated:YES];
 }
 
@@ -824,30 +971,6 @@
         [panel addSubview:hs];
         py += hsH + 16;
         (void)rows;
-    }
-
-    // 接口板块
-    for (NSDictionary *sec in self.sections) {
-        NSArray *its = sec[@"items"];
-        if (![its isKindOfClass:NSArray.class] || !its.count) continue;
-        UILabel *t = [ADUtil label:@"PingFangSC-Semibold" size:19 color:UIColor.whiteColor];
-        t.frame = CGRectMake(16, py, W - 32, 26);
-        t.text = sec[@"title"] ?: @"推荐";
-        [panel addSubview:t];
-        py += 34;
-
-        CGFloat cw = 104, gap = 10;
-        UIScrollView *hs = [[UIScrollView alloc] initWithFrame:CGRectMake(0, py, W, cw + 34)];
-        hs.showsHorizontalScrollIndicator = NO;
-        hs.contentSize = CGSizeMake(16 + its.count * (cw + gap), cw + 34);
-        for (NSInteger i = 0; i < (NSInteger)its.count; i++) {
-            ADAlbum *a = [ADAlbum fromJSON:its[i]];
-            if (!a) continue;
-            ADSmallCard *c = [[ADSmallCard alloc] initWithFrame:CGRectMake(16 + i * (cw + gap), 0, cw, cw + 34) album:a];
-            [hs addSubview:c];
-        }
-        [panel addSubview:hs];
-        py += cw + 34 + 20;
     }
 
     py += 110;
