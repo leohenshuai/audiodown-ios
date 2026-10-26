@@ -4,6 +4,9 @@
 @class AVPlayer;
 NS_ASSUME_NONNULL_BEGIN
 
+// 读取存档：先按安全编码读，失败再退回旧格式，保证旧版本写的数据也能读出来
+FOUNDATION_EXPORT id _Nullable ADUnarchive(NSData * _Nullable data, NSSet * _Nonnull classes);
+
 // ───────────────── 配置 ─────────────────
 @interface ADConfig : NSObject
 @property (nonatomic, copy) NSString *baseURL;
@@ -17,7 +20,7 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 // ───────────────── 模型 ─────────────────
-@interface ADAlbum : NSObject <NSCoding>
+@interface ADAlbum : NSObject <NSCoding, NSSecureCoding>
 @property (nonatomic, copy) NSString *albumId, *title, *cover, *anchor, *author, *reader, *intro, *provider;
 @property (nonatomic, assign) NSInteger trackCount;
 @property (nonatomic, assign) double playCount;
@@ -25,7 +28,7 @@ NS_ASSUME_NONNULL_BEGIN
 + (instancetype)fromJSON:(NSDictionary *)j;
 @end
 
-@interface ADTrack : NSObject
+@interface ADTrack : NSObject <NSCoding, NSSecureCoding>
 @property (nonatomic, copy) NSString *trackId, *title, *albumId, *provider;
 @property (nonatomic, assign) NSInteger index;
 @property (nonatomic, assign) double duration;
@@ -138,7 +141,7 @@ typedef NS_ENUM(NSInteger, ADTaskState) {
     ADTaskStateFailed
 };
 
-@interface ADTask : NSObject <NSCoding>
+@interface ADTask : NSObject <NSCoding, NSSecureCoding>
 @property (nonatomic, copy) NSString *albumId, *title, *cover, *anchor, *provider;
 @property (nonatomic, strong) NSArray<ADTrack *> *tracks;
 @property (nonatomic, assign) NSInteger done, failed, state, cursor;

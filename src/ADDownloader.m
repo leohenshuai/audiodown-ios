@@ -3,6 +3,7 @@
 
 
 @implementation ADTask
++ (BOOL)supportsSecureCoding { return YES; }
 - (void)encodeWithCoder:(NSCoder *)c {
     [c encodeObject:_albumId forKey:@"albumId"]; [c encodeObject:_title forKey:@"title"];
     [c encodeObject:_cover forKey:@"cover"]; [c encodeObject:_anchor forKey:@"anchor"];
@@ -13,9 +14,9 @@
 }
 - (instancetype)initWithCoder:(NSCoder *)c {
     if ((self = [super init])) {
-        _albumId = [c decodeObjectForKey:@"albumId"]; _title = [c decodeObjectForKey:@"title"];
-        _cover = [c decodeObjectForKey:@"cover"]; _anchor = [c decodeObjectForKey:@"anchor"];
-        _provider = [c decodeObjectForKey:@"provider"]; _tracks = [c decodeObjectForKey:@"tracks"] ?: @[];
+        _albumId = [c decodeObjectOfClass:NSString.class forKey:@"albumId"]; _title = [c decodeObjectOfClass:NSString.class forKey:@"title"];
+        _cover = [c decodeObjectOfClass:NSString.class forKey:@"cover"]; _anchor = [c decodeObjectOfClass:NSString.class forKey:@"anchor"];
+        _provider = [c decodeObjectOfClass:NSString.class forKey:@"provider"]; _tracks = [c decodeObjectOfClasses:[NSSet setWithObjects:NSArray.class, ADTrack.class, nil] forKey:@"tracks"] ?: @[];
         _done = [c decodeIntegerForKey:@"done"]; _failed = [c decodeIntegerForKey:@"failed"];
         _state = [c decodeIntegerForKey:@"state"]; _cursor = [c decodeIntegerForKey:@"cursor"];
         _bytes = [c decodeDoubleForKey:@"bytes"];
@@ -63,7 +64,7 @@
 - (void)load {
     NSSet *set = [NSSet setWithObjects:NSMutableArray.class, NSArray.class, ADTask.class, ADTrack.class, NSString.class, nil];
     NSData *d = [NSData dataWithContentsOfFile:[self listPath]];
-    _tasks = (d ? [NSKeyedUnarchiver unarchivedObjectOfClasses:set fromData:d error:nil] : nil) ?: [NSMutableArray array];
+    _tasks = [(d ? ADUnarchive(d, set) : nil) mutableCopy] ?: [NSMutableArray array];
     for (ADTask *t in _tasks) if (t.state == ADTaskStateRunning) t.state = ADTaskStatePaused;
 }
 - (void)save {

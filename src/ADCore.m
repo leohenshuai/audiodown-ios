@@ -12,6 +12,13 @@ static NSString *ADPref(NSString *k, NSString *d) {
     return c;
 }
 - (void)load {
+    // 读不出来的存档先备份成 .bad，避免下一次保存把原文件覆盖掉
+    for (NSString *n in @[@"fav.dat", @"hist.dat", @"want.dat"]) {
+        NSData *raw = [NSData dataWithContentsOfFile:[self path:n]];
+        if (raw.length && !ADUnarchive(raw, [NSSet setWithObjects:NSMutableArray.class, NSArray.class, ADAlbum.class, NSString.class, nil])) {
+            [raw writeToFile:[[self path:n] stringByAppendingString:@".bad"] atomically:YES];
+        }
+    }
     _baseURL = ADPref(@"ad.base", @"https://audio.959935291.xyz:899");
     _token = ADPref(@"ad.token", @"");
     _username = ADPref(@"ad.user", @"");
@@ -52,7 +59,23 @@ static double ADNum(id o, NSString *k) {
     return [v respondsToSelector:@selector(doubleValue)] ? [v doubleValue] : 0;
 }
 
+id ADUnarchive(NSData *data, NSSet *classes) {
+    if (!data.length) return nil;
+    NSError *e = nil;
+    id obj = [NSKeyedUnarchiver unarchivedObjectOfClasses:classes fromData:data error:&e];
+    if (obj) return obj;
+    NSLog(@"[AD] secure unarchive failed: %@", e);
+    @try {
+        NSKeyedUnarchiver *u = [[NSKeyedUnarchiver alloc] initForReadingFromData:data error:&e];
+        u.requiresSecureCoding = NO;
+        obj = [u decodeObjectForKey:NSKeyedArchiveRootObjectKey];
+        [u finishDecoding];
+    } @catch (NSException *x) { obj = nil; }
+    return obj;
+}
+
 @implementation ADAlbum
++ (BOOL)supportsSecureCoding { return YES; }
 + (instancetype)fromJSON:(NSDictionary *)j {
     if (![j isKindOfClass:NSDictionary.class]) return nil;
     ADAlbum *a = [ADAlbum new];
@@ -81,7 +104,7 @@ static double ADNum(id o, NSString *k) {
 - (instancetype)initWithCoder:(NSCoder *)c {
     if ((self = [super init])) {
         for (NSString *k in @[@"albumId", @"title", @"cover", @"anchor", @"author", @"reader", @"intro", @"provider"])
-            [self setValue:[c decodeObjectForKey:k] forKey:k];
+            [self setValue:[c decodeObjectOfClass:NSString.class forKey:k] forKey:k];
         _trackCount = [c decodeIntegerForKey:@"trackCount"];
         _playCount = [c decodeDoubleForKey:@"playCount"];
         _isFinished = [c decodeBoolForKey:@"isFinished"];
@@ -92,6 +115,22 @@ static double ADNum(id o, NSString *k) {
 @end
 
 @implementation ADTrack
++ (BOOL)supportsSecureCoding { return YES; }
+- (void)encodeWithCoder:(NSCoder *)c {
+    [c encodeObject:_trackId forKey:@"trackId"]; [c encodeObject:_title forKey:@"title"];
+    [c encodeObject:_albumId forKey:@"albumId"]; [c encodeObject:_provider forKey:@"provider"];
+    [c encodeInteger:_index forKey:@"index"]; [c encodeDouble:_duration forKey:@"duration"];
+}
+- (instancetype)initWithCoder:(NSCoder *)c {
+    if ((self = [super init])) {
+        _trackId = [c decodeObjectOfClass:NSString.class forKey:@"trackId"] ?: @"";
+        _title = [c decodeObjectOfClass:NSString.class forKey:@"title"] ?: @"";
+        _albumId = [c decodeObjectOfClass:NSString.class forKey:@"albumId"];
+        _provider = [c decodeObjectOfClass:NSString.class forKey:@"provider"];
+        _index = [c decodeIntegerForKey:@"index"]; _duration = [c decodeDoubleForKey:@"duration"];
+    }
+    return self;
+}
 + (instancetype)fromJSON:(NSDictionary *)j album:(ADAlbum *)a {
     if (![j isKindOfClass:NSDictionary.class]) return nil;
     ADTrack *t = [ADTrack new];
@@ -133,25 +172,25 @@ static double ADNum(id o, NSString *k) {
     NSData *d3 = [NSData dataWithContentsOfFile:[self path:@"pos.dat"]];
     NSData *d4 = [NSData dataWithContentsOfFile:[self path:@"last.dat"]];
     NSSet *setA = [NSSet setWithObjects:NSMutableArray.class, NSArray.class, ADAlbum.class, NSString.class, nil];
-    _fav = (d1 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setA fromData:d1 error:nil] : nil) ?: [NSMutableArray array];
-    _hist = (d2 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setA fromData:d2 error:nil] : nil) ?: [NSMutableArray array];
+    _fav = (d1 ? ADUnarchive(d1, setA) : nil) ?: [NSMutableArray array];
+    _hist = (d2 ? ADUnarchive(d2, setA) : nil) ?: [NSMutableArray array];
     NSSet *setD = [NSSet setWithObjects:NSMutableDictionary.class, NSDictionary.class, NSString.class, NSNumber.class, nil];
-    _pos = (d3 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setD fromData:d3 error:nil] : nil) ?: [NSMutableDictionary dictionary];
-    _last = (d4 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setD fromData:d4 error:nil] : nil) ?: [NSMutableDictionary dictionary];
+    _pos = (d3 ? ADUnarchive(d3, setD) : nil) ?: [NSMutableDictionary dictionary];
+    _last = (d4 ? ADUnarchive(d4, setD) : nil) ?: [NSMutableDictionary dictionary];
     NSData *d5 = [NSData dataWithContentsOfFile:[self path:@"info.dat"]];
-    _info = (d5 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setD fromData:d5 error:nil] : nil) ?: [NSMutableDictionary dictionary];
+    _info = (d5 ? ADUnarchive(d5, setD) : nil) ?: [NSMutableDictionary dictionary];
     NSSet *setS = [NSSet setWithObjects:NSSet.class, NSMutableSet.class, NSString.class, nil];
     NSData *d6 = [NSData dataWithContentsOfFile:[self path:@"done.dat"]];
     NSData *d7 = [NSData dataWithContentsOfFile:[self path:@"donealbums.dat"]];
-    _done = (d6 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setS fromData:d6 error:nil] : nil) ?: [NSMutableSet set];
-    _doneAlbums = (d7 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setS fromData:d7 error:nil] : nil) ?: [NSMutableSet set];
+    _done = (d6 ? ADUnarchive(d6, setS) : nil) ?: [NSMutableSet set];
+    _doneAlbums = (d7 ? ADUnarchive(d7, setS) : nil) ?: [NSMutableSet set];
     NSData *d8 = [NSData dataWithContentsOfFile:[self path:@"want.dat"]];
     NSData *d9 = [NSData dataWithContentsOfFile:[self path:@"pin.dat"]];
-    _want = (d8 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setA fromData:d8 error:nil] : nil) ?: [NSMutableArray array];
-    _pin = (d9 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setS fromData:d9 error:nil] : nil) ?: [NSMutableSet set];
+    _want = (d8 ? ADUnarchive(d8, setA) : nil) ?: [NSMutableArray array];
+    _pin = (d9 ? ADUnarchive(d9, setS) : nil) ?: [NSMutableSet set];
     NSData *d10 = [NSData dataWithContentsOfFile:[self path:@"bm.dat"]];
     NSSet *setB = [NSSet setWithObjects:NSMutableArray.class, NSArray.class, NSDictionary.class, NSMutableDictionary.class, NSString.class, NSNumber.class, nil];
-    _bm = (d10 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setB fromData:d10 error:nil] : nil) ?: [NSMutableArray array];
+    _bm = (d10 ? ADUnarchive(d10, setB) : nil) ?: [NSMutableArray array];
     _bm = [_bm mutableCopy];
 }
 - (void)reload { [self load]; [NSNotificationCenter.defaultCenter postNotificationName:@"ADDoneChanged" object:nil]; }
