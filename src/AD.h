@@ -162,6 +162,7 @@ typedef NS_ENUM(NSInteger, ADTaskState) {
 - (BOOL)hasLocal:(nullable NSString *)trackId;
 - (void)removeLocal:(NSString *)trackId;
 - (nullable NSURL *)localURL:(nullable NSString *)trackId;
++ (nullable NSString *)extForData:(NSData *)head;
 // 单集进度与编辑
 @property (nonatomic, copy, readonly, nullable) NSString *currentTrackId;
 @property (nonatomic, assign, readonly) double currentWritten, currentExpected;
@@ -250,9 +251,10 @@ NS_ASSUME_NONNULL_END
 + (void)showIn:(UIViewController *)vc title:(NSString *)title options:(NSArray<NSString *> *)options destructive:(NSInteger)destructiveIndex choose:(void (^)(NSInteger index))choose;
 @end
 
-@interface ADBookmarksController : UITableViewController @end
-@interface ADStorageController : UITableViewController @end
-@interface ADBackupController : UITableViewController @end
+@interface ADGlassPage : UIViewController @end
+@interface ADBookmarksController : ADGlassPage @end
+@interface ADStorageController : ADGlassPage @end
+@interface ADBackupController : ADGlassPage @end
 @interface ADHistoryController : UIViewController @end
 @interface ADDownloadsController : UIViewController @end
 @interface ADDownloadDetailController : UIViewController

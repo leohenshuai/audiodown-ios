@@ -207,8 +207,26 @@
     return d;
 }
 
+// 预缓存文件：读时兼容各种扩展名，写时按文件头决定
 - (NSString *)prefetchPath:(NSString *)trackId {
-    return [[self prefetchDir] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.m4a", trackId]];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    for (NSString *e in @[@"mp3", @"m4a", @"aac", @"flac", @"ogg", @"wav"]) {
+        NSString *p = [[self prefetchDir] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.%@", trackId, e]];
+        if ([fm fileExistsAtPath:p]) {
+            // 旧版本误存成 .m4a 的 MP3：顺手改名
+            if ([e isEqualToString:@"m4a"]) {
+                NSFileHandle *h = [NSFileHandle fileHandleForReadingAtPath:p]; NSData *d = [h readDataOfLength:16]; [h closeFile];
+                NSString *real = [ADDownloader extForData:d];
+                if (real.length && ![real isEqualToString:@"m4a"]) {
+                    NSString *np = [[p stringByDeletingPathExtension] stringByAppendingPathExtension:real];
+                    [fm removeItemAtPath:np error:nil];
+                    if ([fm moveItemAtPath:p toPath:np error:nil]) return np;
+                }
+            }
+            return p;
+        }
+    }
+    return [[self prefetchDir] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.mp3", trackId]];
 }
 
 - (void)cleanPrefetch {
@@ -263,7 +281,10 @@
             for (NSString *key in h) [req setValue:h[key] forHTTPHeaderField:key];
             NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *r, NSError *e) {
                 [self.prefetching removeObject:t.trackId];
-                if (data.length > 40000) [data writeToFile:[self prefetchPath:t.trackId] atomically:YES];
+                if (data.length > 40000) {
+                    NSString *ext = [ADDownloader extForData:[data subdataWithRange:NSMakeRange(0, 16)]] ?: @"mp3";
+                    [data writeToFile:[[self prefetchDir] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.%@", t.trackId, ext]] atomically:YES];
+                }
             }];
             [task resume];
         }];

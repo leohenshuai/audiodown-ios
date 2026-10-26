@@ -2334,6 +2334,28 @@
     [self presentViewController:a animated:YES completion:nil];
 }
 
+- (void)editBaseURL {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"服务地址" message:@"例如 https://域名:端口" preferredStyle:UIAlertControllerStyleAlert];
+    [a addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.text = self.baseField.text.length ? self.baseField.text : [ADConfig shared].baseURL;
+        tf.placeholder = @"https://服务器地址:端口";
+        tf.keyboardType = UIKeyboardTypeURL;
+        tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        tf.autocorrectionType = UITextAutocorrectionTypeNo;
+        tf.clearButtonMode = UITextFieldViewModeWhileEditing;
+        tf.font = [UIFont monospacedSystemFontOfSize:13 weight:UIFontWeightRegular];
+    }];
+    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [a addAction:[UIAlertAction actionWithTitle:@"保存并测试" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+        NSString *v = [a.textFields.firstObject.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        while ([v hasSuffix:@"/"]) v = [v substringToIndex:v.length - 1];
+        if (!v.length) return;
+        self.baseField.text = v;
+        [self save];
+    }]];
+    [self presentViewController:a animated:YES completion:nil];
+}
+
 - (void)editAccount {
     ADConfig *cfg = [ADConfig shared];
     UIAlertController *a = [UIAlertController alertControllerWithTitle:@"网页账号"
@@ -2462,10 +2484,13 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
         if (ip.row == 0) {
             icon = @"server.rack"; ic = blue;
             c.textLabel.text = @"服务地址";
-            CGFloat cw = t.bounds.size.width - 40;
-            self.baseField.frame = CGRectMake(150, 12, MAX(80, cw - 150 - 12), 32);
-            self.baseField.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-            [c.contentView addSubview:self.baseField];
+            NSString *u = self.baseField.text.length ? self.baseField.text : [ADConfig shared].baseURL;
+            c.detailTextLabel.text = u.length ? u : @"未填写";
+            c.detailTextLabel.font = [UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightRegular];
+            c.detailTextLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+            c.detailTextLabel.textColor = [UIColor colorWithWhite:1 alpha:0.65];
+            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            c.selectionStyle = UITableViewCellSelectionStyleDefault;
         } else if (ip.row == 1) {
             icon = @"key.fill"; ic = orange;
             c.textLabel.text = @"Token";
@@ -2623,7 +2648,7 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
     [t deselectRowAtIndexPath:ip animated:YES];
     switch (ip.section) {
     case ADSecServer:
-        if (ip.row == 0) [self.baseField becomeFirstResponder];
+        if (ip.row == 0) [self editBaseURL];
         else if (ip.row == 1) [self editToken];
         else if (ip.row == 2) [self editAccount];
         else [self save];

@@ -48,6 +48,7 @@
     dispatch_once(&once, ^{
         d = [ADDownloader new];
         d.retryMap = [NSMutableDictionary dictionary];
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ [d fixExtensions]; });
         NSArray *fa = [NSUserDefaults.standardUserDefaults arrayForKey:@"ad_dl_failed"];
         d.failedIds = fa ? [NSMutableSet setWithArray:fa] : [NSMutableSet set];
         [d load];
@@ -81,11 +82,48 @@
 
 - (NSArray<ADTask *> *)tasks { return _tasks; }
 
+// 按文件头判断真实格式。服务端给的多是 MP3(ID3 开头)，以前一律存成 .m4a，
+// AVPlayer 按扩展名当 MP4 解析 → 本地文件打不开。
++ (NSString *)extForData:(NSData *)head {
+    const unsigned char *b = head.bytes; NSUInteger n = head.length;
+    if (n >= 3 && b[0] == 'I' && b[1] == 'D' && b[2] == '3') return @"mp3";
+    if (n >= 2 && b[0] == 0xFF && (b[1] & 0xE0) == 0xE0) return ((b[1] & 0x06) == 0) ? @"aac" : @"mp3";   // ADTS AAC 的 layer 位为 0
+    if (n >= 8 && b[4] == 'f' && b[5] == 't' && b[6] == 'y' && b[7] == 'p') return @"m4a";
+    if (n >= 4 && b[0] == 'f' && b[1] == 'L' && b[2] == 'a' && b[3] == 'C') return @"flac";
+    if (n >= 4 && b[0] == 'O' && b[1] == 'g' && b[2] == 'g' && b[3] == 'S') return @"ogg";
+    if (n >= 4 && b[0] == 'R' && b[1] == 'I' && b[2] == 'F' && b[3] == 'F') return @"wav";
+    return nil;
+}
++ (NSString *)extForFile:(NSString *)path {
+    NSFileHandle *h = [NSFileHandle fileHandleForReadingAtPath:path];
+    NSData *d = [h readDataOfLength:16]; [h closeFile];
+    return [self extForData:d];
+}
+- (NSArray<NSString *> *)exts { return @[@"mp3", @"m4a", @"aac", @"flac", @"ogg", @"wav"]; }
+- (NSString *)pathFor:(NSString *)trackId ext:(NSString *)ext {
+    return [[self audioDir] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.%@", trackId, ext]];
+}
+// 已存在的文件(任意扩展名)；没有时返回 .mp3 路径
 - (NSString *)fileFor:(NSString *)trackId {
-    return [[self audioDir] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.m4a", trackId]];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    for (NSString *e in [self exts]) { NSString *p = [self pathFor:trackId ext:e]; if ([fm fileExistsAtPath:p]) return p; }
+    return [self pathFor:trackId ext:@"mp3"];
 }
 - (BOOL)hasLocal:(NSString *)trackId {
-    return trackId && [NSFileManager.defaultManager fileExistsAtPath:[self fileFor:trackId]];
+    return trackId.length && [NSFileManager.defaultManager fileExistsAtPath:[self fileFor:trackId]];
+}
+// 启动时把旧版本按 .m4a 存下的 MP3 改回正确扩展名
+- (void)fixExtensions {
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *dir = [self audioDir];
+    for (NSString *f in [fm contentsOfDirectoryAtPath:dir error:nil]) {
+        NSString *src = [dir stringByAppendingPathComponent:f];
+        NSString *real = [ADDownloader extForFile:src];
+        if (!real.length || [f.pathExtension.lowercaseString isEqualToString:real]) continue;
+        NSString *dst = [[src stringByDeletingPathExtension] stringByAppendingPathExtension:real];
+        [fm removeItemAtPath:dst error:nil];
+        [fm moveItemAtPath:src toPath:dst error:nil];
+    }
 }
 - (void)removeLocal:(NSString *)trackId {
     if (!trackId.length) return;
@@ -336,9 +374,14 @@
 
 - (void)URLSession:(NSURLSession *)s downloadTask:(NSURLSessionDownloadTask *)task didFinishDownloadingToURL:(NSURL *)location {
     NSString *tid = task.taskDescription;
-    NSString *dst = [self fileFor:tid];
     NSFileManager *fm = [NSFileManager defaultManager];
-    [fm removeItemAtPath:dst error:nil];
+    for (NSString *e in [self exts]) [fm removeItemAtPath:[self pathFor:tid ext:e] error:nil];
+    NSString *ext = [ADDownloader extForFile:location.path];
+    if (!ext.length) {
+        NSString *ue = task.originalRequest.URL.pathExtension.lowercaseString;
+        ext = [[self exts] containsObject:ue] ? ue : @"mp3";
+    }
+    NSString *dst = [self pathFor:tid ext:ext];
     [fm copyItemAtPath:location.path toPath:dst error:nil];
     NSDictionary *attr = [fm attributesOfItemAtPath:dst error:nil];
     // 文件没写成 / 太小（多半是服务端返回的错误页）就别当成功，交回重试
