@@ -613,9 +613,6 @@
         }
         self.hint.text = sections.count ? @"" : (err ?: @"没有内容");
     }];
-            if (![sorted isEqualToArray:self.cats ?: @[]]) { self.cats = sorted; [self build]; }
-        }
-    }];
 }
 
 // 首页分类(E 样式):文字页签 → 本类精选大卡 → 热门榜前 5,数据全部来自发现页板块
