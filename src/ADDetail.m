@@ -5,6 +5,7 @@
 #import <AVKit/AVKit.h>
 #import <AVFoundation/AVFoundation.h>
 
+#define kSegLen 60
 // ───────────── 专辑详情 ─────────────
 @interface ADAlbumController () <UITableViewDataSource, UITableViewDelegate>
 @property (nonatomic, copy) NSString *errText;
@@ -668,7 +669,6 @@
     self.floatBar.frame = CGRectMake(0, safe - 44, self.view.bounds.size.width, 44);
 }
 
-#define kSegLen 60
 - (BOOL)segMode { return self.segStart >= 0 && self.total > 0 && self.pageSize == 50; }
 - (NSInteger)segLen { return MAX(0, MIN(kSegLen, self.total - self.segStart)); }
 - (NSInteger)globalForRow:(NSInteger)row {
@@ -2712,7 +2712,6 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
     [self.table reloadData];
     [ADUpdater downloadAsset:rel progress:^(double p) {
         self.updateHint = [NSString stringWithFormat:@"正在下载安装包… %ld%%", (long)lround(p * 100)];
-        [self.table reloadFooterViewForSection:ADSecAbout];
         [self.table reloadData];
     } done:^(NSURL *file, NSString *err) {
         if (!file) { self.updateHint = err ?: @"下载失败"; [self.table reloadData]; [self alert:@"下载失败" msg:self.updateHint]; return; }

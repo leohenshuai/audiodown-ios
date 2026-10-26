@@ -101,10 +101,6 @@ static NSString *const kSvc = @"com.leo.audiodown.github";
         }
         dispatch_async(dispatch_get_main_queue(), ^{ done(dst, err); });
     }];
-    if (@available(iOS 11.0, *)) {
-        __block NSKeyValueObservation *obs = nil;
-        (void)obs;
-    }
     [task resume];
     // 轮询进度（NSProgress KVO 在纯 ObjC 写法里较啰嗦，这里 0.4s 刷一次）
     __block NSTimer *timer = [NSTimer scheduledTimerWithTimeInterval:0.4 repeats:YES block:^(NSTimer *t) {
