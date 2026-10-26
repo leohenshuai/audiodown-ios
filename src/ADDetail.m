@@ -49,6 +49,8 @@
 @property (nonatomic, assign) BOOL introOpen;
 @property (nonatomic, assign) NSInteger coverTries;
 @property (nonatomic, copy) NSString *blurKey;
+// 快速选集：骨架占位模式（skel=占位总行数，0=关闭；skelPage=目标页）
+@property (nonatomic, assign) NSInteger skel, skelPage;
 @end
 
 // ───────────── 目录行 ─────────────
@@ -58,6 +60,8 @@
 @property (nonatomic, strong) UIImageView *state;
 @property (nonatomic, strong) UIView *barBg, *barFill;
 @property (nonatomic, assign) CGFloat frac;
+@property (nonatomic, strong) UIView *skA, *skB;
+- (void)setSkeleton:(BOOL)on;
 @end
 @implementation ADTrackCell
 - (instancetype)initWithStyle:(UITableViewCellStyle)s reuseIdentifier:(NSString *)r {
@@ -84,8 +88,23 @@
         self.barBg.layer.cornerRadius = 1; self.barFill.layer.cornerRadius = 1;
         for (UIView *v in @[self.num, self.name, self.sub, self.state, self.barBg]) [self.contentView addSubview:v];
         [self.barBg addSubview:self.barFill];
+        self.skA = [UIView new]; self.skB = [UIView new];
+        for (UIView *v in @[self.skA, self.skB]) { v.backgroundColor = [UIColor colorWithWhite:1 alpha:0.09]; v.layer.cornerRadius = 5; v.hidden = YES; [self.contentView addSubview:v]; }
     }
     return self;
+}
+- (void)setSkeleton:(BOOL)on {
+    self.skA.hidden = self.skB.hidden = !on;
+    self.name.hidden = self.sub.hidden = self.state.hidden = on;
+    if (on) {
+        self.barBg.hidden = YES;
+        [self setPlaying:NO];
+        if (![self.skA.layer animationForKey:@"sk"]) {
+            CABasicAnimation *a = [CABasicAnimation animationWithKeyPath:@"opacity"];
+            a.fromValue = @0.45; a.toValue = @1; a.duration = 0.8; a.autoreverses = YES; a.repeatCount = HUGE_VALF;
+            [self.skA.layer addAnimation:a forKey:@"sk"]; [self.skB.layer addAnimation:a forKey:@"sk"];
+        }
+    } else { [self.skA.layer removeAllAnimations]; [self.skB.layer removeAllAnimations]; }
 }
 - (void)layoutSubviews {
     [super layoutSubviews];
@@ -96,6 +115,8 @@
     self.name.frame = CGRectMake(60, 12, w - 60 - 56, 21);
     self.sub.frame = CGRectMake(60, 34, w - 60 - 56, 16);
     self.barBg.frame = CGRectMake(60, h - 11, w - 60 - 56, 2);
+    self.skA.frame = CGRectMake(60, 15, (w - 116) * 0.62, 12);
+    self.skB.frame = CGRectMake(60, 38, (w - 116) * 0.34, 10);
     self.barFill.frame = CGRectMake(0, 0, self.barBg.bounds.size.width * self.frac, 2);
 }
 - (void)setPlaying:(BOOL)on {
@@ -257,7 +278,8 @@
     for (NSIndexPath *ip in self.table.indexPathsForVisibleRows) {
         ADTrackCell *c = (ADTrackCell *)[self.table cellForRowAtIndexPath:ip];
         if (![c isKindOfClass:ADTrackCell.class]) continue;
-        ADTrack *tr = [self ordered][ip.row];
+        ADTrack *tr = [self trackAtRow:ip.row];
+        if (!tr) continue;
         ADTrack *cur = ADPlayer.shared.current;
         BOOL playing = cur && [cur.trackId isEqualToString:tr.trackId] && ADPlayer.shared.album && [ADPlayer.shared.album.albumId isEqualToString:self.album.albumId];
         [c setPlaying:playing];
@@ -490,6 +512,7 @@
 
 - (void)setSortDescending:(BOOL)desc {
     if (desc == self.sortDesc) return;
+    if (self.skel) [self endSkeletonEnded:NO];
     self.sortDesc = desc;
     self.orderedCache = nil;
     [self.table reloadData];
@@ -627,10 +650,90 @@
     self.floatBar.frame = CGRectMake(0, safe - 44, self.view.bounds.size.width, 44);
 }
 
+- (ADTrack *)trackAtRow:(NSInteger)row {
+    if (self.skel) {
+        NSArray *a = self.pageMap[@(row / 50 + 1)];
+        NSInteger o = row % 50;
+        return o < (NSInteger)a.count ? a[o] : nil;
+    }
+    NSArray *o = [self ordered];
+    return (row >= 0 && row < (NSInteger)o.count) ? o[row] : nil;
+}
+
+- (void)syncPlayerQueue {
+    if (self.tracks.count && !ADPlayer.shared.album) {
+        ADPlayer.shared.album = self.album;
+        ADPlayer.shared.tracks = self.tracks;
+    } else if (ADPlayer.shared.album && [ADPlayer.shared.album.albumId isEqualToString:self.album.albumId]
+               && self.tracks.count > ADPlayer.shared.tracks.count) {
+        ADPlayer.shared.tracks = self.tracks;
+    }
+}
+
+// 骨架模式：按优先级并行拉页（目标页优先，再往前补），同时最多 4 路
+- (void)pumpSkeleton {
+    if (!self.skel) return;
+    NSMutableArray *order = [NSMutableArray array];
+    [order addObject:@(self.skelPage)];
+    for (NSInteger q = self.skelPage - 1; q >= 1; q--) [order addObject:@(q)];
+    for (NSNumber *n in order) {
+        if (self.pageMap[n] || [self.pageLoading containsObject:n]) continue;
+        if (self.pageLoading.count >= 4) break;
+        [self loadPage:n.integerValue];
+    }
+}
+
+// 结束骨架模式：只保留从第 1 页起连续的部分，其余丢掉，避免队列错位
+- (void)endSkeletonEnded:(BOOL)ended {
+    self.skel = 0; self.skelPage = 0;
+    NSInteger k = 1;
+    while (self.pageMap[@(k)]) k++;
+    for (NSNumber *key in [self.pageMap.allKeys copy]) if (key.integerValue >= k) [self.pageMap removeObjectForKey:key];
+    NSArray *last = self.pageMap[@(k - 1)];
+    if (ended || (last.count > 0 && last.count < 50)) self.endReached = YES;
+    [self rebuildTracks];
+    [self syncPlayerQueue];
+    [self.table reloadData];
+    [self fillHeader];
+    [self updateFooter];
+}
+
+- (void)skeletonProgress {
+    NSInteger have = 0;
+    for (NSInteger q = 1; q <= self.skelPage; q++) if (self.pageMap[@(q)]) have++;
+    if (have >= self.skelPage) {
+        NSInteger row0 = self.table.indexPathsForVisibleRows.firstObject.row;
+        [self endSkeletonEnded:NO];
+        (void)row0;
+        return;
+    }
+    [self.table reloadRowsAtIndexPaths:self.table.indexPathsForVisibleRows withRowAnimation:UITableViewRowAnimationNone];
+    [self pumpSkeleton];
+}
+
 - (void)jumpTo:(NSInteger)idx {
+    if (self.skel && idx < self.skel) {
+        [self.table scrollToRowAtIndexPath:[NSIndexPath indexPathForRow:idx inSection:0] atScrollPosition:UITableViewScrollPositionTop animated:YES];
+        return;
+    }
     if (idx < (NSInteger)self.tracks.count) {
         NSIndexPath *ip = [NSIndexPath indexPathForRow:[self rowForIndex:idx] inSection:0];
         [self.table scrollToRowAtIndexPath:ip atScrollPosition:UITableViewScrollPositionTop animated:YES];
+        return;
+    }
+    // 优雅路径：先立刻滚到目标位置（中间用骨架占位），目标页和前面的页并行拉取
+    if (!self.sortDesc && self.tracks.count && self.pageSize == 50 && idx / 50 + 1 <= 400) {
+        NSInteger tp = idx / 50 + 1;
+        NSInteger rows = tp * 50;
+        if (self.total > 0) rows = MIN(rows, MAX(self.total, (NSInteger)self.tracks.count));
+        rows = MAX(rows, (NSInteger)self.tracks.count);
+        self.errText = nil;
+        self.endReached = NO; self.hasMore = YES; self.loadingAll = NO; self.jumpTarget = -1;
+        self.skel = rows; self.skelPage = tp;
+        [self updateFooter];
+        [self.table reloadData];
+        [self.table scrollToRowAtIndexPath:[NSIndexPath indexPathForRow:MIN(idx, rows - 1) inSection:0] atScrollPosition:UITableViewScrollPositionTop animated:YES];
+        [self pumpSkeleton];
         return;
     }
     self.errText = nil;
@@ -700,6 +803,7 @@
 }
 
 - (void)beginSelecting {
+    if (self.skel) return;
     self.selecting = YES;
     [self.selected removeAllObjects];
     self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"取消" style:UIBarButtonItemStylePlain target:self action:@selector(endSelecting)];
@@ -825,6 +929,7 @@
     self.errText = nil;
     self.endReached = NO;
     self.orderedCache = nil;
+    self.skel = 0; self.skelPage = 0;
     self.pageSize = 50;
     self.hasMore = YES;
     self.loading = NO;
@@ -885,6 +990,10 @@
         if (total > 0) self.total = total;
         // 缓存：先铺一层，网络结果随后覆盖同一页
         if (cached && !err.length) {
+            if (self.skel) {
+                if (![self.pageMap objectForKey:@(p)] && list.count) { self.pageMap[@(p)] = list; [self skeletonProgress]; }
+                return;
+            }
             if (![self.pageMap objectForKey:@(p)] && list.count) {
                 self.pageMap[@(p)] = list;
                 [self rebuildTracks];
@@ -904,7 +1013,7 @@
                     __strong typeof(w2) s = w2; if (!s) return;
                     [s loadPage:p];
                 });
-            } else if (p == 1 && [self shrinkPageSize]) {
+            } else if (p == 1 && !self.skel && [self shrinkPageSize]) {
                 // 第 1 页就抓不到：换小页宽让服务端重新去上游抓
                 self.pageTries = [NSMutableDictionary dictionary];
                 self.pageMap = [NSMutableDictionary dictionary];
@@ -917,12 +1026,32 @@
             } else {
                 self.failPage = p;
                 self.errText = err.length ? err : @"这一页目录没取到";
+                if (self.skel) { [self endSkeletonEnded:NO]; return; }
                 self.loadingAll = NO;
                 self.pendingDownloadAll = NO;
                 [self.table reloadData];
                 [self updateFooter];
                 [self fillHeader];
             }
+            return;
+        }
+        if (self.skel) {
+            if (list.count == 0) {
+                if ([self.pageTries[@(p)] integerValue] < 1) {
+                    self.pageTries[@(p)] = @1;
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self loadPage:p]; });
+                    return;
+                }
+                // 目标段超出实际集数：收起占位，落到最后一行
+                self.pageMap[@(p)] = @[];
+                [self endSkeletonEnded:YES];
+                NSInteger last = MAX(0, (NSInteger)self.tracks.count - 1);
+                [self.table scrollToRowAtIndexPath:[NSIndexPath indexPathForRow:[self rowForIndex:last] inSection:0] atScrollPosition:UITableViewScrollPositionBottom animated:YES];
+                return;
+            }
+            self.pageMap[@(p)] = list;
+            [self.pageTries removeObjectForKey:@(p)];
+            [self skeletonProgress];
             return;
         }
         // 空页：先当作“可能只是抖动”，补一次；还是空才算真的到底
@@ -1072,14 +1201,20 @@
     UITableViewHeaderFooterView *h = (UITableViewHeaderFooterView *)v;
     h.textLabel.textColor = [ADUtil dim];
 }
-- (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { return self.tracks.count; }
+- (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { return self.skel ? self.skel : self.tracks.count; }
 - (NSArray<UITableViewRowAction *> *)legacyActions { return nil; }
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {
     static NSString *cid = @"tr";
     ADTrackCell *c = [t dequeueReusableCellWithIdentifier:cid];
     if (!c) c = [[ADTrackCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:cid];
-    ADTrack *tr = [self ordered][ip.row];
+    ADTrack *tr = [self trackAtRow:ip.row];
     NSInteger n = self.tracks.count;
+    if (!tr) {
+        c.num.text = [NSString stringWithFormat:@"%ld", (long)(ip.row + 1)];
+        [c setSkeleton:YES];
+        return c;
+    }
+    [c setSkeleton:NO];
     c.num.text = [NSString stringWithFormat:@"%ld", (long)(self.sortDesc ? n - ip.row : ip.row + 1)];
     c.name.text = tr.title;
     double pos = [[ADStore shared] positionFor:tr.trackId];
@@ -1117,12 +1252,23 @@
     c.accessoryType = UITableViewCellAccessoryNone;
     [c setNeedsLayout];
     // 触底加载
-    if (!self.selecting && self.hasMore && self.jumpTarget < 0 && ip.row >= (NSInteger)self.tracks.count - 6) [self loadNextPage];
+    if (!self.skel && !self.selecting && self.hasMore && self.jumpTarget < 0 && ip.row >= (NSInteger)self.tracks.count - 6) [self loadNextPage];
     return c;
 }
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [t deselectRowAtIndexPath:ip animated:YES];
-    ADTrack *tr = [self ordered][ip.row];
+    ADTrack *tr = [self trackAtRow:ip.row];
+    if (!tr) { [ADHaptic soft]; return; }
+    if (self.skel) {
+        // 占位期间点已到的行：只要 1..该页都已到，就用连续前缀播放
+        NSInteger pg = ip.row / 50 + 1;
+        NSMutableArray *prefix = [NSMutableArray array];
+        for (NSInteger q = 1; q <= pg; q++) { NSArray *a = self.pageMap[@(q)]; if (!a) { [ADHaptic warning]; return; } [prefix addObjectsFromArray:a]; }
+        [ADHaptic tap];
+        [ADPlayer.shared playAlbum:self.album tracks:prefix at:ip.row];
+        [self presentViewController:[ADPlayerController new] animated:YES completion:nil];
+        return;
+    }
     if (self.selecting) {
         if ([self.selected containsObject:tr.trackId]) [self.selected removeObject:tr.trackId];
         else [self.selected addObject:tr.trackId];
@@ -1134,7 +1280,8 @@
 }
 
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)t trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)ip {
-    ADTrack *tr = [self ordered][ip.row];
+    ADTrack *tr = [self trackAtRow:ip.row];
+    if (!tr || self.skel) return nil;
     BOOL local = [[ADDownloader shared] hasLocal:tr.trackId];
     UIContextualAction *act = [UIContextualAction contextualActionWithStyle:(local ? UIContextualActionStyleDestructive : UIContextualActionStyleNormal)
                                                                      title:(local ? @"删除缓存" : @"下载本集")
