@@ -205,6 +205,7 @@
     BOOL _collapsed, _spinPaused, _skipping;
     NSTimer *_collapseTimer;
     UIView *_hole;
+    UIView *_disc;          // 圆形裁剪容器：收起时是正圆，里面的封面负责旋转
 }
 + (instancetype)shared {
     static ADMiniBar *m; static dispatch_once_t once;
@@ -218,8 +219,14 @@
     [ADLiquid glass:self radius:16];
     [ADLiquid float:self];
     self.layer.shadowOpacity = 0.28;
-    _cover = [[UIImageView alloc] initWithFrame:CGRectMake(8, 8, 42, 42)];
-    _cover.layer.cornerRadius = 8; _cover.clipsToBounds = YES;
+    _disc = [[UIView alloc] initWithFrame:CGRectMake(8, 8, 42, 42)];
+    _disc.clipsToBounds = YES;
+    _disc.layer.cornerRadius = 8;
+    if (@available(iOS 13.0, *)) _disc.layer.cornerCurve = kCACornerCurveContinuous;
+    _cover = [[UIImageView alloc] initWithFrame:_disc.bounds];
+    _cover.contentMode = UIViewContentModeScaleAspectFill;
+    _cover.clipsToBounds = YES;
+    [_disc addSubview:_cover];
     _title = [ADUtil label:@"PingFangSC-Semibold" size:14 color:UIColor.whiteColor];
     _sub = [ADUtil label:nil size:11 color:[UIColor colorWithWhite:1 alpha:0.55]];
     _btn = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -233,7 +240,7 @@
     _track.backgroundColor = [UIColor colorWithWhite:1 alpha:0.15];
     _fill = [UIView new];
     _fill.backgroundColor = [UIColor colorWithWhite:1 alpha:0.75];
-    [self addSubview:_cover]; [self addSubview:_title]; [self addSubview:_sub];
+    [self addSubview:_disc]; [self addSubview:_title]; [self addSubview:_sub];
     _fold = [UIButton buttonWithType:UIButtonTypeSystem];
     _fold.tintColor = [UIColor colorWithWhite:1 alpha:0.6];
     [_fold setImage:[UIImage systemImageNamed:@"chevron.right" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:15 weight:UIImageSymbolWeightSemibold]] forState:UIControlStateNormal];
@@ -276,9 +283,9 @@
     CGFloat dx = next ? -28 : 28;
     if (!ok) {   // 到头了：橡皮筋回弹 + 警示触感
         [ADHaptic warning];
-        [UIView animateWithDuration:0.12 animations:^{ for (UIView *v in @[_cover, _title, _sub]) v.transform = CGAffineTransformMakeTranslation(-dx * 0.35, 0); }
+        [UIView animateWithDuration:0.12 animations:^{ for (UIView *v in @[_disc, _title, _sub]) v.transform = CGAffineTransformMakeTranslation(-dx * 0.35, 0); }
                          completion:^(BOOL f) {
-            [UIView animateWithDuration:0.4 delay:0 usingSpringWithDamping:0.5 initialSpringVelocity:0.8 options:0 animations:^{ for (UIView *v in @[_cover, _title, _sub]) v.transform = CGAffineTransformIdentity; } completion:nil];
+            [UIView animateWithDuration:0.4 delay:0 usingSpringWithDamping:0.5 initialSpringVelocity:0.8 options:0 animations:^{ for (UIView *v in @[_disc, _title, _sub]) v.transform = CGAffineTransformIdentity; } completion:nil];
         }];
         return;
     }
@@ -286,12 +293,12 @@
     [ADHaptic select];
     [_collapseTimer invalidate]; _collapseTimer = nil;
     [UIView animateWithDuration:0.14 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{
-        for (UIView *v in @[_title, _sub, _cover]) { v.transform = CGAffineTransformMakeTranslation(dx, 0); v.alpha = 0; }
+        for (UIView *v in @[_title, _sub, _disc]) { v.transform = CGAffineTransformMakeTranslation(dx, 0); v.alpha = 0; }
     } completion:^(BOOL f) {
         if (next) [p next]; else [p playAt:i - 1];
-        for (UIView *v in @[_title, _sub, _cover]) v.transform = CGAffineTransformMakeTranslation(-dx, 0);
+        for (UIView *v in @[_title, _sub, _disc]) v.transform = CGAffineTransformMakeTranslation(-dx, 0);
         [UIView animateWithDuration:0.38 delay:0.05 usingSpringWithDamping:0.78 initialSpringVelocity:0.4 options:0 animations:^{
-            for (UIView *v in @[_title, _sub, _cover]) { v.transform = CGAffineTransformIdentity; v.alpha = 1; }
+            for (UIView *v in @[_title, _sub, _disc]) { v.transform = CGAffineTransformIdentity; v.alpha = 1; }
         } completion:^(BOOL f2) { _skipping = NO; }];
         [self scheduleCollapse];
     }];
@@ -300,14 +307,13 @@
 - (void)swipePrev { [self swipeSkip:NO]; }
 
 // 收起成圆球后：播放时封面缓慢旋转，暂停时停在当前角度
+// 旋转作用在 _cover(位于 _disc 内),外层 _disc 负责圆形裁剪,所以封面不会超出圆
 - (void)updateSpin {
     CALayer *L = _cover.layer;
     BOOL playing = ADPlayer.shared.isPlaying;
     if (!_collapsed) {
-        if ([L animationForKey:@"spin"]) {
-            [L removeAnimationForKey:@"spin"];
-            L.speed = 1; L.timeOffset = 0; L.beginTime = 0; _spinPaused = NO;
-        }
+        if ([L animationForKey:@"spin"]) [L removeAnimationForKey:@"spin"];
+        L.speed = 1; L.timeOffset = 0; L.beginTime = 0; _spinPaused = NO;
         return;
     }
     if (![L animationForKey:@"spin"]) {
@@ -315,8 +321,8 @@
         a.fromValue = @0; a.toValue = @(M_PI * 2); a.duration = 9; a.repeatCount = HUGE_VALF;
         a.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionLinear];
         a.removedOnCompletion = NO;
-        [L addAnimation:a forKey:@"spin"];
         L.speed = 1; L.timeOffset = 0; L.beginTime = 0; _spinPaused = NO;
+        [L addAnimation:a forKey:@"spin"];
     }
     if (playing && _spinPaused) {
         CFTimeInterval paused = L.timeOffset;
@@ -333,10 +339,15 @@
     [super layoutSubviews];
     CGFloat w = self.bounds.size.width, h = self.bounds.size.height;
     if (_collapsed) {
-        _cover.frame = CGRectMake(7, 7, h - 14, h - 14);
-        _cover.layer.cornerRadius = (h - 14) / 2;
-        _cover.layer.borderWidth = 1.5;
-        _cover.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.28].CGColor;
+        CGFloat d = h - 14;
+        _disc.frame = CGRectMake((w - d) / 2, (h - d) / 2, d, d);
+        _disc.layer.cornerRadius = d / 2;
+        _disc.layer.borderWidth = 1.5;
+        _disc.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.28].CGColor;
+        // 封面放大成能完全盖住圆的正方形(√2 倍),旋转时四角也不会漏出来;圆形裁剪由 _disc 负责
+        CGFloat big = ceil(d * 1.42);
+        _cover.bounds = CGRectMake(0, 0, big, big);
+        _cover.center = CGPointMake(d / 2, d / 2);
         _hole.hidden = NO;
         _hole.center = CGPointMake(w / 2, h / 2);
         _title.hidden = YES;
@@ -355,10 +366,12 @@
     _fold.hidden = NO;
     _track.hidden = NO;
     _fill.hidden = NO;
-    _cover.layer.cornerRadius = 8;
-    _cover.layer.borderWidth = 0;
+    _disc.layer.cornerRadius = 8;
+    _disc.layer.borderWidth = 0;
     _hole.hidden = YES;
-    _cover.frame = CGRectMake(8, (h - 42) / 2, 42, 42);
+    _disc.frame = CGRectMake(8, (h - 42) / 2, 42, 42);
+    _cover.transform = CGAffineTransformIdentity;
+    _cover.frame = _disc.bounds;
     _fold.frame = CGRectMake(w - 32, (h - 36) / 2, 30, 36);
     _btn.frame = CGRectMake(w - 66, (h - 36) / 2, 34, 36);
     _back.frame = CGRectMake(w - 100, (h - 36) / 2, 32, 36);

@@ -221,7 +221,7 @@
     self.dlBtn.titleLabel.numberOfLines = 2;
     self.dlBtn.titleLabel.textAlignment = NSTextAlignmentCenter;
     [self.dlBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    [self.dlBtn addTarget:self action:@selector(downloadAll) forControlEvents:UIControlEventTouchUpInside];
+    [self.dlBtn addTarget:self action:@selector(openDownloadSheet) forControlEvents:UIControlEventTouchUpInside];
 
     self.intro = [ADUtil label:nil size:13.5 color:[UIColor colorWithWhite:1 alpha:0.62]];
     self.intro.numberOfLines = 3;
@@ -536,8 +536,8 @@
 
 - (void)showAlbumMenu {
     [ADHaptic tap];
-    [ADOptionSheet showIn:self title:self.album.title options:@[@"选择剧集下载", @"目录正序", @"目录倒序", @"缓存整本到本机", @"刷新目录", @"目录诊断"] destructive:-1 choose:^(NSInteger i) {
-        if (i == 0) [self beginSelecting];
+    [ADOptionSheet showIn:self title:self.album.title options:@[@"分段下载…", @"目录正序", @"目录倒序", @"缓存整本到本机", @"刷新目录", @"目录诊断"] destructive:-1 choose:^(NSInteger i) {
+        if (i == 0) { if (self.tracks.count) [ADDLSheet presentFrom:self album:self.album tracks:[self.tracks copy] total:MAX(self.total, (NSInteger)self.tracks.count)]; }
         else if (i == 1) [self setSortDescending:NO];
         else if (i == 2) [self setSortDescending:YES];
         else if (i == 3) [self downloadAll];
@@ -887,6 +887,15 @@
     [self.table reloadData];
     [self loadPage:1];
     [self.table.refreshControl endRefreshing];
+}
+
+- (void)openDownloadSheet {
+    [ADHaptic tap];
+    ADTask *task = [[ADDownloader shared] taskForAlbum:self.album.albumId];
+    // 正在下载或已暂停：点圆钮直接暂停/继续，长按或再点“下载”分段仍可追加
+    if (task && (task.state == ADTaskStateRunning || task.state == ADTaskStatePaused) && !self.pendingDownloadAll) { [self downloadAll]; return; }
+    if (!self.tracks.count) return;
+    [ADDLSheet presentFrom:self album:self.album tracks:[self.tracks copy] total:MAX(self.total, (NSInteger)self.tracks.count)];
 }
 
 - (void)downloadAll {

@@ -223,6 +223,9 @@ NS_ASSUME_NONNULL_END
 @property (nonatomic, strong) ADAlbum *album;
 @end
 @interface ADPlayerController : UIViewController @end
+@interface ADDLSheet : UIViewController <UITableViewDataSource, UITableViewDelegate>
++ (void)presentFrom:(UIViewController *)vc album:(ADAlbum *)a tracks:(NSArray<ADTrack *> *)tracks total:(NSInteger)total;
+@end
 @interface ADOptionSheet : NSObject
 + (void)showIn:(UIViewController *)vc title:(NSString *)title options:(NSArray<NSString *> *)options destructive:(NSInteger)destructiveIndex choose:(void (^)(NSInteger index))choose;
 @end
