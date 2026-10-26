@@ -581,7 +581,10 @@
         self.floatBar = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 44)];
         self.floatBar.showsHorizontalScrollIndicator = NO;
         self.floatBar.contentInset = UIEdgeInsetsMake(0, 16, 0, 16);
-        [ADLiquid glass:self.floatBar radius:18 alpha:0.05];
+        self.floatBar.backgroundColor = [UIColor colorWithRed:0.07 green:0.065 blue:0.08 alpha:0.96];
+        self.floatBar.layer.shadowColor = UIColor.blackColor.CGColor;
+        self.floatBar.layer.shadowOpacity = 0.35; self.floatBar.layer.shadowRadius = 10; self.floatBar.layer.shadowOffset = CGSizeMake(0, 6);
+        self.floatBar.clipsToBounds = NO;
         self.floatBar.hidden = YES;
         [self.view addSubview:self.floatBar];
     }
@@ -712,18 +715,23 @@
 }
 
 - (void)jumpTo:(NSInteger)idx {
-    if (self.skel && idx < self.skel) {
+    if (self.skel && MIN(idx + 59, MAX(self.total - 1, idx)) < self.skel) {
         [self.table scrollToRowAtIndexPath:[NSIndexPath indexPathForRow:idx inSection:0] atScrollPosition:UITableViewScrollPositionTop animated:YES];
         return;
     }
-    if (idx < (NSInteger)self.tracks.count) {
+    NSInteger needEnd = idx + 59;
+    if (self.total > 0) needEnd = MIN(needEnd, self.total - 1);
+    if (idx < (NSInteger)self.tracks.count && (needEnd < (NSInteger)self.tracks.count || self.endReached)) {
         NSIndexPath *ip = [NSIndexPath indexPathForRow:[self rowForIndex:idx] inSection:0];
         [self.table scrollToRowAtIndexPath:ip atScrollPosition:UITableViewScrollPositionTop animated:YES];
         return;
     }
     // 优雅路径：先立刻滚到目标位置（中间用骨架占位），目标页和前面的页并行拉取
     if (!self.sortDesc && self.tracks.count && self.pageSize == 50 && idx / 50 + 1 <= 400) {
-        NSInteger tp = idx / 50 + 1;
+        // 区间按 60 集分、目录按 50 集一页，两者不对齐：必须拉到“区间最后一集”所在的页
+        NSInteger endIdx = idx + 59;
+        if (self.total > 0) endIdx = MIN(endIdx, self.total - 1);
+        NSInteger tp = MAX(idx, endIdx) / 50 + 1;
         NSInteger rows = tp * 50;
         if (self.total > 0) rows = MIN(rows, MAX(self.total, (NSInteger)self.tracks.count));
         rows = MAX(rows, (NSInteger)self.tracks.count);
@@ -1099,10 +1107,12 @@
         self.failPage = 0;
         NSInteger before = (NSInteger)self.tracks.count;
         BOOL shortPage = list.count > 0 && list.count < 50;
+        BOOL hadPage = (self.pageMap[@(p)] != nil);                      // 这一页之前已由缓存/骨架填过
         self.pageMap[@(p)] = list ?: @[];
         [self rebuildTracks];
         NSInteger added = (NSInteger)self.tracks.count - before;
-        if (list.count > 0 && added <= 0) self.endReached = YES;         // 整页都是重复的：服务端没有更多了
+        // 只有“新的一页”整页都是重复，才说明服务端没有更多了；覆盖已有页时新增为 0 是正常的
+        if (!hadPage && list.count > 0 && added <= 0) self.endReached = YES;
         if (shortPage && self.total > 0 && (NSInteger)self.tracks.count >= self.total) self.endReached = YES;
         if (self.total > 0 && (NSInteger)self.tracks.count > self.total) self.total = 0;   // total 给少了，弃用
         self.hasMore = !self.endReached;
