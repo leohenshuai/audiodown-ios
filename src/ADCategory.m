@@ -133,7 +133,6 @@
     [super viewWillAppear:a];
     self.navigationController.navigationBar.hidden = YES;
     self.navigationController.interactivePopGestureRecognizer.delegate = self;
-    [ADMiniBar.shared refresh];
 }
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)g { return self.navigationController.viewControllers.count > 1; }
 - (void)goBack { [ADHaptic tap]; [self.navigationController popViewControllerAnimated:YES]; }
