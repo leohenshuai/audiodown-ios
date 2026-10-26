@@ -538,6 +538,10 @@
 @property (nonatomic, strong) NSArray<NSDictionary *> *cats;
 @property (nonatomic, assign) BOOL catsOpen;
 @property (nonatomic, assign) NSInteger catSel;
+@property (nonatomic, strong) UIScrollView *pager;
+@property (nonatomic, strong) UIPageControl *dots;
+@property (nonatomic, assign) NSInteger heroPage;
+@property (nonatomic, strong) NSMutableArray<NSDictionary *> *heroViews;   // 每张继续收听大卡的可刷新控件
 @property (nonatomic, strong) UIRefreshControl *refresh;
 @property (nonatomic, strong) UILabel *hint;
 @property (nonatomic, strong) UIActivityIndicatorView *spin;
@@ -598,7 +602,7 @@
 }
 
 - (void)reloadCards { [self build]; }
-- (void)refreshCards { for (ADContinueCard *c in self.cards) [c refresh]; }
+- (void)refreshCards { for (ADContinueCard *c in self.cards) [c refresh]; [self refreshHero]; }
 
 - (void)load {
     if (!self.sections.count) [self.spin startAnimating];
@@ -672,6 +676,12 @@
     }];
     ADAlbum *hero = rank.firstObject;
 
+    // 继续收听翻页卡(有收听记录时替代精选大卡)
+    NSArray *conts = [self continueItems];
+    if (conts.count) {
+        y = [self buildContinuePager:conts y:y width:W];
+        hero = nil;
+    }
     // 精选大卡:虚化封面做底
     if (hero) {
         UIControl *card = [[UIControl alloc] initWithFrame:CGRectMake(16, y, W - 32, 200)];
@@ -789,6 +799,169 @@
     return y + 22;
 }
 
+- (NSArray *)continueItems {
+    NSMutableArray *items = [NSMutableArray array];
+    for (ADAlbum *a in [ADStore shared].history) {
+        NSDictionary *info = [[ADStore shared] lastInfoOf:a.albumId];
+        if (info) [items addObject:@[a, info]];
+        if (items.count >= 10) break;
+    }
+    return items;
+}
+
+// 与精选大卡同样式:虚化封面做底 + 左封面 + 右文字,左右翻页
+- (CGFloat)buildContinuePager:(NSArray *)items y:(CGFloat)y width:(CGFloat)W {
+    CGFloat cw = W - 32, ch = 200, gap = 12;
+    self.heroViews = [NSMutableArray array];
+    UIScrollView *pg = [[UIScrollView alloc] initWithFrame:CGRectMake(16, y, cw + gap, ch)];
+    pg.pagingEnabled = YES;
+    pg.clipsToBounds = NO;
+    pg.showsHorizontalScrollIndicator = NO;
+    pg.delegate = self;
+    pg.contentSize = CGSizeMake(items.count * (cw + gap), ch);
+    UIColor *brand = [ADUtil brand];
+    for (NSInteger i = 0; i < (NSInteger)items.count; i++) {
+        ADAlbum *a = items[i][0];
+        NSDictionary *info = items[i][1];
+        UIControl *card = [[UIControl alloc] initWithFrame:CGRectMake(i * (cw + gap), 0, cw, ch)];
+        card.tag = 7200 + i;
+        card.layer.cornerRadius = 24; card.clipsToBounds = YES;
+        if (@available(iOS 13.0, *)) card.layer.cornerCurve = kCACornerCurveContinuous;
+        card.backgroundColor = [UIColor colorWithWhite:1 alpha:0.06];
+        card.layer.borderWidth = 0.6; card.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.12].CGColor;
+        UIImageView *bg = [[UIImageView alloc] initWithFrame:CGRectInset(card.bounds, -40, -40)];
+        bg.contentMode = UIViewContentModeScaleAspectFill; bg.userInteractionEnabled = NO;
+        [ADUtil cover:bg url:a.cover];
+        [card addSubview:bg];
+        UIVisualEffectView *blur = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleDark]];
+        blur.frame = card.bounds; blur.userInteractionEnabled = NO;
+        [card addSubview:blur];
+        UIView *dim = [[UIView alloc] initWithFrame:card.bounds];
+        dim.backgroundColor = [UIColor colorWithWhite:0 alpha:0.18]; dim.userInteractionEnabled = NO;
+        [card addSubview:dim];
+
+        UIView *shadow = [[UIView alloc] initWithFrame:CGRectMake(16, 20, 132, 132)];
+        shadow.userInteractionEnabled = NO;
+        shadow.layer.shadowColor = UIColor.blackColor.CGColor; shadow.layer.shadowOpacity = 0.45;
+        shadow.layer.shadowRadius = 10; shadow.layer.shadowOffset = CGSizeMake(0, 6);
+        UIImageView *cv = [[UIImageView alloc] initWithFrame:shadow.bounds];
+        cv.layer.cornerRadius = 14; cv.clipsToBounds = YES; cv.contentMode = UIViewContentModeScaleAspectFill;
+        [ADUtil cover:cv url:a.cover];
+        [shadow addSubview:cv];
+        [card addSubview:shadow];
+
+        CGFloat tx = 164, tw = cw - tx - 16;
+        NSInteger idx = [info[@"index"] integerValue];
+        UILabel *k = [ADUtil label:nil size:11.5 color:brand];
+        k.font = [UIFont systemFontOfSize:11.5 weight:UIFontWeightBold];
+        k.text = [NSString stringWithFormat:@"继续收听 · 第 %ld 集", (long)idx + 1];
+        k.frame = CGRectMake(tx, 22, tw, 16);
+        UILabel *tt = [ADUtil label:@"PingFangSC-Semibold" size:18 color:UIColor.whiteColor];
+        tt.numberOfLines = 2; tt.lineBreakMode = NSLineBreakByTruncatingTail; tt.text = a.title;
+        CGSize ts = [tt sizeThatFits:CGSizeMake(tw, 52)];
+        tt.frame = CGRectMake(tx, 42, tw, MIN(ts.height, 50));
+        UILabel *chap = [ADUtil label:nil size:12.5 color:[UIColor colorWithWhite:1 alpha:0.72]];
+        chap.numberOfLines = 2;
+        NSString *ct = info[@"title"];
+        chap.text = ct.length ? ct : (a.anchor ?: @"");
+        chap.frame = CGRectMake(tx, CGRectGetMaxY(tt.frame) + 4, tw, 34);
+        UIView *track = [[UIView alloc] initWithFrame:CGRectMake(tx, 132, tw, 4)];
+        track.backgroundColor = [UIColor colorWithWhite:1 alpha:0.16]; track.layer.cornerRadius = 2; track.clipsToBounds = YES;
+        UIView *fill = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 4, 4)];
+        fill.backgroundColor = brand; fill.layer.cornerRadius = 2;
+        [track addSubview:fill];
+        UILabel *tm = [ADUtil label:nil size:11.5 color:[UIColor colorWithWhite:1 alpha:0.5]];
+        tm.frame = CGRectMake(tx, 142, tw, 16);
+        for (UIView *v in @[k, tt, chap, track, tm]) { v.userInteractionEnabled = NO; [card addSubview:v]; }
+
+        UIButton *play = [UIButton buttonWithType:UIButtonTypeSystem];
+        play.frame = CGRectMake(16, 164, 104, 26);
+        play.backgroundColor = [UIColor colorWithWhite:1 alpha:0.94];
+        play.layer.cornerRadius = 13;
+        play.tintColor = [UIColor colorWithWhite:0.08 alpha:1];
+        play.titleLabel.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightSemibold];
+        play.tag = 7300 + i;
+        [play addTarget:self action:@selector(tapContPlay:) forControlEvents:UIControlEventTouchUpInside];
+        [card addSubview:play];
+
+        UIButton *more = [UIButton buttonWithType:UIButtonTypeSystem];
+        more.frame = CGRectMake(cw - 50, ch - 38, 40, 30);
+        more.tintColor = [UIColor colorWithWhite:1 alpha:0.7];
+        [more setImage:[UIImage systemImageNamed:@"ellipsis" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:17 weight:UIImageSymbolWeightBold]] forState:UIControlStateNormal];
+        more.tag = 7400 + i;
+        [more addTarget:self action:@selector(tapContMore:) forControlEvents:UIControlEventTouchUpInside];
+        [card addSubview:more];
+
+        [card addTarget:self action:@selector(tapContCard:) forControlEvents:UIControlEventTouchUpInside];
+        UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(longContCard:)];
+        [card addGestureRecognizer:lp];
+        [pg addSubview:card];
+        [self.heroViews addObject:@{@"album": a, @"fill": fill, @"track": track, @"time": tm, @"play": play, @"k": k}];
+    }
+    [self.scroll addSubview:pg];
+    self.pager = pg;
+    NSInteger page = MIN(self.heroPage, (NSInteger)items.count - 1);
+    pg.contentOffset = CGPointMake(page * (cw + gap), 0);
+    y += ch;
+    if (items.count > 1) {
+        UIPageControl *dots = [[UIPageControl alloc] initWithFrame:CGRectMake(0, y + 2, W, 20)];
+        dots.numberOfPages = items.count;
+        dots.currentPage = page;
+        dots.hidesForSinglePage = YES;
+        dots.pageIndicatorTintColor = [UIColor colorWithWhite:1 alpha:0.25];
+        dots.currentPageIndicatorTintColor = UIColor.whiteColor;
+        dots.userInteractionEnabled = NO;
+        if (@available(iOS 14.0, *)) dots.backgroundStyle = UIPageControlBackgroundStyleMinimal;
+        dots.transform = CGAffineTransformMakeScale(0.8, 0.8);
+        [self.scroll addSubview:dots];
+        self.dots = dots;
+        y += 22;
+    } else self.dots = nil;
+    [self refreshHero];
+    return y + 22;
+}
+
+- (void)refreshHero {
+    ADPlayer *p = ADPlayer.shared;
+    for (NSDictionary *h in self.heroViews) {
+        ADAlbum *a = h[@"album"];
+        BOOL cur = p.album && [p.album.albumId isEqualToString:a.albumId];
+        NSDictionary *info = [[ADStore shared] lastInfoOf:a.albumId] ?: @{};
+        double sec = [info[@"seconds"] doubleValue], dur = [info[@"duration"] doubleValue];
+        NSInteger idx = [info[@"index"] integerValue];
+        if (cur && p.isPlaying) {
+            AVPlayerItem *it = p.player.currentItem;
+            double ps = it ? CMTimeGetSeconds(it.currentTime) : 0, pd = it ? CMTimeGetSeconds(it.duration) : 0;
+            if (isnan(ps)) ps = 0;
+            if (isnan(pd)) pd = 0;
+            if (pd > 0) { sec = ps; dur = pd; }
+            idx = p.index;
+        }
+        UIView *track = h[@"track"], *fill = h[@"fill"];
+        CGFloat r = dur > 0 ? MIN(1, sec / dur) : 0;
+        fill.frame = CGRectMake(0, 0, MAX(4, track.bounds.size.width * r), 4);
+        UILabel *tm = h[@"time"];
+        tm.text = dur > 0 ? [NSString stringWithFormat:@"%@ / %@", [ADUtil time:sec], [ADUtil time:dur]] : [NSString stringWithFormat:@"听到 %@", [ADUtil time:sec]];
+        ((UILabel *)h[@"k"]).text = [NSString stringWithFormat:@"%@ · 第 %ld 集", (cur && p.isPlaying) ? @"正在播放" : @"继续收听", (long)idx + 1];
+        UIButton *b = h[@"play"];
+        BOOL playing = cur && p.isPlaying;
+        [b setImage:[UIImage systemImageNamed:(playing ? @"pause.fill" : @"play.fill") withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:11 weight:UIImageSymbolWeightBold]] forState:UIControlStateNormal];
+        [b setTitle:(playing ? @" 暂停" : @" 继续播放") forState:UIControlStateNormal];
+    }
+}
+
+- (ADAlbum *)contAlbum:(NSInteger)i { return (i >= 0 && i < (NSInteger)self.heroViews.count) ? self.heroViews[i][@"album"] : nil; }
+- (void)tapContPlay:(UIButton *)b { ADAlbum *a = [self contAlbum:b.tag - 7300]; if (!a) return; [ADHaptic tap]; [self playCard:a]; [self refreshHero]; }
+- (void)tapContMore:(UIButton *)b { ADAlbum *a = [self contAlbum:b.tag - 7400]; if (a) [self moreCard:a]; }
+- (void)tapContCard:(UIControl *)c { [self openAlbumVC:[self contAlbum:c.tag - 7200]]; }
+- (void)longContCard:(UILongPressGestureRecognizer *)g {
+    if (g.state != UIGestureRecognizerStateBegan) return;
+    ADAlbum *a = [self contAlbum:g.view.tag - 7200];
+    if (!a) return;
+    [ADHaptic heavy];
+    [self menuCard:a];
+}
+
 - (NSArray<ADAlbum *> *)curRank {
     NSArray *secs = [self catSections];
     if (self.catSel >= (NSInteger)secs.count) return @[];
@@ -894,39 +1067,6 @@
     // 分类
     y = [self buildCats:y width:W];
 
-    // 继续收听
-    NSArray<ADAlbum *> *hist = [ADStore shared].history;
-    NSMutableArray *items = [NSMutableArray array];
-    for (ADAlbum *a in hist) {
-        NSDictionary *info = [[ADStore shared] lastInfoOf:a.albumId];
-        if (info) [items addObject:@[a, info]];
-        if (items.count >= 8) break;
-    }
-    if (items.count) {
-        UILabel *t = [ADUtil label:@"PingFangSC-Semibold" size:24 color:UIColor.whiteColor];
-        t.frame = CGRectMake(16, y, W - 32, 32);
-        t.text = @"继续收听";
-        [self.scroll addSubview:t];
-        y += 40;
-
-        CGFloat cardW = W * 0.50, cardH = 258;
-        UIScrollView *hs = [[UIScrollView alloc] initWithFrame:CGRectMake(0, y, W, cardH)];
-        hs.showsHorizontalScrollIndicator = NO;
-        hs.contentSize = CGSizeMake(16 + items.count * (cardW + 14), cardH);
-        for (NSInteger i = 0; i < (NSInteger)items.count; i++) {
-            ADAlbum *a = items[i][0];
-            NSDictionary *info = items[i][1];
-            ADContinueCard *c = [[ADContinueCard alloc] initWithFrame:CGRectMake(16 + i * (cardW + 14), 0, cardW, cardH) album:a info:info];
-            __weak typeof(self) w = self;
-            c.onPlay = ^{ [w playCard:a]; };
-            c.onMore = ^{ [w moreCard:a]; };
-            c.onMenu = ^{ [w menuCard:a]; };
-            [hs addSubview:c];
-            [self.cards addObject:c];
-        }
-        [self.scroll addSubview:hs];
-        y += cardH + 22;
-    }
 
     // 推荐内容面板
     UIView *panel = [[UIView alloc] initWithFrame:CGRectMake(0, y, W, 0)];
@@ -1030,15 +1170,24 @@
 }
 
 - (void)scrollViewDidScroll:(UIScrollView *)s {
+    if (s == self.pager) {
+        CGFloat pw = s.bounds.size.width;
+        NSInteger pg = pw > 0 ? (NSInteger)lround(s.contentOffset.x / pw) : 0;
+        if (pg != self.dots.currentPage && pg >= 0) { self.dots.currentPage = pg; [ADHaptic select]; }
+        self.heroPage = MAX(0, pg);
+        return;
+    }
     static CGFloat lastY = 0;
     [ADLiquid followScroll:s lastY:&lastY];
 }
 
 - (void)scrollViewDidEndDecelerating:(UIScrollView *)s {
+    if (s == self.pager) return;
     [UIView animateWithDuration:0.3 animations:^{ ADNavDock.shared.transform = CGAffineTransformIdentity; ADNavDock.shared.alpha = 1; }];
 }
 
 - (void)scrollViewDidEndDragging:(UIScrollView *)s willDecelerate:(BOOL)d {
+    if (s == self.pager) return;
     if (!d) [self scrollViewDidEndDecelerating:s];
 }
 
