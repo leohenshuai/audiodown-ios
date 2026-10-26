@@ -39,6 +39,70 @@
 // 服务端是「按页去上游抓，抓不满就整段丢」，页宽太大容易失败 → 失败时换小页宽重抓
 @property (nonatomic, assign) NSInteger pageSize;
 @property (nonatomic, strong) NSArray<ADTrack *> *orderedCache;
+// 详情页 UI
+@property (nonatomic, strong) UIView *backdrop;
+@property (nonatomic, strong) UIImageView *backdropImg;
+@property (nonatomic, strong) UIView *chipRow, *catBar, *playBox;
+@property (nonatomic, strong) UIButton *playBtn, *favCircle, *introBtn, *sortBtn, *selBtn;
+@property (nonatomic, strong) UILabel *playTitle, *playSub, *catLabel;
+@property (nonatomic, assign) BOOL introOpen;
+@property (nonatomic, assign) NSInteger coverTries;
+@property (nonatomic, copy) NSString *blurKey;
+@end
+
+// ───────────── 目录行 ─────────────
+@interface ADTrackCell : UITableViewCell
+@property (nonatomic, strong) UIView *hl;
+@property (nonatomic, strong) UILabel *num, *name, *sub;
+@property (nonatomic, strong) UIImageView *state;
+@property (nonatomic, strong) UIView *barBg, *barFill;
+@property (nonatomic, assign) CGFloat frac;
+@end
+@implementation ADTrackCell
+- (instancetype)initWithStyle:(UITableViewCellStyle)s reuseIdentifier:(NSString *)r {
+    if ((self = [super initWithStyle:UITableViewCellStyleDefault reuseIdentifier:r])) {
+        self.backgroundColor = UIColor.clearColor;
+        self.selectionStyle = UITableViewCellSelectionStyleNone;
+        self.hl = [UIView new];
+        self.hl.layer.cornerRadius = 16;
+        if (@available(iOS 13.0, *)) self.hl.layer.cornerCurve = kCACornerCurveContinuous;
+        self.hl.layer.borderWidth = 0.6;
+        [self.contentView addSubview:self.hl];
+        self.num = [ADUtil label:nil size:13 color:[UIColor colorWithWhite:1 alpha:0.38]];
+        self.num.font = [UIFont monospacedDigitSystemFontOfSize:13 weight:UIFontWeightMedium];
+        self.num.textAlignment = NSTextAlignmentCenter;
+        self.name = [ADUtil label:nil size:15.5 color:UIColor.whiteColor];
+        self.name.font = [UIFont systemFontOfSize:15.5 weight:UIFontWeightMedium];
+        self.name.numberOfLines = 1;
+        self.sub = [ADUtil label:nil size:12 color:[ADUtil dim]];
+        self.sub.numberOfLines = 1;
+        self.state = [UIImageView new];
+        self.state.contentMode = UIViewContentModeCenter;
+        self.barBg = [UIView new]; self.barBg.backgroundColor = [UIColor colorWithWhite:1 alpha:0.1];
+        self.barFill = [UIView new]; self.barFill.backgroundColor = [ADUtil brand];
+        self.barBg.layer.cornerRadius = 1; self.barFill.layer.cornerRadius = 1;
+        for (UIView *v in @[self.num, self.name, self.sub, self.state, self.barBg]) [self.contentView addSubview:v];
+        [self.barBg addSubview:self.barFill];
+    }
+    return self;
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGFloat w = self.contentView.bounds.size.width, h = self.contentView.bounds.size.height;
+    self.hl.frame = CGRectMake(10, 3, w - 20, h - 6);
+    self.num.frame = CGRectMake(14, 0, 40, h);
+    self.state.frame = CGRectMake(w - 52, 0, 36, h);
+    self.name.frame = CGRectMake(60, 12, w - 60 - 56, 21);
+    self.sub.frame = CGRectMake(60, 34, w - 60 - 56, 16);
+    self.barBg.frame = CGRectMake(60, h - 11, w - 60 - 56, 2);
+    self.barFill.frame = CGRectMake(0, 0, self.barBg.bounds.size.width * self.frac, 2);
+}
+- (void)setPlaying:(BOOL)on {
+    self.hl.backgroundColor = on ? [[ADUtil brand] colorWithAlphaComponent:0.14] : UIColor.clearColor;
+    self.hl.layer.borderColor = (on ? [[ADUtil brand] colorWithAlphaComponent:0.4] : UIColor.clearColor).CGColor;
+    self.name.textColor = on ? [ADUtil brand] : UIColor.whiteColor;
+    self.num.textColor = on ? [ADUtil brand] : [UIColor colorWithWhite:1 alpha:0.38];
+}
 @end
 
 @implementation ADAlbumController
@@ -53,7 +117,7 @@
     [ADLiquid canvas:self.view];
     self.navigationController.navigationBar.tintColor = UIColor.whiteColor;
     self.navigationController.navigationBar.barStyle = UIBarStyleBlack;
-    self.title = @"专辑";
+    self.title = @"";
     self.tracks = [NSMutableArray array];
     self.total = self.album.trackCount;
     [self resetPaging];
@@ -63,45 +127,98 @@
     self.table.separatorColor = [UIColor colorWithWhite:1 alpha:0.08];
     self.table.dataSource = self;
     self.table.delegate = self;
-    self.table.contentInset = UIEdgeInsetsMake(0, 0, 90, 0);
+    self.table.rowHeight = 66;
+    self.table.separatorStyle = UITableViewCellSeparatorStyleNone;
+    self.table.contentInset = UIEdgeInsetsMake(0, 0, 110, 0);
     self.table.refreshControl = [[UIRefreshControl alloc] init];
     self.table.refreshControl.tintColor = [UIColor colorWithWhite:1 alpha:0.5];
     [self.table.refreshControl addTarget:self action:@selector(refreshAll) forControlEvents:UIControlEventValueChanged];
     [self.view addSubview:self.table];
 
     CGFloat w = self.view.bounds.size.width;
-    UIView *head = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, 0)];
-    self.cover = [[UIImageView alloc] initWithFrame:CGRectMake(16, 16, 110, 110)];
-    self.cover.layer.cornerRadius = 10;
-    self.cover.clipsToBounds = YES;
-    UIView *infoCard = [[UIView alloc] initWithFrame:CGRectMake(8, 8, w - 16, 132)];
-    infoCard.tag = 880;
-    infoCard.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [ADLiquid glass:infoCard radius:24 alpha:0.04];
-    [ADLiquid float:infoCard];
-    infoCard.layer.shadowOpacity = 0.22;
-    [head addSubview:infoCard];
+    // 背景：封面糊化后铺在顶部，向下渐隐（不用实时模糊，滚动不掉帧）
+    self.backdrop = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, 520)];
+    self.backdrop.userInteractionEnabled = NO;
+    self.backdropImg = [[UIImageView alloc] initWithFrame:self.backdrop.bounds];
+    self.backdropImg.contentMode = UIViewContentModeScaleAspectFill;
+    self.backdropImg.clipsToBounds = YES;
+    self.backdropImg.alpha = 0;
+    [self.backdrop addSubview:self.backdropImg];
+    CAGradientLayer *mask = [CAGradientLayer layer];
+    mask.frame = self.backdrop.bounds;
+    mask.colors = @[(id)[UIColor colorWithWhite:0 alpha:0.9].CGColor, (id)[UIColor colorWithWhite:0 alpha:0.55].CGColor, (id)UIColor.clearColor.CGColor];
+    mask.locations = @[@0, @0.55, @1];
+    self.backdrop.layer.mask = mask;
+    [self.view insertSubview:self.backdrop belowSubview:self.table];
 
-    self.titleLabel = [ADUtil label:@"PingFangSC-Semibold" size:17 color:UIColor.whiteColor];
-    self.titleLabel.frame = CGRectMake(140, 16, w - 156, 46);
-    self.meta = [ADUtil label:nil size:12 color:[ADUtil dim]];
-    self.meta.frame = CGRectMake(140, 64, w - 156, 20);
-    self.intro = [ADUtil label:nil size:12 color:[ADUtil dim]];
-    self.intro.frame = CGRectMake(16, 170, w - 32, 0);
+    UIView *head = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, 0)];
+    self.cover = [[UIImageView alloc] initWithFrame:CGRectMake((w - 176) / 2, 10, 176, 176)];
+    self.cover.layer.cornerRadius = 22;
+    if (@available(iOS 13.0, *)) self.cover.layer.cornerCurve = kCACornerCurveContinuous;
+    self.cover.clipsToBounds = YES;
+    UIView *shadow = [[UIView alloc] initWithFrame:self.cover.frame];
+    shadow.tag = 881;
+    shadow.backgroundColor = UIColor.blackColor;
+    shadow.layer.cornerRadius = 22;
+    shadow.layer.shadowColor = UIColor.blackColor.CGColor;
+    shadow.layer.shadowOpacity = 0.5; shadow.layer.shadowRadius = 26; shadow.layer.shadowOffset = CGSizeMake(0, 14);
+    [head addSubview:shadow];
+
+    self.titleLabel = [ADUtil label:@"PingFangSC-Semibold" size:23 color:UIColor.whiteColor];
+    self.titleLabel.textAlignment = NSTextAlignmentCenter;
+    self.titleLabel.numberOfLines = 2;
+    self.meta = [ADUtil label:nil size:13.5 color:[UIColor colorWithWhite:1 alpha:0.62]];
+    self.meta.textAlignment = NSTextAlignmentCenter;
+    self.meta.numberOfLines = 1;
+    self.chipRow = [UIView new];
+
+    // 主按钮：继续播放 / 开始收听
+    self.playBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    self.playBtn.backgroundColor = [ADUtil brand];
+    self.playBtn.layer.cornerRadius = 26;
+    self.playBtn.layer.shadowColor = [ADUtil brand].CGColor;
+    self.playBtn.layer.shadowOpacity = 0.4; self.playBtn.layer.shadowRadius = 14; self.playBtn.layer.shadowOffset = CGSizeMake(0, 6);
+    [self.playBtn addTarget:self action:@selector(tapPrimary) forControlEvents:UIControlEventTouchUpInside];
+    UIImageView *pi = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"play.fill" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightBold]]];
+    pi.tintColor = UIColor.whiteColor; pi.tag = 11; pi.contentMode = UIViewContentModeCenter;
+    self.playTitle = [ADUtil label:nil size:16 color:UIColor.whiteColor];
+    self.playTitle.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
+    self.playTitle.numberOfLines = 1; self.playTitle.userInteractionEnabled = NO;
+    self.playSub = [ADUtil label:nil size:11.5 color:[UIColor colorWithWhite:1 alpha:0.82]];
+    self.playSub.numberOfLines = 1; self.playSub.userInteractionEnabled = NO;
+    pi.userInteractionEnabled = NO;
+    [self.playBtn addSubview:pi]; [self.playBtn addSubview:self.playTitle]; [self.playBtn addSubview:self.playSub];
+
+    self.favCircle = [UIButton buttonWithType:UIButtonTypeSystem];
+    [ADLiquid glassButton:self.favCircle radius:26];
+    [self.favCircle addTarget:self action:@selector(toggleFav) forControlEvents:UIControlEventTouchUpInside];
+
     self.dlBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.dlBtn.frame = CGRectMake(140, 92, 130, 30);
-    [ADLiquid glassButton:self.dlBtn radius:15];
-    [self.dlBtn setTitle:@"缓存到本机" forState:UIControlStateNormal];
-    [self.dlBtn setTitleColor:[ADUtil brand] forState:UIControlStateNormal];
-    self.dlBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+    [ADLiquid glassButton:self.dlBtn radius:26];
+    self.dlBtn.titleLabel.font = [UIFont systemFontOfSize:11.5 weight:UIFontWeightSemibold];
+    self.dlBtn.titleLabel.numberOfLines = 2;
+    self.dlBtn.titleLabel.textAlignment = NSTextAlignmentCenter;
+    [self.dlBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     [self.dlBtn addTarget:self action:@selector(downloadAll) forControlEvents:UIControlEventTouchUpInside];
-    [head addSubview:self.dlBtn];
-    [head addSubview:self.cover];
-    [head addSubview:self.titleLabel];
-    [head addSubview:self.meta];
-    [head addSubview:self.intro];
-    [head bringSubviewToFront:self.cover];
-    [head bringSubviewToFront:self.dlBtn];
+
+    self.intro = [ADUtil label:nil size:13.5 color:[UIColor colorWithWhite:1 alpha:0.62]];
+    self.intro.numberOfLines = 3;
+    self.intro.userInteractionEnabled = YES;
+    [self.intro addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggleIntro)]];
+    self.introBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.introBtn.titleLabel.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightSemibold];
+    [self.introBtn setTitleColor:[ADUtil brand] forState:UIControlStateNormal];
+    [self.introBtn addTarget:self action:@selector(toggleIntro) forControlEvents:UIControlEventTouchUpInside];
+
+    // 目录工具行
+    self.catBar = [UIView new];
+    self.catLabel = [ADUtil label:@"PingFangSC-Semibold" size:18 color:UIColor.whiteColor];
+    self.catLabel.numberOfLines = 1;
+    self.sortBtn = [self catButton:@"arrow.up.arrow.down" title:@"正序" action:@selector(toggleSort)];
+    self.selBtn = [self catButton:@"checkmark.circle" title:@"多选" action:@selector(beginSelecting)];
+    [self.catBar addSubview:self.catLabel]; [self.catBar addSubview:self.sortBtn]; [self.catBar addSubview:self.selBtn];
+
+    for (UIView *v in @[self.cover, self.titleLabel, self.meta, self.chipRow, self.playBtn, self.favCircle, self.dlBtn, self.intro, self.introBtn, self.catBar]) [head addSubview:v];
     self.table.tableHeaderView = head;
 
     self.selected = [NSMutableSet set];
@@ -111,6 +228,8 @@
     self.navigationItem.rightBarButtonItems = @[moreItem, self.favBtn];
 
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(fillHeader) name:@"ADDownloadChanged" object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(playerChanged) name:@"ADPlayerChanged" object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(playerChanged) name:@"ADDoneChanged" object:nil];
     [self fillHeader];
     __weak typeof(self) weakSelf = self;
     [[ADApi shared] albumDetail:self.album.albumId done:^(ADAlbum *a, BOOL cached, NSString *err) {
@@ -131,8 +250,24 @@
     }];
 }
 
+- (void)playerChanged {
+    if (!self.isViewLoaded || !self.view.window) return;
+    [self fillHeader];
+    for (NSIndexPath *ip in self.table.indexPathsForVisibleRows) {
+        ADTrackCell *c = (ADTrackCell *)[self.table cellForRowAtIndexPath:ip];
+        if (![c isKindOfClass:ADTrackCell.class]) continue;
+        ADTrack *tr = [self ordered][ip.row];
+        ADTrack *cur = ADPlayer.shared.current;
+        BOOL playing = cur && [cur.trackId isEqualToString:tr.trackId] && ADPlayer.shared.album && [ADPlayer.shared.album.albumId isEqualToString:self.album.albumId];
+        [c setPlaying:playing];
+    }
+    [self.table reloadRowsAtIndexPaths:self.table.indexPathsForVisibleRows withRowAnimation:UITableViewRowAnimationNone];
+}
+
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
+    [self fillHeader];
+    [self.table reloadData];
     self.navigationController.navigationBar.hidden = NO;
     self.navigationController.navigationBar.barStyle = UIBarStyleBlack;
     self.navigationController.navigationBar.tintColor = UIColor.whiteColor;
@@ -140,51 +275,233 @@
     self.navigationController.navigationBar.shadowImage = [UIImage new];
 }
 
+- (UIButton *)catButton:(NSString *)icon title:(NSString *)t action:(SEL)sel {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    [ADLiquid glassButton:b radius:16];
+    b.tintColor = UIColor.whiteColor;
+    [b setImage:[UIImage systemImageNamed:icon withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:12 weight:UIImageSymbolWeightSemibold]] forState:UIControlStateNormal];
+    [b setTitle:[@" " stringByAppendingString:t] forState:UIControlStateNormal];
+    [b setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    b.titleLabel.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightSemibold];
+    [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
+    return b;
+}
+
+- (UILabel *)chip:(NSString *)t hot:(BOOL)hot {
+    UILabel *l = [ADUtil label:nil size:11.5 color:hot ? [ADUtil brand] : [UIColor colorWithWhite:1 alpha:0.78]];
+    l.font = [UIFont systemFontOfSize:11.5 weight:UIFontWeightSemibold];
+    l.text = t; l.numberOfLines = 1; l.textAlignment = NSTextAlignmentCenter;
+    l.backgroundColor = hot ? [[ADUtil brand] colorWithAlphaComponent:0.16] : [UIColor colorWithWhite:1 alpha:0.1];
+    l.layer.cornerRadius = 11; l.clipsToBounds = YES;
+    [l sizeToFit];
+    l.frame = CGRectMake(0, 0, l.bounds.size.width + 18, 22);
+    return l;
+}
+
+// 上次听到哪：优先看播放器当前队列，其次本地记录
+- (NSDictionary *)resumeInfo {
+    return [[ADStore shared] lastInfoOf:self.album.albumId];
+}
+
+- (void)updateBackdrop {
+    UIImage *img = self.cover.image;
+    if (!img) {
+        if (self.coverTries++ < 10) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self updateBackdrop]; });
+        return;
+    }
+    UIColor *c = [ADLiquid tintFromImage:img];
+    if (c) [ADLiquid recolor:self.view with:c];
+    if ([self.blurKey isEqualToString:self.album.cover ?: @""]) return;
+    self.blurKey = self.album.cover ?: @"";
+    UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(40, 40)];
+    UIImage *small = [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) { [img drawInRect:CGRectMake(0, 0, 40, 40)]; }];
+    CIImage *ci = [CIImage imageWithCGImage:small.CGImage];
+    CIFilter *sat = [CIFilter filterWithName:@"CIColorControls"];
+    [sat setValue:ci forKey:kCIInputImageKey]; [sat setValue:@1.5 forKey:kCIInputSaturationKey]; [sat setValue:@-0.05 forKey:kCIInputBrightnessKey];
+    CIFilter *blur = [CIFilter filterWithName:@"CIGaussianBlur"];
+    [blur setValue:[sat.outputImage imageByClampingToExtent] forKey:kCIInputImageKey]; [blur setValue:@3 forKey:kCIInputRadiusKey];
+    CIImage *out = [blur.outputImage imageByCroppingToRect:ci.extent];
+    CIContext *cx = [CIContext contextWithOptions:nil];
+    CGImageRef cg = [cx createCGImage:out fromRect:ci.extent];
+    if (cg) {
+        UIImage *res = [UIImage imageWithCGImage:cg]; CGImageRelease(cg);
+        self.backdropImg.image = res;
+        [UIView animateWithDuration:0.5 animations:^{ self.backdropImg.alpha = 0.85; }];
+    }
+}
+
+- (void)toggleIntro {
+    [ADHaptic select];
+    self.introOpen = !self.introOpen;
+    [UIView animateWithDuration:0.28 animations:^{ [self fillHeader]; }];
+}
+
 - (void)fillHeader {
     [ADUtil cover:self.cover url:self.album.cover];
-    {
-        UIImage *img = self.cover.image;
-        if (img) {
-            UIColor *c = [ADLiquid tintFromImage:img];
-            if (c) [ADLiquid recolor:self.view with:c];
-        }
-    }
-    self.titleLabel.text = self.album.title;
-    NSMutableArray *bits = [NSMutableArray array];
-    if (self.album.anchor.length) [bits addObject:self.album.anchor];
-    if (self.total) [bits addObject:[NSString stringWithFormat:@"%ld 集", (long)self.total]];
-    if (self.album.playCount > 0) [bits addObject:[NSString stringWithFormat:@"%@播放", [ADUtil count:self.album.playCount]]];
-    [bits addObject:self.album.provider.length ? self.album.provider : @"xm"];
-    self.meta.text = [bits componentsJoinedByString:@" · "];
-
-    CGFloat w = self.view.bounds.size.width;
-    self.intro.text = self.album.intro.length > 200 ? [[self.album.intro substringToIndex:200] stringByAppendingString:@"…"] : self.album.intro;
-    CGSize sz = [self.intro sizeThatFits:CGSizeMake(w - 32, 400)];
-    self.intro.frame = CGRectMake(16, 170, w - 32, sz.height);
+    [self updateBackdrop];
+    CGFloat w = self.view.bounds.size.width, m = 20;
     UIView *head = self.table.tableHeaderView;
-    CGFloat h = 170 + sz.height + 12 + 48;   // 48 给分段条，避免压在简介上
-    UIView *infoCard = [head viewWithTag:880];
-    if (infoCard) infoCard.frame = CGRectMake(8, 8, w - 16, MIN(h - 56, 148));
+    UIView *sh = [head viewWithTag:881];
+    self.cover.frame = CGRectMake((w - 176) / 2, 10, 176, 176);
+    sh.frame = self.cover.frame;
+    CGFloat y = 204;
+
+    self.titleLabel.text = self.album.title;
+    CGSize ts = [self.titleLabel sizeThatFits:CGSizeMake(w - 2 * m, 80)];
+    self.titleLabel.frame = CGRectMake(m, y, w - 2 * m, ts.height);
+    y += ts.height + 6;
+
+    NSMutableArray *who = [NSMutableArray array];
+    if (self.album.anchor.length) [who addObject:self.album.anchor];
+    if (self.album.author.length && ![self.album.author isEqualToString:self.album.anchor]) [who addObject:[@"作者 " stringByAppendingString:self.album.author]];
+    if (self.album.reader.length && ![self.album.reader isEqualToString:self.album.anchor]) [who addObject:[@"演播 " stringByAppendingString:self.album.reader]];
+    self.meta.text = who.count ? [who componentsJoinedByString:@" · "] : @" ";
+    self.meta.frame = CGRectMake(m, y, w - 2 * m, 20);
+    y += 28;
+
+    // 标签
+    for (UIView *v in [self.chipRow.subviews copy]) [v removeFromSuperview];
+    NSMutableArray<UILabel *> *chips = [NSMutableArray array];
+    if (self.total) [chips addObject:[self chip:[NSString stringWithFormat:@"%ld 集", (long)self.total] hot:NO]];
+    if (self.album.playCount > 0) [chips addObject:[self chip:[NSString stringWithFormat:@"%@播放", [ADUtil count:self.album.playCount]] hot:NO]];
+    [chips addObject:[self chip:(self.album.isFinished ? @"已完结" : @"连载中") hot:NO]];
+    if (self.album.isPaid) [chips addObject:[self chip:@"VIP" hot:YES]];
+    CGFloat cx = 0;
+    for (UILabel *c in chips) { c.frame = CGRectMake(cx, 0, c.bounds.size.width, 22); [self.chipRow addSubview:c]; cx += c.bounds.size.width + 8; }
+    cx = MAX(0, cx - 8);
+    self.chipRow.frame = CGRectMake((w - cx) / 2, y, cx, 22);
+    y += 22 + 18;
+
+    // 主按钮行
+    CGFloat side = 52, gap = 10;
+    CGFloat pw = w - 2 * m - 2 * (side + gap);
+    self.playBtn.frame = CGRectMake(m, y, pw, side);
+    self.favCircle.frame = CGRectMake(m + pw + gap, y, side, side);
+    self.dlBtn.frame = CGRectMake(m + pw + gap + side + gap, y, side, side);
+    [ADLiquid corner:26 on:self.favCircle]; [ADLiquid corner:26 on:self.dlBtn];
+
+    NSDictionary *info = [self resumeInfo];
+    UIImageView *pi = [self.playBtn viewWithTag:11];
+    pi.frame = CGRectMake(14, 0, 36, side);
+    BOOL isCur = ADPlayer.shared.album && [ADPlayer.shared.album.albumId isEqualToString:self.album.albumId];
+    if (isCur && ADPlayer.shared.isPlaying) {
+        self.playTitle.text = @"正在播放";
+        self.playSub.text = ADPlayer.shared.current.title ?: @"";
+        pi.image = [UIImage systemImageNamed:@"waveform" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightBold]];
+    } else if (info[@"trackId"]) {
+        NSInteger n = [info[@"index"] integerValue] + 1;
+        self.playTitle.text = @"继续播放";
+        self.playSub.text = [NSString stringWithFormat:@"第 %ld 集 · 听到 %@", (long)n, [ADUtil time:[info[@"seconds"] doubleValue]]];
+        pi.image = [UIImage systemImageNamed:@"play.fill" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightBold]];
+    } else {
+        self.playTitle.text = @"开始收听";
+        self.playSub.text = self.total ? [NSString stringWithFormat:@"从第 1 集开始 · 共 %ld 集", (long)self.total] : @"从第 1 集开始";
+        pi.image = [UIImage systemImageNamed:@"play.fill" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightBold]];
+    }
+    self.playTitle.frame = CGRectMake(54, 8, pw - 54 - 14, 21);
+    self.playSub.frame = CGRectMake(54, 29, pw - 54 - 14, 16);
+    y += side + 18;
+
+    // 简介
+    NSString *txt = self.album.intro.length ? self.album.intro : @"";
+    self.intro.text = txt;
+    self.intro.numberOfLines = self.introOpen ? 0 : 3;
+    if (txt.length) {
+        CGFloat full = [self.intro sizeThatFits:CGSizeMake(w - 2 * m, 2000)].height;
+        CGFloat three = ceil(self.intro.font.lineHeight * 3) + 2;
+        BOOL more = full > three + 1;
+        CGFloat ih = self.introOpen ? full : MIN(full, three);
+        self.intro.frame = CGRectMake(m, y, w - 2 * m, ih);
+        y += ih;
+        self.introBtn.hidden = !more;
+        [self.introBtn setTitle:self.introOpen ? @"收起 ⌃" : @"展开 ⌄" forState:UIControlStateNormal];
+        self.introBtn.frame = CGRectMake(w - m - 70, y, 70, 28);
+        if (more) y += 28;
+        y += 10;
+    } else {
+        self.intro.frame = CGRectMake(m, y, w - 2 * m, 0);
+        self.introBtn.hidden = YES;
+        y += 4;
+    }
+
+    // 目录工具行
+    NSInteger shown = MAX(self.total, (NSInteger)self.tracks.count);
+    NSMutableAttributedString *as = [[NSMutableAttributedString alloc] initWithString:@"目录"];
+    if (shown) [as appendAttributedString:[[NSAttributedString alloc] initWithString:[NSString stringWithFormat:@"  共 %ld 集", (long)shown]
+        attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12.5], NSForegroundColorAttributeName: [UIColor colorWithWhite:1 alpha:0.5]}]];
+    self.catLabel.attributedText = as;
+    self.catBar.frame = CGRectMake(0, y, w, 40);
+    self.catLabel.frame = CGRectMake(m, 6, w - 2 * m - 170, 28);
+    self.selBtn.frame = CGRectMake(w - m - 74, 4, 74, 32);
+    self.sortBtn.frame = CGRectMake(w - m - 74 - 8 - 74, 4, 74, 32);
+    [self.sortBtn setTitle:self.sortDesc ? @" 倒序" : @" 正序" forState:UIControlStateNormal];
+    y += 40;
+
+    CGFloat h = y + 44;     // 44 给分段条
     head.frame = CGRectMake(0, 0, w, h);
     self.table.tableHeaderView = head;
 
     ADTask *task = [[ADDownloader shared] taskForAlbum:self.album.albumId];
-    if (self.pendingDownloadAll) {
-        [self.dlBtn setTitle:[NSString stringWithFormat:@"获取目录 %ld/%ld…", (long)self.tracks.count, (long)MAX(self.total, (NSInteger)self.tracks.count)]
-                    forState:UIControlStateNormal];
-    } else if (task) {
-        NSString *t2 = task.state == ADTaskStateDone ? @"已缓存"
-                    : (task.state == ADTaskStatePaused ? [NSString stringWithFormat:@"已暂停 %ld/%ld", (long)task.done, (long)task.tracks.count]
-                    : [NSString stringWithFormat:@"缓存中 %ld/%ld", (long)task.done, (long)task.tracks.count]);
+    NSString *t2; UIColor *tc = UIColor.whiteColor;
+    if (self.pendingDownloadAll) t2 = [NSString stringWithFormat:@"取目录\n%ld/%ld", (long)self.tracks.count, (long)MAX(self.total, (NSInteger)self.tracks.count)];
+    else if (task) {
+        if (task.state == ADTaskStateDone) { t2 = @"已缓存"; tc = [ADUtil brand]; }
+        else if (task.state == ADTaskStatePaused) t2 = [NSString stringWithFormat:@"暂停\n%ld/%ld", (long)task.done, (long)task.tracks.count];
+        else t2 = [NSString stringWithFormat:@"缓存中\n%ld/%ld", (long)task.done, (long)task.tracks.count];
+    } else t2 = @"";
+    if (t2.length) {
+        [self.dlBtn setImage:nil forState:UIControlStateNormal];
         [self.dlBtn setTitle:t2 forState:UIControlStateNormal];
+        [self.dlBtn setTitleColor:tc forState:UIControlStateNormal];
     } else {
-        [self.dlBtn setTitle:@"缓存到本机" forState:UIControlStateNormal];
+        [self.dlBtn setTitle:@"" forState:UIControlStateNormal];
+        [self.dlBtn setImage:[UIImage systemImageNamed:@"arrow.down.circle" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:22 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
+        self.dlBtn.tintColor = UIColor.whiteColor;
     }
     BOOL fav = [[ADStore shared] isFavorite:self.album.albumId];
+    [self.favCircle setImage:[UIImage systemImageNamed:fav ? @"heart.fill" : @"heart" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:22 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
+    self.favCircle.tintColor = fav ? [ADUtil brand] : UIColor.whiteColor;
     [self.favBtn setImage:[UIImage systemImageNamed:fav ? @"heart.fill" : @"heart"]];
     self.favBtn.tintColor = fav ? [ADUtil brand] : UIColor.whiteColor;
     [self buildRangeBar];
 }
+
+// 主按钮：续播 / 开始
+- (void)tapPrimary {
+    [ADHaptic tap];
+    ADPlayer *p = ADPlayer.shared;
+    BOOL isCur = p.album && [p.album.albumId isEqualToString:self.album.albumId] && p.tracks.count;
+    if (isCur) {
+        if (!p.isPlaying) [p toggle];
+        [self presentViewController:[ADPlayerController new] animated:YES completion:nil];
+        return;
+    }
+    NSDictionary *info = [self resumeInfo];
+    NSString *tid = info[@"trackId"];
+    NSInteger found = -1;
+    if (tid.length) for (NSInteger i = 0; i < (NSInteger)self.tracks.count; i++) if ([self.tracks[i].trackId isEqualToString:tid]) { found = i; break; }
+    if (found >= 0) { [p playAlbum:self.album tracks:self.tracks at:found]; }
+    else if (tid.length) { [p openAlbum:self.album trackId:tid index:[info[@"index"] integerValue] seconds:[info[@"seconds"] doubleValue] autoPlay:YES]; }
+    else if (self.tracks.count) { [p playAlbum:self.album tracks:self.tracks at:0]; }
+    else return;
+    [self presentViewController:[ADPlayerController new] animated:YES completion:nil];
+}
+
+- (void)setSortDescending:(BOOL)desc {
+    if (desc == self.sortDesc) return;
+    self.sortDesc = desc;
+    self.orderedCache = nil;
+    [self.table reloadData];
+    if (desc) {
+        self.endReached = NO;        // 倒序必须拿到真正的最后一集，不能信 total
+        self.hasMore = YES;
+        self.loadingAll = YES;
+        self.errText = nil;
+        [self loadTracks];
+    }
+    [self fillHeader];
+}
+- (void)toggleSort { [ADHaptic select]; [self setSortDescending:!self.sortDesc]; }
 
 - (NSArray<ADTrack *> *)ordered {
     if (!self.sortDesc) return self.tracks;
@@ -197,17 +514,8 @@
     [ADHaptic tap];
     [ADOptionSheet showIn:self title:self.album.title options:@[@"选择剧集下载", @"目录正序", @"目录倒序", @"缓存整本到本机", @"刷新目录", @"目录诊断"] destructive:-1 choose:^(NSInteger i) {
         if (i == 0) [self beginSelecting];
-        else if (i == 1) { self.sortDesc = NO; [self.table reloadData]; }
-        else if (i == 2) {
-            self.sortDesc = YES;
-            self.orderedCache = nil;
-            [self.table reloadData];
-            self.endReached = NO;        // 倒序必须拿到真正的最后一集，不能信 total
-            self.hasMore = YES;
-            self.loadingAll = YES;
-            self.errText = nil;
-            [self loadTracks];
-        }
+        else if (i == 1) [self setSortDescending:NO];
+        else if (i == 2) [self setSortDescending:YES];
         else if (i == 3) [self downloadAll];
         else if (i == 4) [self refreshAll];
         else [self runProbe];
@@ -306,15 +614,16 @@
 - (void)scrollViewDidScroll:(UIScrollView *)sv {
     if (sv != self.table) return;
     UIView *head = self.table.tableHeaderView;
+    CGFloat off = sv.contentOffset.y + sv.adjustedContentInset.top;
+    self.backdrop.transform = CGAffineTransformMakeTranslation(0, -off);
+    self.cover.transform = off < 0 ? CGAffineTransformMakeScale(1 + MIN(0.25, -off / 600), 1 + MIN(0.25, -off / 600)) : CGAffineTransformIdentity;
+    [head viewWithTag:881].transform = self.cover.transform;
+    NSString *want = off > 150 ? (self.album.title ?: @"") : @"";
+    if (![self.title isEqualToString:want]) self.title = want;
     CGFloat barTop = head.bounds.size.height - 44 - self.table.contentOffset.y;
     CGFloat safe = MAX(self.view.safeAreaInsets.top, 44) + 44;
-    if (barTop < safe) {
-        self.floatBar.hidden = NO;
-        self.floatBar.frame = CGRectMake(0, safe - 44, self.view.bounds.size.width, 44);
-    } else {
-        self.floatBar.hidden = YES;
-        self.floatBar.frame = CGRectMake(0, safe - 44, self.view.bounds.size.width, 44);
-    }
+    self.floatBar.hidden = !(barTop < safe);
+    self.floatBar.frame = CGRectMake(0, safe - 44, self.view.bounds.size.width, 44);
 }
 
 - (void)jumpTo:(NSInteger)idx {
@@ -698,7 +1007,18 @@
 
 - (void)updateFooter {
     if (!self.errText.length) {
-        self.table.tableFooterView = [UIView new];
+        if (!self.tracks.count && (self.loading || self.pageLoading.count)) {
+            UIView *f = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 90)];
+            UIActivityIndicatorView *sp = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+            sp.color = [UIColor colorWithWhite:1 alpha:0.6];
+            sp.center = CGPointMake(f.bounds.size.width / 2, 40);
+            [sp startAnimating]; [f addSubview:sp];
+            UILabel *l = [ADUtil label:nil size:12 color:[UIColor colorWithWhite:1 alpha:0.45]];
+            l.text = @"正在获取目录…"; l.textAlignment = NSTextAlignmentCenter;
+            l.frame = CGRectMake(0, 56, f.bounds.size.width, 18);
+            [f addSubview:l];
+            self.table.tableFooterView = f;
+        } else self.table.tableFooterView = [UIView new];
         return;
     }
     CGFloat w = self.view.bounds.size.width;
@@ -745,7 +1065,7 @@
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)t { return 1; }
 - (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)s {
-    return self.tracks.count ? [NSString stringWithFormat:@"共 %ld 集", (long)MAX(self.total, (NSInteger)self.tracks.count)] : @"";
+    return nil;
 }
 - (void)tableView:(UITableView *)t willDisplayHeaderView:(UIView *)v forSection:(NSInteger)s {
     UITableViewHeaderFooterView *h = (UITableViewHeaderFooterView *)v;
@@ -755,37 +1075,48 @@
 - (NSArray<UITableViewRowAction *> *)legacyActions { return nil; }
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {
     static NSString *cid = @"tr";
-    UITableViewCell *c = [t dequeueReusableCellWithIdentifier:cid];
-    if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:cid];
+    ADTrackCell *c = [t dequeueReusableCellWithIdentifier:cid];
+    if (!c) c = [[ADTrackCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:cid];
     ADTrack *tr = [self ordered][ip.row];
-    c.backgroundColor = UIColor.clearColor;
-    c.textLabel.textColor = UIColor.whiteColor;
-    c.detailTextLabel.textColor = [ADUtil dim];
-    c.textLabel.font = [UIFont systemFontOfSize:15];
-    c.textLabel.text = tr.title;
+    NSInteger n = self.tracks.count;
+    c.num.text = [NSString stringWithFormat:@"%ld", (long)(self.sortDesc ? n - ip.row : ip.row + 1)];
+    c.name.text = tr.title;
     double pos = [[ADStore shared] positionFor:tr.trackId];
     BOOL listened = [[ADStore shared] isDone:tr.trackId];
-    NSString *base = pos > 0
-        ? [NSString stringWithFormat:@"听到 %@ / %@", [ADUtil time:pos], [ADUtil time:tr.duration]]
-        : (tr.duration > 0 ? [ADUtil time:tr.duration] : @"");
-    if ([[ADDownloader shared] hasLocal:tr.trackId]) {
-        c.detailTextLabel.text = listened ? @"已听完 · 已缓存" : @"已缓存 · 离线可听";
-        c.detailTextLabel.textColor = [ADUtil brand];
-    } else {
-        c.detailTextLabel.text = listened ? (base.length ? [NSString stringWithFormat:@"已听完 · %@", base] : @"已听完") : base;
-    }
+    BOOL local = [[ADDownloader shared] hasLocal:tr.trackId];
+    NSMutableArray *bits = [NSMutableArray array];
+    if (tr.duration > 0) [bits addObject:[ADUtil time:tr.duration]];
+    if (listened) [bits addObject:@"已听完"];
+    else if (pos > 5) [bits addObject:[NSString stringWithFormat:@"听到 %@", [ADUtil time:pos]]];
+    if (local) [bits addObject:@"离线可听"];
+    c.sub.text = [bits componentsJoinedByString:@" · "];
+    c.sub.textColor = (local && !listened) ? [ADUtil brand] : [ADUtil dim];
+    c.frac = (!listened && pos > 5 && tr.duration > 0) ? MIN(1, pos / tr.duration) : 0;
+    c.barBg.hidden = c.frac <= 0;
     ADTrack *cur = ADPlayer.shared.current;
-    BOOL playing = cur && [cur.trackId isEqualToString:tr.trackId];
-    c.textLabel.textColor = playing ? [ADUtil brand] : UIColor.whiteColor;
-    // 触底加载
-    if (!self.selecting && self.hasMore && self.jumpTarget < 0 && ip.row >= (NSInteger)self.tracks.count - 6) [self loadNextPage];
+    BOOL playing = cur && [cur.trackId isEqualToString:tr.trackId] && ADPlayer.shared.album && [ADPlayer.shared.album.albumId isEqualToString:self.album.albumId];
+    [c setPlaying:playing];
+    UIImageSymbolConfiguration *sc = [UIImageSymbolConfiguration configurationWithPointSize:17 weight:UIImageSymbolWeightMedium];
     if (self.selecting) {
         BOOL on = [self.selected containsObject:tr.trackId];
-        c.accessoryType = on ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
-        c.tintColor = [ADUtil brand];
+        c.state.image = [UIImage systemImageNamed:on ? @"checkmark.circle.fill" : @"circle" withConfiguration:sc];
+        c.state.tintColor = on ? [ADUtil brand] : [UIColor colorWithWhite:1 alpha:0.35];
+    } else if (playing) {
+        c.state.image = [UIImage systemImageNamed:(ADPlayer.shared.isPlaying ? @"waveform" : @"pause.fill") withConfiguration:sc];
+        c.state.tintColor = [ADUtil brand];
+    } else if (listened) {
+        c.state.image = [UIImage systemImageNamed:@"checkmark.circle.fill" withConfiguration:sc];
+        c.state.tintColor = [UIColor colorWithWhite:1 alpha:0.3];
+    } else if (local) {
+        c.state.image = [UIImage systemImageNamed:@"arrow.down.circle.fill" withConfiguration:sc];
+        c.state.tintColor = [[ADUtil brand] colorWithAlphaComponent:0.85];
     } else {
-        c.accessoryType = UITableViewCellAccessoryNone;
+        c.state.image = nil;
     }
+    c.accessoryType = UITableViewCellAccessoryNone;
+    [c setNeedsLayout];
+    // 触底加载
+    if (!self.selecting && self.hasMore && self.jumpTarget < 0 && ip.row >= (NSInteger)self.tracks.count - 6) [self loadNextPage];
     return c;
 }
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
