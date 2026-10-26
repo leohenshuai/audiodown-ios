@@ -12,13 +12,6 @@ static NSString *ADPref(NSString *k, NSString *d) {
     return c;
 }
 - (void)load {
-    // 读不出来的存档先备份成 .bad，避免下一次保存把原文件覆盖掉
-    for (NSString *n in @[@"fav.dat", @"hist.dat", @"want.dat"]) {
-        NSData *raw = [NSData dataWithContentsOfFile:[self path:n]];
-        if (raw.length && !ADUnarchive(raw, [NSSet setWithObjects:NSMutableArray.class, NSArray.class, ADAlbum.class, NSString.class, nil])) {
-            [raw writeToFile:[[self path:n] stringByAppendingString:@".bad"] atomically:YES];
-        }
-    }
     _baseURL = ADPref(@"ad.base", @"https://audio.959935291.xyz:899");
     _token = ADPref(@"ad.token", @"");
     _username = ADPref(@"ad.user", @"");
@@ -167,6 +160,13 @@ id ADUnarchive(NSData *data, NSSet *classes) {
     return [d stringByAppendingPathComponent:n];
 }
 - (void)load {
+    // 读不出来的存档先备份成 .bad，避免下一次保存把原文件覆盖掉
+    for (NSString *n in @[@"fav.dat", @"hist.dat", @"want.dat"]) {
+        NSData *raw = [NSData dataWithContentsOfFile:[self path:n]];
+        if (raw.length && !ADUnarchive(raw, [NSSet setWithObjects:NSMutableArray.class, NSArray.class, ADAlbum.class, NSString.class, nil])) {
+            [raw writeToFile:[[self path:n] stringByAppendingString:@".bad"] atomically:YES];
+        }
+    }
     NSData *d1 = [NSData dataWithContentsOfFile:[self path:@"fav.dat"]];
     NSData *d2 = [NSData dataWithContentsOfFile:[self path:@"hist.dat"]];
     NSData *d3 = [NSData dataWithContentsOfFile:[self path:@"pos.dat"]];
