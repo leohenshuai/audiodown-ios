@@ -363,6 +363,7 @@
     _ticker = [_player addPeriodicTimeObserverForInterval:CMTimeMakeWithSeconds(0.7, 600) queue:dispatch_get_main_queue() usingBlock:^(CMTime time) {
         __strong typeof(w) self = w; if (!self) return;
         [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerTick" object:nil];
+        [self refreshNowPlayingIfNeeded];
         double sec = CMTimeGetSeconds(time);
         if (self.current.trackId && sec > 0) {
             [[ADStore shared] setPosition:sec for:self.current.trackId];
@@ -435,7 +436,10 @@
 }
 - (void)seekTo:(double)sec {
     if (!_player) return;
-    [_player seekToTime:CMTimeMakeWithSeconds(MAX(0, sec), 600) toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero];
+    __weak typeof(self) w2 = self;
+    [_player seekToTime:CMTimeMakeWithSeconds(MAX(0, sec), 600) toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero completionHandler:^(BOOL f) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [w2 nowPlaying]; });
+    }];
 }
 - (void)seekBy:(double)delta { [self seekTo:CMTimeGetSeconds(_player.currentTime) + delta]; }
 
@@ -470,11 +474,37 @@
     }
     info[MPNowPlayingInfoPropertyPlaybackRate] = @(_player ? _player.rate : 0);
     info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = @1.0;
-    NSString *cv = _album.cover ?: @"";
-    if (self.artwork && [self.artworkURL isEqualToString:cv]) info[MPMediaItemPropertyArtwork] = self.artwork;
-    else [self loadArtwork:cv];
+    NSString *cv = [self coverURL];
+    BOOL haveArt = (self.artwork && [self.artworkURL isEqualToString:cv]);
+    if (haveArt) info[MPMediaItemPropertyArtwork] = self.artwork;
     MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo = info;
     MPNowPlayingInfoCenter.defaultCenter.playbackState = (_player.rate > 0) ? MPNowPlayingPlaybackStatePlaying : MPNowPlayingPlaybackStatePaused;
+    if (!haveArt) [self loadArtwork:cv];     // 必须放在写入之后:缓存命中会同步回调并合并封面
+}
+
+// 当前书的封面地址;书对象里没有时,从收藏/历史/想听/下载任务里找同一本书
+- (NSString *)coverURL {
+    if (_album.cover.length) return _album.cover;
+    NSString *aid = _album.albumId;
+    if (!aid.length) return @"";
+    ADStore *st = [ADStore shared];
+    for (NSArray *list in @[st.history, st.favorites, st.wants])
+        for (ADAlbum *a in list) if ([a.albumId isEqualToString:aid] && a.cover.length) { _album.cover = a.cover; return a.cover; }
+    ADTask *t = [[ADDownloader shared] taskForAlbum:aid];
+    if (t.cover.length) { _album.cover = t.cover; return t.cover; }
+    return @"";
+}
+
+// 锁屏信息缺时长或缺封面时补写;平时每 10 秒校准一次已播时间
+- (void)refreshNowPlayingIfNeeded {
+    NSDictionary *cur = MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo;
+    double dur = _player.currentItem ? CMTimeGetSeconds(_player.currentItem.duration) : 0;
+    BOOL durReady = (dur > 0 && !isnan(dur));
+    BOOL missDur = durReady && !cur[MPMediaItemPropertyPlaybackDuration];
+    BOOL missArt = self.artwork && [self.artworkURL isEqualToString:[self coverURL]] && !cur[MPMediaItemPropertyArtwork];
+    static CFTimeInterval last = 0;
+    CFTimeInterval now = CACurrentMediaTime();
+    if (missDur || missArt || !cur.count || now - last > 10) { last = now; [self nowPlaying]; }
 }
 
 - (void)loadArtwork:(NSString *)url {
@@ -484,7 +514,7 @@
     [ADUtil coverImage:url done:^(UIImage *img) {
         __strong typeof(w) self = w; if (!self) return;
         self.artworkLoading = nil;
-        if (!img || ![url isEqualToString:self.album.cover ?: @""]) return;
+        if (!img || ![url isEqualToString:[self coverURL]]) return;
         // 统一成正方形,锁屏里显示更饱满
         CGFloat side = MIN(img.size.width, img.size.height);
         CGFloat out = MIN(side, 600);
@@ -495,7 +525,8 @@
         }];
         self.artwork = [[MPMediaItemArtwork alloc] initWithBoundsSize:sq.size requestHandler:^UIImage *(CGSize size) { return sq; }];
         self.artworkURL = url;
-        NSMutableDictionary *info = [MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo mutableCopy] ?: [NSMutableDictionary dictionary];
+        NSMutableDictionary *info = [MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo mutableCopy];
+        if (!info.count) { [self nowPlaying]; return; }
         info[MPMediaItemPropertyArtwork] = self.artwork;
         MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo = info;
     }];
