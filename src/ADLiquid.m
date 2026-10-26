@@ -85,9 +85,9 @@ static NSInteger const kLiteTag  = 9825;
     [self addSubview:_lens];
 
     _items = [NSMutableArray array];
-    NSArray *icons = @[@"sparkles", @"magnifyingglass", @"books.vertical"];
-    NSArray *names = @[@"发现", @"搜索", @"书架"];
-    for (NSInteger i = 0; i < 3; i++) {
+    NSArray *icons = @[@"sparkles", @"magnifyingglass", @"books.vertical", @"gearshape.fill"];
+    NSArray *names = @[@"发现", @"搜索", @"书架", @"设置"];
+    for (NSInteger i = 0; i < 4; i++) {
         UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
         b.tag = i;
         [b addTarget:self action:@selector(down:) forControlEvents:UIControlEventTouchDown];
@@ -123,7 +123,7 @@ static NSInteger const kLiteTag  = 9825;
     self.center = CGPointMake(W / 2.0, y + h / 2.0);
     [ADLiquid corner:30 on:self];
 
-    CGFloat seg = self.bounds.size.width / 3.0;
+    CGFloat seg = self.bounds.size.width / 4.0;
     for (NSInteger i = 0; i < (NSInteger)_items.count; i++) {
         UIButton *b = _items[i];
         b.frame = CGRectMake(seg * i, 0, seg, h);
@@ -138,7 +138,7 @@ static NSInteger const kLiteTag  = 9825;
 }
 
 - (CGRect)lensRect:(NSInteger)idx {
-    CGFloat seg = self.bounds.size.width / 3.0;
+    CGFloat seg = self.bounds.size.width / 4.0;
     return CGRectMake(seg * idx + 5, 5, seg - 10, self.bounds.size.height - 10);
 }
 

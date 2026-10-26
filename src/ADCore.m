@@ -186,9 +186,17 @@ static double ADNum(id o, NSString *k) {
 - (void)touchHistory:(ADAlbum *)a {
     ADAlbum *hit = nil;
     for (ADAlbum *x in _hist) if ([x.albumId isEqualToString:a.albumId]) { hit = x; break; }
+    BOOL wasFirst = (hit && _hist.firstObject == hit);
     if (hit) [_hist removeObject:hit];
     [_hist insertObject:a atIndex:0];
     while (_hist.count > 30) [_hist removeLastObject];
+    [self save];
+    // 新出现或顺序变化时通知首页重建“继续收听”（以前从不通知，移除后再听回不来）
+    if (!wasFirst) [NSNotificationCenter.defaultCenter postNotificationName:@"ADContinueChanged" object:nil];
+}
+- (void)removeContinue:(NSString *)albumId {
+    if (!albumId.length) return;
+    for (ADAlbum *x in [_hist copy]) if ([x.albumId isEqualToString:albumId]) [_hist removeObject:x];
     [self save];
 }
 - (double)positionFor:(NSString *)trackId { return trackId ? [_pos[trackId] doubleValue] : 0; }
@@ -241,8 +249,10 @@ static double ADNum(id o, NSString *k) {
     return [v isKindOfClass:NSDictionary.class] ? v : nil;
 }
 - (void)setLastInfo:(NSDictionary *)info album:(NSString *)albumId {
+    BOOL fresh = (albumId && !_info[albumId]);
     if (albumId && info) _info[albumId] = info;
     [self save];
+    if (fresh) [NSNotificationCenter.defaultCenter postNotificationName:@"ADContinueChanged" object:nil];
 }
 - (void)setLastTrack:(NSString *)trackId album:(NSString *)albumId {
     if (albumId && trackId) _last[albumId] = trackId;

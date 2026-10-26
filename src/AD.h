@@ -45,6 +45,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)isPinned:(nullable NSString *)albumId;
 - (void)togglePin:(nullable NSString *)albumId;
 - (void)removeHistory:(nullable NSString *)albumId;
+- (void)removeContinue:(nullable NSString *)albumId;   // 只从“继续收听/历史”里移除，不动收藏和想听
 - (void)touchHistory:(ADAlbum *)a;
 - (double)positionFor:(NSString *)trackId;
 - (BOOL)isDone:(nullable NSString *)trackId;
@@ -226,5 +227,5 @@ NS_ASSUME_NONNULL_END
 @interface ADBookmarksController : UITableViewController @end
 @interface ADStorageController : UITableViewController @end
 @interface ADBackupController : UITableViewController @end
-@interface ADHistoryController : UITableViewController @end
+@interface ADHistoryController : UIViewController @end
 @interface ADDownloadsController : UITableViewController @end

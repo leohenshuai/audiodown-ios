@@ -1380,8 +1380,14 @@
     self.status.textAlignment = NSTextAlignmentCenter;
 
     self.playBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.playBtn.tintColor = UIColor.whiteColor;
+    self.playBtn.tintColor = [UIColor colorWithWhite:0.09 alpha:1];
+    self.playBtn.backgroundColor = UIColor.whiteColor;
+    self.playBtn.layer.cornerRadius = 36;
+    self.playBtn.layer.shadowColor = UIColor.blackColor.CGColor;
+    self.playBtn.layer.shadowOpacity = 0.35; self.playBtn.layer.shadowRadius = 18; self.playBtn.layer.shadowOffset = CGSizeMake(0, 8);
     [self.playBtn addTarget:self action:@selector(toggle) forControlEvents:UIControlEventTouchUpInside];
+    [self.playBtn addTarget:self action:@selector(ctlDown:) forControlEvents:UIControlEventTouchDown | UIControlEventTouchDragEnter];
+    [self.playBtn addTarget:self action:@selector(ctlUp:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel | UIControlEventTouchDragExit];
 
     for (UIView *v in @[self.cover, self.titleLabel, self.subLabel, self.starBtn, more, self.slider,
                         self.elapsed, self.mid, self.duration, self.status, self.playBtn]) {
@@ -1389,12 +1395,17 @@
     }
 
     // 控制行
-    UIButton *prev = [self iconButton:@"backward.end.fill" size:21 action:@selector(prev)];
-    UIButton *back = [self iconButton:@"gobackward.15" size:25 action:@selector(back15)];
-    UIButton *fwd = [self iconButton:@"goforward.15" size:25 action:@selector(fwd15)];
-    UIButton *next = [self iconButton:@"forward.end.fill" size:21 action:@selector(next)];
+    UIButton *prev = [self iconButton:@"backward.end.fill" size:22 action:@selector(prev)];
+    UIButton *back = [self iconButton:@"gobackward.15" size:30 action:@selector(back15)];
+    UIButton *fwd = [self iconButton:@"goforward.15" size:30 action:@selector(fwd15)];
+    UIButton *next = [self iconButton:@"forward.end.fill" size:22 action:@selector(next)];
     prev.tag = 201; back.tag = 202; fwd.tag = 203; next.tag = 204;
-    for (UIButton *b in @[prev, back, fwd, next]) [self.view addSubview:b];
+    for (UIButton *b in @[prev, back, fwd, next]) {
+        b.tintColor = [UIColor colorWithWhite:1 alpha:0.92];
+        [b addTarget:self action:@selector(ctlDown:) forControlEvents:UIControlEventTouchDown | UIControlEventTouchDragEnter];
+        [b addTarget:self action:@selector(ctlUp:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel | UIControlEventTouchDragExit];
+        [self.view addSubview:b];
+    }
 
     // 底部工具行
     self.rateBtn = [self textButton:@"1x" action:@selector(showRateMenu)];
@@ -1526,11 +1537,13 @@
     self.duration.textAlignment = NSTextAlignmentRight;
     y += 30 + gap;
 
-    self.playBtn.frame = CGRectMake(W / 2 - 32, y + 14, 64, 64);
-    [self.view viewWithTag:201].frame = CGRectMake(28, y + 26, 34, 34);
-    [self.view viewWithTag:202].frame = CGRectMake(W / 2 - 104, y + 24, 38, 38);
-    [self.view viewWithTag:203].frame = CGRectMake(W / 2 + 66, y + 24, 38, 38);
-    [self.view viewWithTag:204].frame = CGRectMake(W - 62, y + 26, 34, 34);
+    // 播放控件整体上移约 10pt：主键 72 圆形白底，副键 48 点击区域，间距均匀
+    CGFloat cy = y + 36;
+    self.playBtn.frame = CGRectMake(W / 2 - 36, cy - 36, 72, 72);
+    [self.view viewWithTag:202].frame = CGRectMake(W / 2 - 36 - 22 - 48, cy - 24, 48, 48);
+    [self.view viewWithTag:203].frame = CGRectMake(W / 2 + 36 + 22, cy - 24, 48, 48);
+    [self.view viewWithTag:201].frame = CGRectMake(W / 2 - 36 - 22 - 48 - 14 - 48, cy - 24, 48, 48);
+    [self.view viewWithTag:204].frame = CGRectMake(W / 2 + 36 + 22 + 48 + 14, cy - 24, 48, 48);
     y += 80 + lastGap;
 
     UIView *toolPill = [self.view viewWithTag:900];
@@ -1622,8 +1635,9 @@
     self.mid.text = mid ?: @"在线播放";
 
     [self.playBtn setImage:[UIImage systemImageNamed:(p.isPlaying ? @"pause.fill" : @"play.fill")
-                                withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:42 weight:UIImageSymbolWeightMedium]]
+                                withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:30 weight:UIImageSymbolWeightBold]]
                    forState:UIControlStateNormal];
+    self.playBtn.imageEdgeInsets = p.isPlaying ? UIEdgeInsetsZero : UIEdgeInsetsMake(0, 3, 0, 0);   // 三角形视觉居中
     UIButton *rateBtn = (UIButton *)[self.view viewWithTag:301];
     [rateBtn setTitle:[NSString stringWithFormat:@"%.2gx", p.rate] forState:UIControlStateNormal];
     UIButton *sleepBtn = (UIButton *)[self.view viewWithTag:302];
@@ -1808,6 +1822,17 @@
     [self openQueue];
 }
 
+- (void)ctlDown:(UIButton *)b {
+    [ADHaptic select];
+    [UIView animateWithDuration:0.14 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
+        b.transform = CGAffineTransformMakeScale(0.9, 0.9); b.alpha = 0.8;
+    } completion:nil];
+}
+- (void)ctlUp:(UIButton *)b {
+    [UIView animateWithDuration:0.4 delay:0 usingSpringWithDamping:0.5 initialSpringVelocity:0.9 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
+        b.transform = CGAffineTransformIdentity; b.alpha = 1;
+    } completion:nil];
+}
 - (void)sliderBegin { self.dragging = YES; }
 - (void)sliderMoving { self.elapsed.text = [ADUtil time:self.slider.value]; }
 - (void)sliderEnd { self.dragging = NO; [ADHaptic soft]; [ADPlayer.shared seekTo:self.slider.value]; }
@@ -2044,7 +2069,6 @@
     self.navigationController.navigationBar.tintColor = UIColor.whiteColor;
     self.navigationController.navigationBar.barStyle = UIBarStyleBlack;
     self.token = [ADConfig shared].token ?: @"";
-
     self.table = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStyleInsetGrouped];
     self.table.backgroundColor = UIColor.clearColor;
     self.table.dataSource = self;
@@ -2055,12 +2079,23 @@
     self.baseField = [self field:[ADConfig shared].baseURL placeholder:@"https://服务器地址:端口" keyboard:UIKeyboardTypeURL];
 
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"保存" style:UIBarButtonItemStyleDone target:self action:@selector(save)];
-    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"关闭" style:UIBarButtonItemStylePlain target:self action:@selector(closeSelf)];
+    if (self.navigationController.presentingViewController) self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"关闭" style:UIBarButtonItemStylePlain target:self action:@selector(closeSelf)];
+    self.table.contentInset = UIEdgeInsetsMake(0, 0, 110, 0);
+    self.table.scrollIndicatorInsets = UIEdgeInsetsMake(0, 0, 100, 0);
 
     self.status = [ADUtil label:nil size:12 color:[UIColor colorWithWhite:1 alpha:0.5]];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:@"ADDownloadChanged" object:nil];
 }
 
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    self.navigationController.navigationBar.hidden = NO;
+    self.navigationController.navigationBar.barStyle = UIBarStyleBlack;
+    self.navigationController.navigationBar.tintColor = UIColor.whiteColor;
+    self.token = [ADConfig shared].token ?: self.token;
+    self.baseField.text = [ADConfig shared].baseURL;
+    [self.table reloadData];
+}
 - (void)closeSelf { [self dismissViewControllerAnimated:YES completion:nil]; }
 
 - (void)prefetchSwitch:(UISwitch *)sw {

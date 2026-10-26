@@ -125,7 +125,14 @@
 }
 
 - (void)handleLong:(UILongPressGestureRecognizer *)g {
-    if (g.state == UIGestureRecognizerStateBegan && self.onMenu) self.onMenu();
+    if (g.state == UIGestureRecognizerStateBegan) {
+        [ADHaptic heavy];
+        [UIView animateWithDuration:0.12 animations:^{ self.transform = CGAffineTransformMakeScale(0.96, 0.96); }
+                         completion:^(BOOL f) {
+            [UIView animateWithDuration:0.35 delay:0 usingSpringWithDamping:0.55 initialSpringVelocity:0.8 options:0 animations:^{ self.transform = CGAffineTransformIdentity; } completion:nil];
+        }];
+        if (self.onMenu) self.onMenu();
+    }
 }
 - (void)tapPlay { [ADHaptic tap]; if (self.onPlay) self.onPlay(); }
 - (void)tapMore { [ADHaptic tap]; if (self.onMore) self.onMore(); }
@@ -481,9 +488,8 @@
     [super viewDidAppear:animated];
     if (self.needsSetup) {
         self.needsSetup = NO;
-        UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:[ADSettingsController new]];
-        nav.modalPresentationStyle = UIModalPresentationFormSheet;
-        [self presentViewController:nav animated:YES completion:nil];
+        UIViewController *root = UIApplication.sharedApplication.windows.firstObject.rootViewController;
+        if ([root isKindOfClass:ADDockController.class]) ((ADDockController *)root).selectedIndex = 3;
     }
 }
 
@@ -522,9 +528,9 @@
     sub.text = @"AudioDown";
     [self.scroll addSubview:sub];
 
-    NSArray *icons = @[@"clock.arrow.circlepath", @"square.stack.fill"];
-    NSArray *sels = @[@"openHistory", @"openDownloads"];
-    for (NSInteger i = 0; i < 2; i++) {
+    NSArray *icons = @[@"clock.arrow.circlepath"];
+    NSArray *sels = @[@"openHistory"];
+    for (NSInteger i = 0; i < 1; i++) {
         UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
         b.frame = CGRectMake(W - 16 - 44 - i * 56, y + 4, 44, 44);
         [ADLiquid glassButton:b radius:22];
@@ -666,17 +672,35 @@
     [ADMiniBar.shared refresh];
 }
 
-// 继续收听卡片长按菜单
+// 继续收听卡片菜单（长按和 ··· 共用）
 - (void)menuCard:(ADAlbum *)a {
     ADStore *st = [ADStore shared];
     BOOL fav = [st isFavorite:a.albumId];
-    NSArray *opts = @[@"播放", @"加入书架", (fav ? @"取消收藏" : @"收藏"), @"重新获取封面", @"删除记录"];
-    [ADOptionSheet showIn:self title:a.title options:opts destructive:4 choose:^(NSInteger i) {
+    NSArray *opts = @[@"继续播放", @"从头播放", (fav ? @"取消收藏" : @"收藏到书架"), @"打开专辑", @"重新获取封面", @"从继续收听移除"];
+    [ADOptionSheet showIn:self title:a.title options:opts destructive:5 choose:^(NSInteger i) {
         if (i == 0) { [self playCard:a]; }
-        else if (i == 1) { [st touchHistory:a]; [self build]; }
-        else if (i == 2) { [st toggleFavorite:a]; [self build]; }
-        else if (i == 3) { [self refetchCover:a]; }
-        else { [st removeHistory:a.albumId]; [self load]; }
+        else if (i == 1) { [self playFromStart:a]; }
+        else if (i == 2) { [st toggleFavorite:a]; [ADHaptic success]; [self build]; }
+        else if (i == 3) {
+            ADAlbumController *vc = [ADAlbumController new]; vc.album = a;
+            [self.navigationController pushViewController:vc animated:YES];
+        }
+        else if (i == 4) { [self refetchCover:a]; }
+        else { [ADHaptic warning]; [st removeContinue:a.albumId]; [self build]; }
+    }];
+}
+
+- (void)playFromStart:(ADAlbum *)a {
+    __block BOOL fired = NO;
+    [[ADApi shared] tracksOf:a.albumId page:1 done:^(NSArray<ADTrack *> *list, NSInteger total, BOOL cached, NSString *err) {
+        if (!list.count || fired) return;
+        fired = YES;
+        ADPlayer *p = ADPlayer.shared;
+        p.album = a; p.tracks = list;
+        [[ADStore shared] setPosition:0 for:list[0].trackId];
+        [[ADStore shared] touchHistory:a];
+        [p playAt:0];
+        [p ensureFullQueue];
     }];
 }
 
@@ -736,20 +760,7 @@
     }];
 }
 
-- (void)moreCard:(ADAlbum *)a {
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:a.title message:nil preferredStyle:UIAlertControllerStyleActionSheet];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"从头播放" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
-        [[ADApi shared] tracksOf:a.albumId page:1 done:^(NSArray<ADTrack *> *list, NSInteger total, BOOL cached, NSString *err) {
-            if (list.count) [ADPlayer.shared playAlbum:a tracks:list at:0];
-        }];
-    }]];
-    [sheet addAction:[UIAlertAction actionWithTitle:[[ADStore shared] isFavorite:a.albumId] ? @"取消收藏" : @"加入书架" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
-        [[ADStore shared] toggleFavorite:a];
-    }]];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    sheet.popoverPresentationController.sourceView = self.view;
-    [self presentViewController:sheet animated:YES completion:nil];
-}
+- (void)moreCard:(ADAlbum *)a { [ADHaptic tap]; [self menuCard:a]; }
 @end
 
 // ───────────── 搜索 ─────────────
@@ -1667,9 +1678,8 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
 }
 
 - (void)goSettings {
-    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:[ADSettingsController new]];
-    nav.modalPresentationStyle = UIModalPresentationPageSheet;
-    [self presentViewController:nav animated:YES completion:nil];
+    UIViewController *root = UIApplication.sharedApplication.windows.firstObject.rootViewController;
+    if ([root isKindOfClass:ADDockController.class]) ((ADDockController *)root).selectedIndex = 3;
 }
 
 - (void)showShelfMenu {
@@ -1683,11 +1693,10 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
     });
     NSString *f = [NSString stringWithFormat:@"分类：%@", names[self.filter]];
     NSString *m = [NSString stringWithFormat:@"显示方式：%@", modes[self.mode]];
-    [ADOptionSheet showIn:self title:@"书架" options:@[f, m, @"刷新书架", @"设置"] destructive:-1 choose:^(NSInteger i) {
+    [ADOptionSheet showIn:self title:@"书架" options:@[f, m, @"刷新书架"] destructive:-1 choose:^(NSInteger i) {
         if (i == 0) [self pickFilter];
         else if (i == 1) [self pickMode];
-        else if (i == 2) [self reloadData];
-        else [self goSettings];
+        else [self reloadData];
     }];
 }
 

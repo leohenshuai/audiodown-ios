@@ -400,7 +400,7 @@
 - (void)toggle {
     if (!_player) { if (_tracks.count) [self playAt:_index]; return; }
     if (_player.rate > 0) [self pause];
-    else { [_player play]; _player.rate = _rate; [self nowPlaying]; }
+    else { [_player play]; _player.rate = _rate; [self nowPlaying]; if (_album) [[ADStore shared] touchHistory:_album]; }
 }
 - (void)pause { [_player pause]; [self nowPlaying]; }
 - (void)next { if (_index + 1 < (NSInteger)_tracks.count) [self playAt:_index + 1]; }

@@ -19,9 +19,11 @@
     UINavigationController *s = [[UINavigationController alloc] initWithRootViewController:[ADSearchController new]];
     UINavigationController *b = [[UINavigationController alloc] initWithRootViewController:[ADShelfController new]];
 
+    UINavigationController *g = [[UINavigationController alloc] initWithRootViewController:[ADSettingsController new]];
+
     ADDockController *host = [ADDockController new];
-    host.pages = @[d, s, b];
-    for (UINavigationController *nav in @[d, s, b]) nav.delegate = self;
+    host.pages = @[d, s, b, g];
+    for (UINavigationController *nav in @[d, s, b, g]) nav.delegate = self;
     self.window.rootViewController = host;
     self.window.backgroundColor = [ADUtil bg];
     [self.window makeKeyAndVisible];
