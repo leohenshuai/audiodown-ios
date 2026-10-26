@@ -4,6 +4,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-14
@@ -22,6 +25,8 @@ jobs:
             -o build/Payload/ADBook.app/ADBook \
             src/*.m
           cp src/Info.plist build/Payload/ADBook.app/
+          # 编译号 = Actions 运行序号，设置页显示为「版本 5.14 (123)」
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" build/Payload/ADBook.app/Info.plist
           cp src/Assets/* build/Payload/ADBook.app/ 2>/dev/null || true
           codesign -s - --force --deep build/Payload/ADBook.app 2>/dev/null || true
           cd build && zip -qry ../Audiodown-unsigned.ipa Payload
@@ -30,3 +35,22 @@ jobs:
         with:
           name: Audiodown-IPA
           path: Audiodown-unsigned.ipa
+
+      # 每次编译成功都发布一个 Release，App 的「检查更新」读取 releases/latest
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" src/Info.plist)
+          TAG="v${VER}"
+          NAME="YueTing-${VER}-unsigned.ipa"
+          cp Audiodown-unsigned.ipa "$NAME"
+          NOTES=$(git log -1 --pretty=%B)
+          # 同一版本号重复编译时覆盖旧的 Release
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" "$NAME" \
+            --title "阅听 ${VER} (${GITHUB_RUN_NUMBER})" \
+            --notes "$NOTES" \
+            --target "$GITHUB_SHA" \
+            --latest

@@ -28,6 +28,7 @@
     self.window.backgroundColor = [ADUtil bg];
     [self.window makeKeyAndVisible];
     [[ADPlayer shared] restoreLast];
+    [ADUpdater backgroundCheck];
     NSLog(@"[AD] launched");
     return YES;
 }

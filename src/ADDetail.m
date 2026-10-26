@@ -51,6 +51,9 @@
 @property (nonatomic, copy) NSString *blurKey;
 // 快速选集：骨架占位模式（skel=占位总行数，0=关闭；skelPage=目标页）
 @property (nonatomic, assign) NSInteger skel, skelPage;
+// 分段显示（仿视频）：列表只显示当前 60 集一段，segStart=-1 表示连续模式（总集数未知时退回）
+@property (nonatomic, assign) NSInteger segStart, pendingPlay;
+@property (nonatomic, assign) BOOL segInited;
 @end
 
 // ───────────── 目录行 ─────────────
@@ -245,6 +248,7 @@
 
     self.selected = [NSMutableSet set];
     self.jumpTarget = -1;
+    self.segStart = -1; self.pendingPlay = -1;
     self.favBtn = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"heart"] style:UIBarButtonItemStylePlain target:self action:@selector(toggleFav)];
     UIBarButtonItem *moreItem = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"ellipsis.circle"] style:UIBarButtonItemStylePlain target:self action:@selector(showAlbumMenu)];
     self.navigationItem.rightBarButtonItems = @[moreItem, self.favBtn];
@@ -266,6 +270,7 @@
             self.album.author = a.author.length ? a.author : self.album.author;
             self.album.provider = a.provider.length ? a.provider : self.album.provider;
             self.total = a.trackCount ?: self.total;
+            [self ensureSegment];
             [self fillHeader];
         }
         [self loadTracks];
@@ -513,6 +518,14 @@
 - (void)setSortDescending:(BOOL)desc {
     if (desc == self.sortDesc) return;
     if (self.skel) [self endSkeletonEnded:NO];
+    if ([self segMode]) {
+        self.sortDesc = desc;
+        self.orderedCache = nil;
+        NSInteger lastSeg = ((self.total - 1) / kSegLen) * kSegLen;
+        [self selectSegment:(desc ? lastSeg : 0) animated:YES];
+        [self fillHeader];
+        return;
+    }
     self.sortDesc = desc;
     self.orderedCache = nil;
     [self.table reloadData];
@@ -554,7 +567,7 @@
     }
     for (UIView *v in self.rangeBar.subviews) [v removeFromSuperview];
     NSInteger total = self.total > 0 ? self.total : MAX((NSInteger)self.tracks.count, (NSInteger)60);
-    if (self.hasMore) total = MAX(total, (NSInteger)self.tracks.count + 60);   // 总数未知时多一段
+    if (self.hasMore && self.total <= 0) total = MAX(total, (NSInteger)self.tracks.count + 60);   // 总数未知时多一段
     NSInteger step = 60;
     NSInteger n = (total + step - 1) / step;
     CGFloat x = 16;
@@ -606,11 +619,13 @@
     self.floatBar.contentSize = self.rangeBar.contentSize;
     if (self.rangeBar.superview != head) [head addSubview:self.rangeBar];
     self.rangeBar.frame = CGRectMake(0, head.bounds.size.height - 44, self.view.bounds.size.width, 44);
+    if ([self segMode]) [self paintRangeChips];
 }
 
 - (void)tapRange:(UIButton *)b {
     [ADHaptic select];
     NSInteger start = b.tag - 2000;
+    if ([self segMode] || (self.total > 0 && self.pageSize == 50)) { self.segInited = YES; [self selectSegment:start animated:YES]; return; }
     for (UIScrollView *bar in @[self.rangeBar, self.floatBar]) {
         for (UIView *v in bar.subviews) {
             if (![v isKindOfClass:UIButton.class]) continue;
@@ -653,7 +668,104 @@
     self.floatBar.frame = CGRectMake(0, safe - 44, self.view.bounds.size.width, 44);
 }
 
+#define kSegLen 60
+- (BOOL)segMode { return self.segStart >= 0 && self.total > 0 && self.pageSize == 50; }
+- (NSInteger)segLen { return MAX(0, MIN(kSegLen, self.total - self.segStart)); }
+- (NSInteger)globalForRow:(NSInteger)row {
+    NSInteger n = [self segLen];
+    return self.segStart + (self.sortDesc ? n - 1 - row : row);
+}
+- (ADTrack *)trackAtGlobal:(NSInteger)g {
+    NSArray *a = self.pageMap[@(g / 50 + 1)];
+    NSInteger k = g % 50;
+    return k < (NSInteger)a.count ? a[k] : nil;
+}
+// 进入分段模式：默认落在“上次听到”的那一段（视频里打开就停在 61–120）
+- (void)ensureSegment {
+    if (self.segInited || self.total <= 0 || self.pageSize != 50) return;
+    self.segInited = YES;
+    NSInteger resume = [[[ADStore shared] lastInfoOf:self.album.albumId][@"index"] integerValue];
+    if (resume < 0 || resume >= self.total) resume = 0;
+    [self selectSegment:(resume / kSegLen) * kSegLen animated:NO];
+}
+- (void)selectSegment:(NSInteger)start animated:(BOOL)animated {
+    if (self.total <= 0) return;
+    start = MAX(0, MIN(start, ((self.total - 1) / kSegLen) * kSegLen));
+    BOOL changed = (start != self.segStart);
+    self.segStart = start;
+    self.skel = 0; self.jumpTarget = -1;
+    [self paintRangeChips];
+    void (^swap)(void) = ^{ [self.table reloadData]; };
+    if (animated && changed) [UIView transitionWithView:self.table duration:0.22 options:UIViewAnimationOptionTransitionCrossDissolve | UIViewAnimationOptionAllowUserInteraction animations:swap completion:nil];
+    else swap();
+    // 列表已滚过头部时，切段后回到本段第一行（分段条下方）
+    CGFloat headBottom = self.table.tableHeaderView.bounds.size.height - 44;
+    if (changed && self.table.contentOffset.y > headBottom - self.table.adjustedContentInset.top && [self segLen] > 0)
+        [self.table setContentOffset:CGPointMake(0, headBottom - self.table.adjustedContentInset.top) animated:NO];
+    [self pumpSegment];
+}
+// 先拉本段需要的 1–2 页，再在后台把前面的页补齐（为了播放时能组成正确的队列）
+- (void)pumpSegment {
+    if (![self segMode]) return;
+    NSInteger a = self.segStart / 50 + 1, b = (self.segStart + [self segLen] - 1) / 50 + 1;
+    NSMutableArray *order = [NSMutableArray array];
+    for (NSInteger q = a; q <= b; q++) [order addObject:@(q)];
+    NSInteger need = self.pendingPlay >= 0 ? self.pendingPlay / 50 + 1 : b;
+    for (NSInteger q = 1; q <= need; q++) if (q < a || q > b) [order addObject:@(q)];
+    for (NSNumber *n in order) {
+        if (self.pageMap[n] || [self.pageLoading containsObject:n]) continue;
+        if (self.pageLoading.count >= 4) break;
+        [self loadPage:n.integerValue];
+    }
+}
+- (void)paintRangeChips {
+    NSInteger tag = 2000 + self.segStart;
+    for (UIScrollView *bar in @[self.rangeBar ?: [UIScrollView new], self.floatBar ?: [UIScrollView new]]) {
+        for (UIView *v in bar.subviews) {
+            if (![v isKindOfClass:UIButton.class]) continue;
+            UIButton *btn = (UIButton *)v; BOOL on = (v.tag == tag);
+            btn.backgroundColor = on ? UIColor.whiteColor : [UIColor colorWithWhite:1 alpha:0.1];
+            [btn setTitleColor:(on ? UIColor.blackColor : [UIColor colorWithWhite:1 alpha:0.85]) forState:UIControlStateNormal];
+            btn.titleLabel.font = [UIFont systemFontOfSize:13 weight:on ? UIFontWeightSemibold : UIFontWeightMedium];
+            if (on) {
+                CGRect r = CGRectInset(btn.frame, -40, 0);
+                [bar scrollRectToVisible:r animated:YES];
+            }
+        }
+    }
+}
+// 所有已拿到的集（含不连续的页），用于多选下载
+- (NSArray<ADTrack *> *)allLoaded {
+    NSMutableArray *out = [NSMutableArray array]; NSMutableSet *seen = [NSMutableSet set];
+    for (NSNumber *k in [[self.pageMap allKeys] sortedArrayUsingSelector:@selector(compare:)])
+        for (ADTrack *t in self.pageMap[k]) if (t.trackId.length && ![seen containsObject:t.trackId]) { [seen addObject:t.trackId]; [out addObject:t]; }
+    return out;
+}
+- (void)playGlobal:(NSInteger)g {
+    NSInteger pg = g / 50 + 1;
+    NSMutableArray *prefix = [NSMutableArray array];
+    for (NSInteger q = 1; q <= pg; q++) {
+        NSArray *a = self.pageMap[@(q)];
+        if (!a) {   // 前面的页还没到：先补齐再播
+            self.pendingPlay = g;
+            [self updateFooter];
+            [self pumpSegment];
+            return;
+        }
+        [prefix addObjectsFromArray:a];
+    }
+    self.pendingPlay = -1;
+    [self updateFooter];
+    // 后面已拿到的连续页也一并放进队列
+    for (NSInteger q = pg + 1; self.pageMap[@(q)]; q++) [prefix addObjectsFromArray:self.pageMap[@(q)]];
+    [ADHaptic tap];
+    [ADPlayer.shared playAlbum:self.album tracks:prefix at:MIN(g, (NSInteger)prefix.count - 1)];
+    [ADPlayer.shared ensureFullQueue];
+    if (!self.presentedViewController) [self presentViewController:[ADPlayerController new] animated:YES completion:nil];
+}
+
 - (ADTrack *)trackAtRow:(NSInteger)row {
+    if ([self segMode]) return [self trackAtGlobal:[self globalForRow:row]];
     if (self.skel) {
         NSArray *a = self.pageMap[@(row / 50 + 1)];
         NSInteger o = row % 50;
@@ -821,7 +933,8 @@
 }
 
 - (void)selectAll {
-    for (ADTrack *t in self.ordered) [self.selected addObject:t.trackId];
+    if ([self segMode]) { for (NSInteger r = 0; r < [self segLen]; r++) { ADTrack *t = [self trackAtRow:r]; if (t) [self.selected addObject:t.trackId]; } }
+    else for (ADTrack *t in self.ordered) [self.selected addObject:t.trackId];
     [self updateActionBar];
     [self.table reloadData];
 }
@@ -865,7 +978,7 @@
 - (void)downloadSelected {
     if (!self.selected.count) return;
     NSMutableArray *arr = [NSMutableArray array];
-    for (ADTrack *t in self.tracks) if ([self.selected containsObject:t.trackId]) [arr addObject:t];
+    for (ADTrack *t in [self allLoaded]) if ([self.selected containsObject:t.trackId]) [arr addObject:t];
     [ADHaptic success];
     [[ADDownloader shared] addTracks:self.album tracks:arr];
     NSUInteger n = arr.count;
@@ -947,14 +1060,17 @@
     self.endReached = NO;
     self.orderedCache = nil;
     self.skel = 0; self.skelPage = 0;
+    self.pendingPlay = -1;
     self.pageSize = 50;
     self.hasMore = YES;
     self.loading = NO;
     [self.tracks removeAllObjects];
 }
 
+- (NSInteger)prefixPages { NSInteger k = 0; while (self.pageMap[@(k + 1)]) k++; return k; }
 - (void)rebuildTracks {
-    NSArray<NSNumber *> *keys = [[self.pageMap allKeys] sortedArrayUsingSelector:@selector(compare:)];
+    NSMutableArray<NSNumber *> *keys = [NSMutableArray array];
+    for (NSInteger q = 1; self.pageMap[@(q)]; q++) [keys addObject:@(q)];
     NSMutableArray<ADTrack *> *out = [NSMutableArray array];
     NSMutableSet<NSString *> *seen = [NSMutableSet set];
     NSInteger lastCount = 0;
@@ -1014,6 +1130,7 @@
             if (![self.pageMap objectForKey:@(p)] && list.count) {
                 self.pageMap[@(p)] = list;
                 [self rebuildTracks];
+                [self ensureSegment];
                 [self.table reloadData];
                 [self fillHeader];
             }
@@ -1108,13 +1225,14 @@
         NSInteger before = (NSInteger)self.tracks.count;
         BOOL shortPage = list.count > 0 && list.count < 50;
         BOOL hadPage = (self.pageMap[@(p)] != nil);                      // 这一页之前已由缓存/骨架填过
+        BOOL nextOfPrefix = (p == [self prefixPages] + 1);              // 分段模式会跳页拉取，跳着拉的页不参与“到底”判断
         self.pageMap[@(p)] = list ?: @[];
         [self rebuildTracks];
         NSInteger added = (NSInteger)self.tracks.count - before;
         // 只有“新的一页”整页都是重复，才说明服务端没有更多了；覆盖已有页时新增为 0 是正常的
-        if (!hadPage && list.count > 0 && added <= 0) self.endReached = YES;
+        if (!hadPage && nextOfPrefix && list.count > 0 && added <= 0) self.endReached = YES;
         if (shortPage && self.total > 0 && (NSInteger)self.tracks.count >= self.total) self.endReached = YES;
-        if (self.total > 0 && (NSInteger)self.tracks.count > self.total) self.total = 0;   // total 给少了，弃用
+        if (self.total > 0 && (NSInteger)self.tracks.count > self.total) { self.total = 0; self.segStart = -1; }   // total 给少了，弃用，退回连续模式
         self.hasMore = !self.endReached;
         if (self.tracks.count && !ADPlayer.shared.album) {
             ADPlayer.shared.album = self.album;
@@ -1123,9 +1241,14 @@
                    && self.tracks.count > ADPlayer.shared.tracks.count) {
             ADPlayer.shared.tracks = self.tracks;   // 目录补全后同步播放队列（只增不减）
         }
+        [self ensureSegment];
         [self.table reloadData];
         [self fillHeader];
         [self updateFooter];
+        if ([self segMode]) {
+            if (self.pendingPlay >= 0 && [self prefixPages] >= self.pendingPlay / 50 + 1) [self playGlobal:self.pendingPlay];
+            [self pumpSegment];
+        }
         if (self.jumpTarget >= 0) {
             if ((NSInteger)self.tracks.count > self.jumpTarget) {
                 NSIndexPath *ip = [NSIndexPath indexPathForRow:[self rowForIndex:self.jumpTarget] inSection:0];
@@ -1156,6 +1279,14 @@
 
 - (void)updateFooter {
     if (!self.errText.length) {
+        if (self.pendingPlay >= 0) {
+            UILabel *l = [ADUtil label:nil size:12.5 color:[UIColor colorWithWhite:1 alpha:0.55]];
+            l.textAlignment = NSTextAlignmentCenter;
+            l.text = [NSString stringWithFormat:@"正在载入前面的目录以便连续播放… %ld/%ld 页", (long)[self prefixPages], (long)(self.pendingPlay / 50 + 1)];
+            l.frame = CGRectMake(0, 0, self.view.bounds.size.width, 50);
+            self.table.tableFooterView = l;
+            return;
+        }
         if (!self.tracks.count && (self.loading || self.pageLoading.count)) {
             UIView *f = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 90)];
             UIActivityIndicatorView *sp = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
@@ -1220,7 +1351,7 @@
     UITableViewHeaderFooterView *h = (UITableViewHeaderFooterView *)v;
     h.textLabel.textColor = [ADUtil dim];
 }
-- (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { return self.skel ? self.skel : self.tracks.count; }
+- (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { if ([self segMode]) return [self segLen]; return self.skel ? self.skel : self.tracks.count; }
 - (NSArray<UITableViewRowAction *> *)legacyActions { return nil; }
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {
     static NSString *cid = @"tr";
@@ -1229,12 +1360,12 @@
     ADTrack *tr = [self trackAtRow:ip.row];
     NSInteger n = self.tracks.count;
     if (!tr) {
-        c.num.text = [NSString stringWithFormat:@"%ld", (long)(ip.row + 1)];
+        c.num.text = [NSString stringWithFormat:@"%ld", (long)([self segMode] ? [self globalForRow:ip.row] + 1 : ip.row + 1)];
         [c setSkeleton:YES];
         return c;
     }
     [c setSkeleton:NO];
-    c.num.text = [NSString stringWithFormat:@"%ld", (long)(self.sortDesc ? n - ip.row : ip.row + 1)];
+    c.num.text = [NSString stringWithFormat:@"%ld", (long)([self segMode] ? [self globalForRow:ip.row] + 1 : (self.sortDesc ? n - ip.row : ip.row + 1))];
     c.name.text = tr.title;
     double pos = [[ADStore shared] positionFor:tr.trackId];
     BOOL listened = [[ADStore shared] isDone:tr.trackId];
@@ -1271,13 +1402,14 @@
     c.accessoryType = UITableViewCellAccessoryNone;
     [c setNeedsLayout];
     // 触底加载
-    if (!self.skel && !self.selecting && self.hasMore && self.jumpTarget < 0 && ip.row >= (NSInteger)self.tracks.count - 6) [self loadNextPage];
+    if (![self segMode] && !self.skel && !self.selecting && self.hasMore && self.jumpTarget < 0 && ip.row >= (NSInteger)self.tracks.count - 6) [self loadNextPage];
     return c;
 }
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [t deselectRowAtIndexPath:ip animated:YES];
     ADTrack *tr = [self trackAtRow:ip.row];
     if (!tr) { [ADHaptic soft]; return; }
+    if ([self segMode] && !self.selecting) { [self playGlobal:[self globalForRow:ip.row]]; return; }
     if (self.skel) {
         // 占位期间点已到的行：只要 1..该页都已到，就用连续前缀播放
         NSInteger pg = ip.row / 50 + 1;
@@ -2077,6 +2209,8 @@
 @property (nonatomic, copy) NSString *token;
 @property (nonatomic, strong) UILabel *status;
 @property (nonatomic, assign) BOOL tokenShown;
+@property (nonatomic, assign) BOOL checking, hasUpdate;
+@property (nonatomic, copy) NSString *latestTag, *updateHint;
 @end
 
 @implementation ADSettingsController
@@ -2097,7 +2231,14 @@
 
     self.baseField = [self field:[ADConfig shared].baseURL placeholder:@"https://服务器地址:端口" keyboard:UIKeyboardTypeURL];
 
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"保存" style:UIBarButtonItemStyleDone target:self action:@selector(save)];
+    self.navigationController.navigationBar.prefersLargeTitles = YES;
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeAlways;
+    self.navigationController.navigationBar.largeTitleTextAttributes = @{NSForegroundColorAttributeName: UIColor.whiteColor};
+    self.navigationController.navigationBar.titleTextAttributes = @{NSForegroundColorAttributeName: UIColor.whiteColor};
+    [self.navigationController.navigationBar setBackgroundImage:[UIImage new] forBarMetrics:UIBarMetricsDefault];
+    self.navigationController.navigationBar.shadowImage = [UIImage new];
+    NSString *cachedTag = [NSUserDefaults.standardUserDefaults stringForKey:@"ad_update_tag"];
+    if (cachedTag.length) { self.latestTag = cachedTag; self.hasUpdate = [ADUpdater isNewer:cachedTag than:[self appVersion]]; }
     if (self.navigationController.presentingViewController) self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"关闭" style:UIBarButtonItemStylePlain target:self action:@selector(closeSelf)];
     self.table.contentInset = UIEdgeInsetsMake(0, 0, 110, 0);
     self.table.scrollIndicatorInsets = UIEdgeInsetsMake(0, 0, 100, 0);
@@ -2249,187 +2390,245 @@
     }];
 }
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)t { return 4; }
+// ───────── 设置页：按用途分组 ─────────
+// 0 服务  1 播放  2 下载与存储  3 体验  4 数据  5 关于
+typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADSecFeel, ADSecData, ADSecAbout, ADSecCount };
+
+- (NSString *)appVersion {
+    NSDictionary *i = NSBundle.mainBundle.infoDictionary;
+    return [NSString stringWithFormat:@"%@", i[@"CFBundleShortVersionString"] ?: @"?"];
+}
+- (NSString *)buildNo { return NSBundle.mainBundle.infoDictionary[@"CFBundleVersion"] ?: @""; }
+
+- (UISwitch *)sw:(NSString *)key def:(BOOL)def action:(SEL)a {
+    UISwitch *sw = [UISwitch new];
+    NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
+    sw.on = [ud objectForKey:key] ? [ud boolForKey:key] : def;
+    sw.onTintColor = [ADUtil brand];
+    [sw addTarget:self action:a forControlEvents:UIControlEventValueChanged];
+    return sw;
+}
+- (UIImageView *)icon:(NSString *)name color:(UIColor *)c {
+    UIImageView *v = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, 30, 30)];
+    v.backgroundColor = c; v.layer.cornerRadius = 8;
+    if (@available(iOS 13.0, *)) v.layer.cornerCurve = kCACornerCurveContinuous;
+    v.image = [UIImage systemImageNamed:name withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:14 weight:UIImageSymbolWeightSemibold]];
+    v.tintColor = UIColor.whiteColor; v.contentMode = UIViewContentModeCenter;
+    return v;
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)t { return ADSecCount; }
 - (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)s {
-    if (s == 0) return @"服务";
-    if (s == 2) return @"播放与预加载";
-    if (s == 3) return @"数据";
-    return @"本机下载";
+    return @[@"服务", @"播放", @"下载与存储", @"体验", @"数据", @"关于"][s];
 }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
-    if (s == 0) return self.status.text ?: @"点 Token 那一行可以粘贴或修改";
-    if (s == 3) return @"备份文件在「文件」App → 听书 → backups，重装前先备份";
-    if (![ADDownloader shared].tasks.count)
-        return @"在专辑页点「缓存到本机」，音频会存进手机，离线也能听";
-    return @"左滑删除或暂停，点击行可暂停/继续；本机下载不占用服务器";
+    if (s == ADSecServer) return self.status.text.length ? self.status.text : @"点 Token 那一行可以粘贴或修改";
+    if (s == ADSecPlay) return @"智能预缓存会提前准备后面几集，弱网和地铁里更顺";
+    if (s == ADSecData) return @"备份文件在「文件」App → 阅听 → backups，重装前先备份";
+    if (s == ADSecAbout) return self.updateHint;
+    return nil;
+}
+- (void)tableView:(UITableView *)t willDisplayHeaderView:(UIView *)v forSection:(NSInteger)s {
+    if ([v isKindOfClass:UITableViewHeaderFooterView.class]) ((UITableViewHeaderFooterView *)v).textLabel.textColor = [UIColor colorWithWhite:1 alpha:0.5];
 }
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s {
-    if (s == 0) return 4;
-    if (s == 2) return 6;
-    if (s == 3) return 3;
-    return MAX(1, (NSInteger)[ADDownloader shared].tasks.count) + 1;
+    switch (s) {
+        case ADSecServer: return 4;     // 地址 / Token / 网页账号 / 测试连接
+        case ADSecPlay: return 4;       // 预缓存 / 仅 WiFi / 集数 / 自动清理
+        case ADSecStorage: return 3;    // 本机下载 / 离线存储 / 全部暂停继续
+        case ADSecFeel: return 2;       // 触感 / 提示音
+        case ADSecData: return 2;       // 书签 / 备份恢复
+        default: return 4;              // 版本 / 检查更新 / GitHub 令牌 / 项目主页
+    }
 }
+- (CGFloat)tableView:(UITableView *)t heightForRowAtIndexPath:(NSIndexPath *)ip { return 56; }
 
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {
     UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
-    c.backgroundColor = [UIColor colorWithWhite:1 alpha:0.055];
+    c.backgroundColor = [UIColor colorWithWhite:1 alpha:0.06];
     c.textLabel.textColor = UIColor.whiteColor;
     c.detailTextLabel.textColor = [UIColor colorWithWhite:1 alpha:0.5];
-    c.textLabel.font = [UIFont systemFontOfSize:15];
-    c.detailTextLabel.font = [UIFont systemFontOfSize:11];
+    c.textLabel.font = [UIFont systemFontOfSize:16];
+    c.detailTextLabel.font = [UIFont systemFontOfSize:12];
     c.selectionStyle = UITableViewCellSelectionStyleNone;
+    NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
+    UIColor *orange = [ADUtil brand], *blue = [UIColor systemBlueColor], *green = [UIColor systemGreenColor],
+            *purple = [UIColor systemPurpleColor], *gray = [UIColor systemGrayColor], *teal = [UIColor systemTealColor],
+            *pink = [UIColor systemPinkColor], *indigo = [UIColor systemIndigoColor];
+    NSString *icon = nil; UIColor *ic = gray;
 
-    if (ip.section == 3) {
-        NSArray *t1 = @[@"书签", @"离线存储管理", @"备份与恢复"];
-        NSArray *t2 = @[@"收藏的听书位置", @"查看占用、清理缓存、重试失败下载", @"导出 / 导入收藏、进度、听完标记"];
-        c.textLabel.text = t1[ip.row]; c.detailTextLabel.text = t2[ip.row];
-        c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        c.selectionStyle = UITableViewCellSelectionStyleDefault;
-        return c;
-    }
-    if (ip.section == 2) {
-        NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
+    switch (ip.section) {
+    case ADSecServer: {
         if (ip.row == 0) {
-            c.textLabel.text = @"智能预缓存";
-            c.detailTextLabel.text = @"提前准备后续音频，弱网和地铁里更顺";
-            UISwitch *sw = [[UISwitch alloc] init];
-            sw.on = [ud boolForKey:@"ad_prefetch"];
-            sw.onTintColor = [ADUtil brand];
-            [sw addTarget:self action:@selector(prefetchSwitch:) forControlEvents:UIControlEventValueChanged];
-            c.accessoryView = sw;
-        } else if (ip.row == 1) {
-            c.textLabel.text = @"仅 Wi-Fi 预加载";
-            c.detailTextLabel.text = @"关掉后用蜂窝网络也会预取，会走流量";
-            UISwitch *wifiSw = [[UISwitch alloc] init];
-            wifiSw.on = [ud boolForKey:@"ad_prefetch_wifi"];
-            wifiSw.onTintColor = [ADUtil brand];
-            [wifiSw addTarget:self action:@selector(prefetchWifi:) forControlEvents:UIControlEventValueChanged];
-            c.accessoryView = wifiSw;
-        } else if (ip.row == 2) {
-            c.textLabel.text = @"额外预加载后续集数";
-            NSInteger n = [ud integerForKey:@"ad_prefetch_count"];
-            if (n <= 0) n = 2;
-            c.detailTextLabel.text = [NSString stringWithFormat:@"当前 %ld 集（1–5），越大越占流量", (long)n];
-            UIStepper *st = [[UIStepper alloc] init];
-            st.minimumValue = 1; st.maximumValue = 5; st.stepValue = 1;
-            st.value = n;
-            st.tintColor = [ADUtil brand];
-            [st addTarget:self action:@selector(prefetchStepper:) forControlEvents:UIControlEventValueChanged];
-            c.accessoryView = st;
-        } else if (ip.row == 4) {
-            c.textLabel.text = @"触控反馈";
-            c.detailTextLabel.text = @"按钮、卡片、长按都有轻微震动";
-            UISwitch *sw = [[UISwitch alloc] init];
-            id hv = [ud objectForKey:@"ad_haptic"];
-            sw.on = hv ? [ud boolForKey:@"ad_haptic"] : YES;
-            sw.onTintColor = [ADUtil brand];
-            [sw addTarget:self action:@selector(hapticSwitch:) forControlEvents:UIControlEventValueChanged];
-            c.accessoryView = sw;
-        } else if (ip.row == 5) {
-            c.textLabel.text = @"提示音";
-            c.detailTextLabel.text = @"点按和选择时播放系统提示音";
-            UISwitch *sw = [[UISwitch alloc] init];
-            id sv = [ud objectForKey:@"ad_sound"];
-            sw.on = sv ? [ud boolForKey:@"ad_sound"] : YES;
-            sw.onTintColor = [ADUtil brand];
-            [sw addTarget:self action:@selector(soundSwitch:) forControlEvents:UIControlEventValueChanged];
-            c.accessoryView = sw;
-        } else if (ip.row == 3) {
-            NSInteger days = [ud integerForKey:@"ad_prefetch_days"];
-            if (days < 0) days = 3;
-            c.textLabel.text = @"自动清理预缓存";
-            c.detailTextLabel.text = days == 0 ? @"不自动清理" : [NSString stringWithFormat:@"超过 %ld 天的临时音频自动删除", (long)days];
-            c.textLabel.textColor = UIColor.whiteColor;
-            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            c.selectionStyle = UITableViewCellSelectionStyleDefault;
-        }
-        return c;
-    }
-
-    if (ip.section == 0) {
-        if (ip.row == 0) {
-            UILabel *name = [ADUtil label:nil size:15 color:UIColor.whiteColor];
-            name.text = @"服务地址";
-            name.frame = CGRectMake(16, 12, 76, 20);
-            [c.contentView addSubview:name];
-            CGFloat cw = c.contentView.bounds.size.width > 0 ? c.contentView.bounds.size.width : (t.bounds.size.width - 40);
-            self.baseField.frame = CGRectMake(86, 6, MAX(80, cw - 86 - 34), 32);
+            icon = @"server.rack"; ic = blue;
+            c.textLabel.text = @"服务地址";
+            CGFloat cw = t.bounds.size.width - 40;
+            self.baseField.frame = CGRectMake(150, 12, MAX(80, cw - 150 - 12), 32);
             self.baseField.autoresizingMask = UIViewAutoresizingFlexibleWidth;
             [c.contentView addSubview:self.baseField];
         } else if (ip.row == 1) {
-            UILabel *name = [ADUtil label:nil size:15 color:UIColor.whiteColor];
-            name.text = @"Token";
-            name.frame = CGRectMake(16, 12, 60, 20);
-            [c.contentView addSubview:name];
-
-            UILabel *v = [ADUtil label:nil size:12 color:[UIColor colorWithWhite:1 alpha:0.85]];
+            icon = @"key.fill"; ic = orange;
+            c.textLabel.text = @"Token";
+            UILabel *v = [ADUtil label:nil size:12 color:[UIColor colorWithWhite:1 alpha:0.75]];
             v.font = [UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightRegular];
-            v.textAlignment = NSTextAlignmentRight;
+            v.textAlignment = NSTextAlignmentRight; v.numberOfLines = 1;
             v.lineBreakMode = NSLineBreakByTruncatingMiddle;
             v.text = [self tokenDisplay];
-            v.frame = CGRectMake(80, 0, c.contentView.bounds.size.width - 80 - 44, 44);
-            v.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-            [c.contentView addSubview:v];
-
+            v.frame = CGRectMake(0, 0, 170, 56);
             UIButton *eye = [UIButton buttonWithType:UIButtonTypeSystem];
-            eye.frame = CGRectMake(c.contentView.bounds.size.width - 40, 2, 34, 40);
-            eye.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+            eye.frame = CGRectMake(172, 10, 34, 36);
             eye.tintColor = [UIColor colorWithWhite:1 alpha:0.55];
             [eye setImage:[UIImage systemImageNamed:self.tokenShown ? @"eye" : @"eye.slash"] forState:UIControlStateNormal];
             [eye addTarget:self action:@selector(toggleToken) forControlEvents:UIControlEventTouchUpInside];
-            [c.contentView addSubview:eye];
+            UIView *acc = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 206, 56)];
+            [acc addSubview:v]; [acc addSubview:eye];
+            c.accessoryView = acc;
             c.selectionStyle = UITableViewCellSelectionStyleDefault;
         } else if (ip.row == 2) {
-            c.textLabel.text = @"网页账号";
+            icon = @"person.crop.circle"; ic = gray;
             ADConfig *cfg = [ADConfig shared];
-            if (cfg.username.length) {
-                c.detailTextLabel.text = [NSString stringWithFormat:@"%@ · 用于读取 VIP 专辑目录", cfg.username];
-                c.textLabel.textColor = UIColor.whiteColor;
-            } else {
-                c.detailTextLabel.text = @"可选：填了才能取 VIP/付费专辑的目录";
-                c.textLabel.textColor = UIColor.whiteColor;
-            }
+            c.textLabel.text = @"网页账号（可选）";
+            c.detailTextLabel.text = cfg.username.length ? cfg.username : @"一般用不到，目录已不依赖登录";
             c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
             c.selectionStyle = UITableViewCellSelectionStyleDefault;
         } else {
-            c.textLabel.text = @"测试连接";
-            c.textLabel.textColor = [ADUtil brand];
+            icon = @"bolt.horizontal.circle"; ic = green;
+            c.textLabel.text = @"保存并测试连接";
+            c.textLabel.textColor = orange;
             c.selectionStyle = UITableViewCellSelectionStyleDefault;
         }
-        return c;
+        break;
     }
-
-    NSArray<ADTask *> *tasks = [ADDownloader shared].tasks;
-    if (ip.row == 0) {
-        BOOL anyRunning = NO;
-        for (ADTask *x in tasks) if (x.state == ADTaskStateRunning || x.state == ADTaskStateQueued) anyRunning = YES;
-        c.textLabel.text = anyRunning ? @"全部暂停" : @"全部继续";
-        c.textLabel.textColor = [ADUtil brand];
+    case ADSecPlay: {
+        if (ip.row == 0) {
+            icon = @"bolt.fill"; ic = orange;
+            c.textLabel.text = @"智能预缓存";
+            c.accessoryView = [self sw:@"ad_prefetch" def:NO action:@selector(prefetchSwitch:)];
+        } else if (ip.row == 1) {
+            icon = @"wifi"; ic = blue;
+            c.textLabel.text = @"仅 Wi‑Fi 预缓存";
+            c.accessoryView = [self sw:@"ad_prefetch_wifi" def:YES action:@selector(prefetchWifi:)];
+        } else if (ip.row == 2) {
+            icon = @"square.stack.3d.down.right"; ic = purple;
+            NSInteger n = [ud integerForKey:@"ad_prefetch_count"]; if (n <= 0) n = 2;
+            c.textLabel.text = @"提前准备";
+            c.detailTextLabel.text = [NSString stringWithFormat:@"后面 %ld 集", (long)n];
+            UIStepper *st = [UIStepper new];
+            st.minimumValue = 1; st.maximumValue = 5; st.stepValue = 1; st.value = n;
+            st.tintColor = orange;
+            [st addTarget:self action:@selector(prefetchStepper:) forControlEvents:UIControlEventValueChanged];
+            c.accessoryView = st;
+        } else {
+            icon = @"clock.arrow.circlepath"; ic = teal;
+            NSInteger days = [ud integerForKey:@"ad_prefetch_days"];
+            c.textLabel.text = @"自动清理预缓存";
+            c.detailTextLabel.text = days == 0 ? @"不自动清理" : [NSString stringWithFormat:@"超过 %ld 天自动删除", (long)days];
+            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            c.selectionStyle = UITableViewCellSelectionStyleDefault;
+        }
+        break;
+    }
+    case ADSecStorage: {
+        NSArray<ADTask *> *tasks = [ADDownloader shared].tasks;
+        if (ip.row == 0) {
+            icon = @"arrow.down.circle.fill"; ic = green;
+            c.textLabel.text = @"本机下载";
+            NSInteger running = 0, done = 0;
+            for (ADTask *x in tasks) { if (x.state == ADTaskStateRunning || x.state == ADTaskStateQueued) running++; if (x.state == ADTaskStateDone) done++; }
+            c.detailTextLabel.text = tasks.count ? [NSString stringWithFormat:@"%ld 本 · 进行中 %ld · 已完成 %ld", (long)tasks.count, (long)running, (long)done] : @"还没有下载";
+            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        } else if (ip.row == 1) {
+            icon = @"internaldrive.fill"; ic = indigo;
+            c.textLabel.text = @"离线存储管理";
+            c.detailTextLabel.text = @"查看占用、清理缓存、重试失败";
+            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        } else {
+            BOOL anyRunning = NO;
+            for (ADTask *x in tasks) if (x.state == ADTaskStateRunning || x.state == ADTaskStateQueued) anyRunning = YES;
+            icon = anyRunning ? @"pause.circle.fill" : @"play.circle.fill"; ic = anyRunning ? gray : orange;
+            c.textLabel.text = anyRunning ? @"全部暂停" : @"全部继续";
+            c.textLabel.textColor = tasks.count ? orange : [UIColor colorWithWhite:1 alpha:0.35];
+        }
         c.selectionStyle = UITableViewCellSelectionStyleDefault;
-    } else if (!tasks.count) {
-        c.textLabel.text = @"暂无本机下载";
-        c.textLabel.textColor = [UIColor colorWithWhite:1 alpha:0.45];
-    } else {
-        ADTask *task = tasks[ip.row - 1];
-        c.textLabel.text = task.title.length ? task.title : task.albumId;
-        NSString *st = task.state == ADTaskStateRunning ? @"下载中"
-                     : (task.state == ADTaskStatePaused ? @"已暂停"
-                     : (task.state == ADTaskStateDone ? @"已完成"
-                     : (task.state == ADTaskStateFailed ? @"有失败" : @"排队中")));
-        NSString *bytes = task.bytes > 0 ? [NSString stringWithFormat:@" · %.1fMB", task.bytes / 1048576.0] : @"";
-        c.detailTextLabel.text = [NSString stringWithFormat:@"%@ · %ld/%ld%@", st, (long)task.done, (long)task.tracks.count, bytes];
+        break;
+    }
+    case ADSecFeel: {
+        if (ip.row == 0) {
+            icon = @"hand.tap.fill"; ic = pink;
+            c.textLabel.text = @"触控反馈";
+            c.accessoryView = [self sw:@"ad_haptic" def:YES action:@selector(hapticSwitch:)];
+        } else {
+            icon = @"speaker.wave.2.fill"; ic = teal;
+            c.textLabel.text = @"提示音";
+            c.accessoryView = [self sw:@"ad_sound" def:YES action:@selector(soundSwitch:)];
+        }
+        break;
+    }
+    case ADSecData: {
+        if (ip.row == 0) { icon = @"bookmark.fill"; ic = orange; c.textLabel.text = @"书签"; c.detailTextLabel.text = [NSString stringWithFormat:@"%ld 条", (long)[ADStore shared].bookmarks.count]; }
+        else { icon = @"externaldrive.badge.timemachine"; ic = blue; c.textLabel.text = @"备份与恢复"; c.detailTextLabel.text = @"收藏、进度、听完标记、书签"; }
+        c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        c.selectionStyle = UITableViewCellSelectionStyleDefault;
+        break;
+    }
+    default: {
+        if (ip.row == 0) {
+            icon = @"info.circle.fill"; ic = gray;
+            c.textLabel.text = @"版本";
+            UILabel *v = [ADUtil label:nil size:15 color:[UIColor colorWithWhite:1 alpha:0.6]];
+            v.numberOfLines = 1;
+            v.text = [NSString stringWithFormat:@"%@ (%@)", [self appVersion], [self buildNo]];
+            [v sizeToFit]; c.accessoryView = v;
+        } else if (ip.row == 1) {
+            icon = @"arrow.triangle.2.circlepath"; ic = green;
+            c.textLabel.text = self.checking ? @"正在检查…" : @"检查更新";
+            c.detailTextLabel.text = self.latestTag.length ? [NSString stringWithFormat:@"GitHub 最新：%@", self.latestTag] : @"从 GitHub Release 获取最新版本";
+            if (self.hasUpdate) {
+                UILabel *b = [ADUtil label:nil size:11 color:UIColor.whiteColor];
+                b.text = @"有新版本"; b.textAlignment = NSTextAlignmentCenter; b.numberOfLines = 1;
+                b.font = [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold];
+                b.backgroundColor = orange; b.layer.cornerRadius = 10; b.clipsToBounds = YES;
+                b.frame = CGRectMake(0, 0, 64, 20); c.accessoryView = b;
+            } else if (self.checking) {
+                UIActivityIndicatorView *sp = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+                sp.color = UIColor.whiteColor; [sp startAnimating]; c.accessoryView = sp;
+            } else c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            c.selectionStyle = UITableViewCellSelectionStyleDefault;
+        } else if (ip.row == 2) {
+            icon = @"lock.fill"; ic = indigo;
+            c.textLabel.text = @"GitHub 令牌";
+            NSString *gt = [ADUpdater token];
+            c.detailTextLabel.text = gt.length ? [NSString stringWithFormat:@"已设置 · %@…%@", [gt substringToIndex:MIN(4, gt.length)], gt.length > 8 ? [gt substringFromIndex:gt.length - 4] : @""] : @"私有仓库检查更新需要只读令牌";
+            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            c.selectionStyle = UITableViewCellSelectionStyleDefault;
+        } else {
+            icon = @"chevron.left.forwardslash.chevron.right"; ic = UIColor.darkGrayColor;
+            c.textLabel.text = @"项目主页";
+            c.detailTextLabel.text = [ADUpdater repo];
+            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            c.selectionStyle = UITableViewCellSelectionStyleDefault;
+        }
+        break;
+    }
+    }
+    if (icon) {
+        UIImageView *iv = [self icon:icon color:ic];
+        UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(30, 30)];
+        c.imageView.image = [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) { [iv.layer renderInContext:ctx.CGContext]; }];
     }
     return c;
 }
 
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [t deselectRowAtIndexPath:ip animated:YES];
-    if (ip.section == 3) {
-        UIViewController *vc = ip.row == 0 ? [ADBookmarksController new] : (ip.row == 1 ? [ADStorageController new] : [ADBackupController new]);
-        [self.navigationController pushViewController:vc animated:YES];
+    switch (ip.section) {
+    case ADSecServer:
+        if (ip.row == 0) [self.baseField becomeFirstResponder];
+        else if (ip.row == 1) [self editToken];
+        else if (ip.row == 2) [self editAccount];
+        else [self save];
         return;
-    }
-    if (ip.section == 2) {
+    case ADSecPlay:
         if (ip.row == 3) {
             [ADOptionSheet showIn:self title:@"自动清理预缓存" options:@[@"不清理", @"3 天", @"7 天", @"30 天"] destructive:-1 choose:^(NSInteger i2) {
                 NSArray *v = @[@0, @3, @7, @30];
@@ -2439,54 +2638,124 @@
             }];
         }
         return;
-    }
-    [t deselectRowAtIndexPath:ip animated:YES];
-    if (ip.section == 0) {
-        if (ip.row == 0) [self.baseField becomeFirstResponder];
-        else if (ip.row == 1) [self editToken];
-        else if (ip.row == 2) [self editAccount];
-        else [self save];
-        return;
-    }
-    NSArray<ADTask *> *tasks = [ADDownloader shared].tasks;
-    if (ip.row == 0) {
+    case ADSecStorage: {
+        [ADHaptic tap];
+        if (ip.row == 0) { [self.navigationController pushViewController:[ADDownloadsController new] animated:YES]; return; }
+        if (ip.row == 1) { [self.navigationController pushViewController:[ADStorageController new] animated:YES]; return; }
+        NSArray<ADTask *> *tasks = [ADDownloader shared].tasks;
+        if (!tasks.count) return;
         BOOL anyRunning = NO;
         for (ADTask *x in tasks) if (x.state == ADTaskStateRunning || x.state == ADTaskStateQueued) anyRunning = YES;
         if (anyRunning) [[ADDownloader shared] pauseAll]; else [[ADDownloader shared] resumeAll];
         [t reloadData];
         return;
     }
-    if (tasks.count) {
-        ADTask *task = tasks[ip.row - 1];
-        if (task.state == ADTaskStateRunning || task.state == ADTaskStateQueued) [[ADDownloader shared] pauseTask:task];
-        else [[ADDownloader shared] resumeTask:task];
-        [t reloadData];
+    case ADSecData:
+        [ADHaptic tap];
+        [self.navigationController pushViewController:(ip.row == 0 ? [ADBookmarksController new] : [ADBackupController new]) animated:YES];
+        return;
+    case ADSecAbout:
+        if (ip.row == 1) [self checkUpdate:YES];
+        else if (ip.row == 2) [self editGitToken];
+        else if (ip.row == 3) [UIApplication.sharedApplication openURL:[NSURL URLWithString:[@"https://github.com/" stringByAppendingString:[ADUpdater repo]]] options:@{} completionHandler:nil];
+        return;
+    default: return;
     }
 }
 
-- (UISwipeActionsConfiguration *)tableView:(UITableView *)t trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)ip {
-    if (ip.section != 1 || ip.row == 0) return nil;
-    NSArray<ADTask *> *tasks = [ADDownloader shared].tasks;
-    if ((NSInteger)ip.row - 1 >= (NSInteger)tasks.count) return nil;
-    ADTask *task = tasks[ip.row - 1];
-    UIContextualAction *del = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive title:@"删除" handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
-        UIAlertController *q = [UIAlertController alertControllerWithTitle:@"删除下载" message:@"音频文件会一起删掉" preferredStyle:UIAlertControllerStyleAlert];
-        [q addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:^(UIAlertAction *x) { done(NO); }]];
-        [q addAction:[UIAlertAction actionWithTitle:@"删除" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) {
-            [[ADDownloader shared] deleteTask:task];
-            [t reloadData];
-            done(YES);
+// ── 检查更新 ──
+- (void)checkUpdate:(BOOL)manual {
+    if (self.checking) return;
+    if (![ADUpdater token].length) {
+        self.updateHint = @"仓库是私有的，先在「GitHub 令牌」里填一个只读令牌";
+        [self.table reloadData];
+        if (manual) [self editGitToken];
+        return;
+    }
+    if (manual) [ADHaptic tap];
+    self.checking = YES; [self.table reloadData];
+    [ADUpdater fetchLatest:^(NSDictionary *rel, NSString *err) {
+        self.checking = NO;
+        if (!rel) {
+            self.updateHint = err ?: @"检查失败";
+            [self.table reloadData];
+            if (manual) [self alert:@"检查失败" msg:self.updateHint];
+            return;
+        }
+        NSString *tag = rel[@"tag"];
+        self.latestTag = tag;
+        self.hasUpdate = [ADUpdater isNewer:tag than:[self appVersion]];
+        self.updateHint = self.hasUpdate ? [NSString stringWithFormat:@"发现新版本 %@，点「检查更新」查看", tag]
+                                         : [NSString stringWithFormat:@"已是最新版本（%@）", [self appVersion]];
+        [self.table reloadData];
+        if (!manual) return;
+        if (!self.hasUpdate) { [ADHaptic success]; [self alert:@"已是最新" msg:[NSString stringWithFormat:@"当前 %@，GitHub 最新 %@", [self appVersion], tag]]; return; }
+        [ADHaptic success];
+        NSString *body = [rel[@"notes"] length] ? rel[@"notes"] : @"";
+        if (body.length > 600) body = [[body substringToIndex:600] stringByAppendingString:@"…"];
+        UIAlertController *a = [UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"新版本 %@", tag]
+                                                                   message:[NSString stringWithFormat:@"当前 %@\n\n%@", [self appVersion], body]
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+        if ([rel[@"ipa"] length]) {
+            [a addAction:[UIAlertAction actionWithTitle:@"下载安装包" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) { [self downloadIPA:rel]; }]];
+        }
+        [a addAction:[UIAlertAction actionWithTitle:@"在 GitHub 查看" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+            [UIApplication.sharedApplication openURL:[NSURL URLWithString:rel[@"page"]] options:@{} completionHandler:nil];
         }]];
-        [self presentViewController:q animated:YES completion:nil];
+        [a addAction:[UIAlertAction actionWithTitle:@"稍后" style:UIAlertActionStyleCancel handler:nil]];
+        [self presentViewController:a animated:YES completion:nil];
     }];
-    UIContextualAction *pause = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal title:(task.state == ADTaskStateRunning ? @"暂停" : @"继续") handler:^(UIContextualAction *a, UIView *v, void (^done)(BOOL)) {
-        if (task.state == ADTaskStateRunning || task.state == ADTaskStateQueued) [[ADDownloader shared] pauseTask:task];
-        else [[ADDownloader shared] resumeTask:task];
-        [t reloadData];
-        done(YES);
+}
+
+- (void)downloadIPA:(NSDictionary *)rel {
+    self.updateHint = @"正在下载安装包…";
+    [self.table reloadData];
+    [ADUpdater downloadAsset:rel progress:^(double p) {
+        self.updateHint = [NSString stringWithFormat:@"正在下载安装包… %ld%%", (long)lround(p * 100)];
+        [self.table reloadFooterViewForSection:ADSecAbout];
+        [self.table reloadData];
+    } done:^(NSURL *file, NSString *err) {
+        if (!file) { self.updateHint = err ?: @"下载失败"; [self.table reloadData]; [self alert:@"下载失败" msg:self.updateHint]; return; }
+        self.updateHint = @"已下载，用 TrollStore 或签名工具打开安装";
+        [self.table reloadData];
+        [ADHaptic success];
+        UIActivityViewController *av = [[UIActivityViewController alloc] initWithActivityItems:@[file] applicationActivities:nil];
+        av.popoverPresentationController.sourceView = self.view;
+        [self presentViewController:av animated:YES completion:nil];
     }];
-    pause.backgroundColor = [ADUtil brand];
-    return [UISwipeActionsConfiguration configurationWithActions:@[del, pause]];
+}
+
+- (void)editGitToken {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"GitHub 令牌"
+                                                               message:@"仓库是私有的，检查更新需要一个只读令牌。\n建议：GitHub → Settings → Developer settings → Fine-grained token，只给这个仓库的 Contents: Read-only。"
+                                                        preferredStyle:UIAlertControllerStyleAlert];
+    [a addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.text = [ADUpdater token];
+        tf.placeholder = @"github_pat_… / ghp_…";
+        tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        tf.autocorrectionType = UITextAutocorrectionTypeNo;
+        tf.secureTextEntry = YES;
+    }];
+    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [a addAction:[UIAlertAction actionWithTitle:@"清除" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) {
+        [ADUpdater setToken:@""]; self.latestTag = nil; self.hasUpdate = NO; self.updateHint = nil; [self.table reloadData];
+    }]];
+    [a addAction:[UIAlertAction actionWithTitle:@"从剪贴板粘贴" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+        NSString *p = [UIPasteboard.generalPasteboard.string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (p.length) { [ADUpdater setToken:p]; [self.table reloadData]; [self checkUpdate:YES]; }
+    }]];
+    [a addAction:[UIAlertAction actionWithTitle:@"保存并检查" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+        [ADUpdater setToken:[a.textFields.firstObject.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]];
+        [self.table reloadData];
+        [self checkUpdate:YES];
+    }]];
+    [self presentViewController:a animated:YES completion:nil];
+}
+
+- (void)alert:(NSString *)t msg:(NSString *)m {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:t message:m preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:a animated:YES completion:nil];
 }
 
 - (BOOL)textFieldShouldReturn:(UITextField *)tf { [tf resignFirstResponder]; [self save]; return YES; }

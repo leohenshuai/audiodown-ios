@@ -223,6 +223,15 @@ NS_ASSUME_NONNULL_END
 @property (nonatomic, strong) ADAlbum *album;
 @end
 @interface ADPlayerController : UIViewController @end
+@interface ADUpdater : NSObject
++ (NSString *)repo;
++ (NSString *)token;
++ (void)setToken:(NSString *)t;
++ (BOOL)isNewer:(NSString *)remote than:(NSString *)local;
++ (void)fetchLatest:(void (^)(NSDictionary * _Nullable rel, NSString * _Nullable err))cb;
++ (void)downloadAsset:(NSDictionary *)rel progress:(void (^)(double p))prog done:(void (^)(NSURL * _Nullable file, NSString * _Nullable err))done;
++ (void)backgroundCheck;
+@end
 @interface ADDLSheet : UIViewController <UITableViewDataSource, UITableViewDelegate>
 + (void)presentFrom:(UIViewController *)vc album:(ADAlbum *)a tracks:(NSArray<ADTrack *> *)tracks total:(NSInteger)total;
 @end
