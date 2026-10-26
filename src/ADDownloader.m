@@ -34,6 +34,11 @@
 // 每集最多重试 2 次，避免一次网络抖动就永久跳过这一集
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *retryMap;
 @property (nonatomic, assign) NSInteger waitCount;
+// 单集进度：正在下的那一集 + 已写入/总字节；失败过的集；gen 用来作废被取消的旧请求
+@property (nonatomic, copy, readwrite, nullable) NSString *currentTrackId;
+@property (nonatomic, assign, readwrite) double currentWritten, currentExpected;
+@property (nonatomic, strong) NSMutableSet<NSString *> *failedIds;
+@property (nonatomic, assign) NSInteger gen;
 @end
 
 @implementation ADDownloader
@@ -43,6 +48,8 @@
     dispatch_once(&once, ^{
         d = [ADDownloader new];
         d.retryMap = [NSMutableDictionary dictionary];
+        NSArray *fa = [NSUserDefaults.standardUserDefaults arrayForKey:@"ad_dl_failed"];
+        d.failedIds = fa ? [NSMutableSet setWithArray:fa] : [NSMutableSet set];
         [d load];
         NSURLSessionConfiguration *c = [NSURLSessionConfiguration defaultSessionConfiguration];
         d.session = [NSURLSession sessionWithConfiguration:c delegate:d delegateQueue:nil];
@@ -91,6 +98,79 @@
     return [self hasLocal:trackId] ? [NSURL fileURLWithPath:[self fileFor:trackId]] : nil;
 }
 
+- (void)markFailed:(NSString *)tid { if (tid.length) { [self.failedIds addObject:tid]; [self saveFailed]; } }
+- (void)saveFailed { [NSUserDefaults.standardUserDefaults setObject:self.failedIds.allObjects forKey:@"ad_dl_failed"]; }
+- (BOOL)isFailed:(NSString *)tid { return tid.length && [self.failedIds containsObject:tid]; }
+- (double)fileSize:(NSString *)tid {
+    if (!tid.length) return 0;
+    NSDictionary *a = [NSFileManager.defaultManager attributesOfItemAtPath:[self fileFor:tid] error:nil];
+    return a ? (double)a.fileSize : 0;
+}
+- (double)bytesForTask:(ADTask *)t { double sum = 0; for (ADTrack *x in t.tracks) sum += [self fileSize:x.trackId]; return sum; }
+- (NSInteger)localCountOf:(ADTask *)t { NSInteger n = 0; for (ADTrack *x in t.tracks) if ([self hasLocal:x.trackId]) n++; return n; }
+- (NSInteger)failedCountOf:(ADTask *)t { NSInteger n = 0; for (ADTrack *x in t.tracks) if (![self hasLocal:x.trackId] && [self isFailed:x.trackId]) n++; return n; }
+
+// 停掉这个任务正在进行的请求（不改状态）
+- (BOOL)haltIfRunning:(ADTask *)t {
+    if (t != self.runningTask) return NO;
+    self.gen += 1;
+    [self.current cancel]; self.current = nil;
+    self.runningTask = nil; self.resolving = NO; self.currentTrackId = nil;
+    return YES;
+}
+- (void)recount:(ADTask *)t {
+    t.done = [self localCountOf:t];
+    t.failed = [self failedCountOf:t];
+    t.cursor = 0;                    // 从头扫，已存在的会被跳过
+}
+
+- (void)removeTracks:(NSArray<NSString *> *)ids fromTask:(ADTask *)t {
+    if (!t || !ids.count) return;
+    BOOL active = (t.state == ADTaskStateRunning || t.state == ADTaskStateQueued);
+    [self haltIfRunning:t];
+    NSSet *kill = [NSSet setWithArray:ids];
+    NSMutableArray *keep = [NSMutableArray array];
+    for (ADTrack *x in t.tracks) {
+        if ([kill containsObject:x.trackId]) {
+            [NSFileManager.defaultManager removeItemAtPath:[self fileFor:x.trackId] error:nil];
+            [self.failedIds removeObject:x.trackId];
+            [self.retryMap removeObjectForKey:x.trackId];
+        } else [keep addObject:x];
+    }
+    [self saveFailed];
+    if (!keep.count) { [_tasks removeObject:t]; [self save]; [self notify]; [self pump]; return; }
+    t.tracks = keep;
+    [self recount:t];
+    if (t.done >= (NSInteger)keep.count) t.state = ADTaskStateDone;
+    else if (active) t.state = ADTaskStateQueued;
+    else if (t.state == ADTaskStateDone) t.state = t.failed ? ADTaskStateFailed : ADTaskStatePaused;
+    [self save]; [self notify]; [self pump];
+}
+
+- (void)redownload:(NSArray<NSString *> *)ids inTask:(ADTask *)t {
+    if (!t || !ids.count) return;
+    [self haltIfRunning:t];
+    for (NSString *tid in ids) {
+        [NSFileManager.defaultManager removeItemAtPath:[self fileFor:tid] error:nil];
+        [self.failedIds removeObject:tid];
+        [self.retryMap removeObjectForKey:tid];
+    }
+    [self saveFailed];
+    [self recount:t];
+    t.state = ADTaskStateQueued;
+    [self save]; [self notify]; [self pump];
+}
+
+- (void)retryFailed:(ADTask *)t {
+    if (!t) return;
+    for (ADTrack *x in t.tracks) if (![self hasLocal:x.trackId]) { [self.failedIds removeObject:x.trackId]; [self.retryMap removeObjectForKey:x.trackId]; }
+    [self saveFailed];
+    BOOL running = (t == self.runningTask);
+    if (!running) [self recount:t]; else t.failed = 0;
+    if (t.done < (NSInteger)t.tracks.count && !running) t.state = ADTaskStateQueued;
+    [self save]; [self notify]; [self pump];
+}
+
 - (ADTask *)taskForAlbum:(NSString *)albumId {
     for (ADTask *t in _tasks) if ([t.albumId isEqualToString:albumId]) return t;
     return nil;
@@ -136,10 +216,12 @@
 - (void)pauseTask:(ADTask *)t {
     if (!t) return;
     if (t == self.runningTask) {
+        self.gen += 1;
         [self.current cancel];
         self.current = nil;
         self.runningTask = nil;
         self.resolving = NO;
+        self.currentTrackId = nil;
     }
     if (t.state != ADTaskStateDone) t.state = ADTaskStatePaused;
     [self save]; [self notify];
@@ -152,6 +234,8 @@
 }
 - (void)deleteTask:(ADTask *)t {
     [self pauseTask:t];
+    for (ADTrack *x in t.tracks) [self.failedIds removeObject:x.trackId];
+    [self saveFailed];
     for (ADTrack *tr in t.tracks) {
         NSString *p = [self fileFor:tr.trackId];
         if ([NSFileManager.defaultManager fileExistsAtPath:p]) [NSFileManager.defaultManager removeItemAtPath:p error:nil];
@@ -162,7 +246,8 @@
 }
 - (void)pauseAll {
     for (ADTask *t in _tasks) if (t.state == ADTaskStateRunning || t.state == ADTaskStateQueued) t.state = ADTaskStatePaused;
-    [self.current cancel]; self.current = nil; self.runningTask = nil;
+    self.gen += 1;
+    [self.current cancel]; self.current = nil; self.runningTask = nil; self.resolving = NO; self.currentTrackId = nil;
     [self save]; [self notify];
 }
 - (void)resumeAll {
@@ -183,6 +268,7 @@
 - (void)stepTask:(ADTask *)t {
     if (t.state != ADTaskStateRunning) { self.runningTask = nil; [self pump]; return; }
     if (t.cursor >= (NSInteger)t.tracks.count) {
+        self.currentTrackId = nil;
         t.state = t.failed ? ADTaskStateFailed : ADTaskStateDone;
         self.runningTask = nil;
         [self save]; [self notify];
@@ -198,10 +284,15 @@
     }
     if (self.resolving) return;
     self.resolving = YES;
+    self.currentTrackId = tr.trackId;
+    self.currentWritten = 0; self.currentExpected = 0;
+    NSInteger myGen = self.gen;
     __weak typeof(self) w = self;
     [[ADApi shared] playURLOf:tr done:^(NSString *url, NSDictionary *headers, NSString *err) {
         __strong typeof(w) self = w; if (!self) return;
+        if (myGen != self.gen) return;                         // 期间被暂停/删除/重下过：作废
         self.resolving = NO;
+        if (t.state != ADTaskStateRunning || self.runningTask != t) return;
         if (!url) {
             // 同一集最多重试 2 次，仍然失败才跳过
             NSInteger tries = tr.trackId.length ? [self.retryMap[tr.trackId] integerValue] : 99;
@@ -211,6 +302,7 @@
                 return;
             }
             [self.retryMap removeObjectForKey:tr.trackId];
+            [self markFailed:tr.trackId];
             t.failed += 1; t.cursor += 1;
             self.waitCount = 0;
             [self save]; [self notify];
@@ -221,6 +313,7 @@
             self.waitCount += 1;
             if (self.waitCount > 60) {   // 大约 2 分钟还没转码好，先跳过，别把整本书卡死
                 self.waitCount = 0;
+                [self markFailed:tr.trackId];
                 t.failed += 1; t.cursor += 1;
                 [self save]; [self notify];
                 [self stepTask:t];
@@ -264,6 +357,7 @@
                 [self stepTask:t0];
             } else {
                 if (tid.length) [self.retryMap removeObjectForKey:tid];
+                [self markFailed:tid];
                 t0.failed += 1; t0.cursor += 1;
                 self.current = nil;
                 [self save]; [self notify];
@@ -280,6 +374,8 @@
     dispatch_async(dispatch_get_main_queue(), ^{
         __strong typeof(w) self = w; if (!self) return;
         if (t) { t.done += 1; t.cursor += 1; }
+        if (tid.length && [self.failedIds containsObject:tid]) { [self.failedIds removeObject:tid]; [self saveFailed]; }
+        self.currentTrackId = nil; self.currentWritten = 0; self.currentExpected = 0;
         self.current = nil;
         [self save]; [self notify];
         if (t) [self stepTask:t];
@@ -287,7 +383,7 @@
 }
 
 - (void)URLSession:(NSURLSession *)s task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
-    if (!error) return;
+    if (!error || error.code == NSURLErrorCancelled) return;   // 暂停/删除时主动取消，不算失败
     __weak typeof(self) w = self;
     dispatch_async(dispatch_get_main_queue(), ^{
         __strong typeof(w) self = w; if (!self) return;
@@ -304,6 +400,7 @@
                 return;
             }
             if (tid.length) [self.retryMap removeObjectForKey:tid];
+            [self markFailed:tid];
             t.failed += 1; t.cursor += 1;
             [self save]; [self notify];
             [self stepTask:t];
@@ -313,6 +410,7 @@
 
 - (void)URLSession:(NSURLSession *)s downloadTask:(NSURLSessionDownloadTask *)task didWriteData:(int64_t)written totalBytesWritten:(int64_t)total totalBytesExpectedToWrite:(int64_t)expected {
     self.runningTask.bytes = (double)total;
+    if ([task.taskDescription isEqualToString:self.currentTrackId]) { self.currentWritten = (double)total; self.currentExpected = (double)expected; }
     static NSDate *last; static dispatch_once_t once;
     dispatch_once(&once, ^{ last = [NSDate date]; });
     if ([[NSDate date] timeIntervalSinceDate:last] > 0.4) {

@@ -162,6 +162,17 @@ typedef NS_ENUM(NSInteger, ADTaskState) {
 - (BOOL)hasLocal:(nullable NSString *)trackId;
 - (void)removeLocal:(NSString *)trackId;
 - (nullable NSURL *)localURL:(nullable NSString *)trackId;
+// 单集进度与编辑
+@property (nonatomic, copy, readonly, nullable) NSString *currentTrackId;
+@property (nonatomic, assign, readonly) double currentWritten, currentExpected;
+- (BOOL)isFailed:(nullable NSString *)trackId;
+- (double)fileSize:(nullable NSString *)trackId;
+- (double)bytesForTask:(ADTask *)t;
+- (NSInteger)localCountOf:(ADTask *)t;
+- (NSInteger)failedCountOf:(ADTask *)t;
+- (void)removeTracks:(NSArray<NSString *> *)ids fromTask:(ADTask *)t;   // 删文件并从任务移除
+- (void)redownload:(NSArray<NSString *> *)ids inTask:(ADTask *)t;       // 删文件后重新排队
+- (void)retryFailed:(ADTask *)t;
 @end
 
 // ───────────────── 播放器 ─────────────────
@@ -243,4 +254,7 @@ NS_ASSUME_NONNULL_END
 @interface ADStorageController : UITableViewController @end
 @interface ADBackupController : UITableViewController @end
 @interface ADHistoryController : UIViewController @end
-@interface ADDownloadsController : UITableViewController @end
+@interface ADDownloadsController : UIViewController @end
+@interface ADDownloadDetailController : UIViewController
+@property (nonatomic, strong) ADTask *task;
+@end
