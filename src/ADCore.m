@@ -116,6 +116,7 @@ static double ADNum(id o, NSString *k) {
     NSMutableSet<NSString *> *_doneAlbums;
     NSMutableArray<ADAlbum *> *_want;
     NSMutableSet<NSString *> *_pin;
+    NSMutableArray<NSDictionary *> *_bm;
 }
 + (instancetype)shared {
     static ADStore *s; static dispatch_once_t once;
@@ -148,7 +149,16 @@ static double ADNum(id o, NSString *k) {
     NSData *d9 = [NSData dataWithContentsOfFile:[self path:@"pin.dat"]];
     _want = (d8 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setA fromData:d8 error:nil] : nil) ?: [NSMutableArray array];
     _pin = (d9 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setS fromData:d9 error:nil] : nil) ?: [NSMutableSet set];
+    NSData *d10 = [NSData dataWithContentsOfFile:[self path:@"bm.dat"]];
+    NSSet *setB = [NSSet setWithObjects:NSMutableArray.class, NSArray.class, NSDictionary.class, NSMutableDictionary.class, NSString.class, NSNumber.class, nil];
+    _bm = (d10 ? [NSKeyedUnarchiver unarchivedObjectOfClasses:setB fromData:d10 error:nil] : nil) ?: [NSMutableArray array];
+    _bm = [_bm mutableCopy];
 }
+- (void)reload { [self load]; [NSNotificationCenter.defaultCenter postNotificationName:@"ADDoneChanged" object:nil]; }
+- (NSString *)docPath:(NSString *)name { return [self path:name]; }
+- (NSArray<NSDictionary *> *)bookmarks { return _bm; }
+- (void)addBookmark:(NSDictionary *)bm { if (bm) { [_bm insertObject:bm atIndex:0]; [self save]; } }
+- (void)removeBookmark:(NSDictionary *)bm { [_bm removeObject:bm]; [self save]; }
 - (void)save {
     [[NSKeyedArchiver archivedDataWithRootObject:_fav requiringSecureCoding:NO error:nil] writeToFile:[self path:@"fav.dat"] atomically:YES];
     [[NSKeyedArchiver archivedDataWithRootObject:_hist requiringSecureCoding:NO error:nil] writeToFile:[self path:@"hist.dat"] atomically:YES];
@@ -159,6 +169,7 @@ static double ADNum(id o, NSString *k) {
     [[NSKeyedArchiver archivedDataWithRootObject:_doneAlbums requiringSecureCoding:NO error:nil] writeToFile:[self path:@"donealbums.dat"] atomically:YES];
     [[NSKeyedArchiver archivedDataWithRootObject:_want requiringSecureCoding:NO error:nil] writeToFile:[self path:@"want.dat"] atomically:YES];
     [[NSKeyedArchiver archivedDataWithRootObject:_pin requiringSecureCoding:NO error:nil] writeToFile:[self path:@"pin.dat"] atomically:YES];
+    [[NSKeyedArchiver archivedDataWithRootObject:_bm requiringSecureCoding:NO error:nil] writeToFile:[self path:@"bm.dat"] atomically:YES];
 }
 - (NSArray<ADAlbum *> *)favorites { return _fav; }
 - (NSArray<ADAlbum *> *)history { return _hist; }

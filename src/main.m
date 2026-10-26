@@ -25,6 +25,7 @@
     self.window.rootViewController = host;
     self.window.backgroundColor = [ADUtil bg];
     [self.window makeKeyAndVisible];
+    [[ADPlayer shared] restoreLast];
     NSLog(@"[AD] launched");
     return YES;
 }

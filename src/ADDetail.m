@@ -1184,9 +1184,23 @@
     [ADHaptic tap];
     ADPlayer *p = ADPlayer.shared;
     if (!p.album) return;
-    [ADOptionSheet showIn:self title:p.album.title options:@[@"从头播放", @"缓存整本到本机", @"打开专辑（排序 / 选集 / 下载）"] destructive:-1 choose:^(NSInteger i) {
+    NSArray *modes = @[@"顺序播放", @"单集循环", @"整本循环"];
+    NSInteger mode = [NSUserDefaults.standardUserDefaults integerForKey:@"ad_playmode"];
+    if (mode < 0 || mode > 2) mode = 0;
+    NSArray *opts = @[@"从头播放", @"缓存整本到本机", @"打开专辑（排序 / 选集 / 下载）", @"在此处添加书签", @"书签列表",
+                      [NSString stringWithFormat:@"播放模式：%@", modes[mode]]];
+    [ADOptionSheet showIn:self title:p.album.title options:opts destructive:-1 choose:^(NSInteger i) {
         if (i == 0) { [p playAt:0]; return; }
         if (i == 1) { [[ADDownloader shared] addAlbum:p.album tracks:p.tracks]; return; }
+        if (i == 3) { [self addBookmark]; return; }
+        if (i == 4) {
+            ADBookmarksController *bc = [ADBookmarksController new];
+            UINavigationController *bn = [[UINavigationController alloc] initWithRootViewController:bc];
+            bn.modalPresentationStyle = UIModalPresentationPageSheet;
+            [self presentViewController:bn animated:YES completion:nil];
+            return;
+        }
+        if (i == 5) { [self pickPlayMode]; return; }
         ADAlbum *album = p.album;
         [self dismissViewControllerAnimated:YES completion:^{
             UIViewController *root = UIApplication.sharedApplication.keyWindow.rootViewController;
@@ -1203,6 +1217,40 @@
             [nav pushViewController:vc animated:YES];
         }];
     }];
+}
+
+- (void)pickPlayMode {
+    NSInteger mode = [NSUserDefaults.standardUserDefaults integerForKey:@"ad_playmode"];
+    NSArray *names = @[@"顺序播放", @"单集循环", @"整本循环"];
+    NSMutableArray *opts = [NSMutableArray array];
+    for (NSInteger k = 0; k < 3; k++) [opts addObject:[NSString stringWithFormat:@"%@%@", k == mode ? @"✓ " : @"", names[k]]];
+    [ADOptionSheet showIn:self title:@"播放模式" options:opts destructive:-1 choose:^(NSInteger i) {
+        [NSUserDefaults.standardUserDefaults setInteger:i forKey:@"ad_playmode"];
+        [ADHaptic success];
+    }];
+}
+
+- (void)addBookmark {
+    ADPlayer *p = ADPlayer.shared;
+    ADTrack *t = p.current;
+    if (!t || !p.album) return;
+    double sec = p.player ? CMTimeGetSeconds(p.player.currentTime) : 0;
+    if (isnan(sec) || sec < 0) sec = 0;
+    NSString *msg = [NSString stringWithFormat:@"%@ · %@", t.title ?: @"", [ADUtil time:sec]];
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"添加书签" message:msg preferredStyle:UIAlertControllerStyleAlert];
+    [a addTextFieldWithConfigurationHandler:^(UITextField *tf) { tf.placeholder = @"备注（可不填）"; }];
+    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [a addAction:[UIAlertAction actionWithTitle:@"保存" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+        [[ADStore shared] addBookmark:@{
+            @"albumId": p.album.albumId ?: @"", @"albumTitle": p.album.title ?: @"",
+            @"cover": p.album.cover ?: @"", @"provider": p.album.provider ?: @"", @"anchor": p.album.anchor ?: @"",
+            @"trackId": t.trackId ?: @"", @"trackTitle": t.title ?: @"",
+            @"index": @(p.index), @"seconds": @(sec),
+            @"note": [a.textFields.firstObject.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] ?: @"",
+            @"ts": @([NSDate date].timeIntervalSince1970)}];
+        [ADHaptic success];
+    }]];
+    [self presentViewController:a animated:YES completion:nil];
 }
 
 - (void)viewDidDisappear:(BOOL)animated {
@@ -1230,21 +1278,30 @@
 
 - (void)showSleepMenu {
     [ADHaptic tap];
-    NSMutableArray *opts = [NSMutableArray arrayWithObjects:@"15 分钟", @"30 分钟", @"45 分钟", @"60 分钟", @"90 分钟", @"自定义时长…", nil];
+    ADPlayer *pl = ADPlayer.shared;
+    BOOL active = (pl.sleepDeadline > 0 || pl.stopAfterChapter);
+    NSMutableArray *opts = [NSMutableArray arrayWithObjects:@"15 分钟", @"30 分钟", @"45 分钟", @"60 分钟", @"90 分钟", @"自定义时长…",
+                            pl.stopAfterChapter ? @"✓ 播完本集后停止" : @"播完本集后停止", nil];
     NSInteger n = opts.count;
-    if (ADPlayer.shared.sleepDeadline > 0) [opts addObject:@"取消定时关闭"];
+    if (active) [opts addObject:@"取消定时关闭"];
     double now = [NSDate date].timeIntervalSince1970;
     NSArray *mins = @[@15, @30, @45, @60, @90];
     [ADOptionSheet showIn:self title:@"定时关闭" options:opts
-              destructive:(ADPlayer.shared.sleepDeadline > 0 ? n : -1)
+              destructive:(active ? n : -1)
                    choose:^(NSInteger i) {
         if (i < 5) {
+            ADPlayer.shared.stopAfterChapter = NO;
             ADPlayer.shared.sleepDeadline = now + [mins[i] doubleValue] * 60;
             [self sync];
         } else if (i == 5) {
             [self askCustomSleep];
+        } else if (i == 6) {
+            ADPlayer.shared.sleepDeadline = 0;
+            ADPlayer.shared.stopAfterChapter = !ADPlayer.shared.stopAfterChapter;
+            [self sync];
         } else {
             ADPlayer.shared.sleepDeadline = 0;
+            ADPlayer.shared.stopAfterChapter = NO;
             [self sync];
         }
     }];
@@ -1659,14 +1716,16 @@
     }];
 }
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)t { return 3; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)t { return 4; }
 - (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)s {
     if (s == 0) return @"服务";
     if (s == 2) return @"播放与预加载";
+    if (s == 3) return @"数据";
     return @"本机下载";
 }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
     if (s == 0) return self.status.text ?: @"点 Token 那一行可以粘贴或修改";
+    if (s == 3) return @"备份文件在「文件」App → 听书 → backups，重装前先备份";
     if (![ADDownloader shared].tasks.count)
         return @"在专辑页点「缓存到本机」，音频会存进手机，离线也能听";
     return @"左滑删除或暂停，点击行可暂停/继续；本机下载不占用服务器";
@@ -1674,6 +1733,7 @@
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s {
     if (s == 0) return 4;
     if (s == 2) return 6;
+    if (s == 3) return 3;
     return MAX(1, (NSInteger)[ADDownloader shared].tasks.count) + 1;
 }
 
@@ -1686,6 +1746,14 @@
     c.detailTextLabel.font = [UIFont systemFontOfSize:11];
     c.selectionStyle = UITableViewCellSelectionStyleNone;
 
+    if (ip.section == 3) {
+        NSArray *t1 = @[@"书签", @"离线存储管理", @"备份与恢复"];
+        NSArray *t2 = @[@"收藏的听书位置", @"查看占用、清理缓存、重试失败下载", @"导出 / 导入收藏、进度、听完标记"];
+        c.textLabel.text = t1[ip.row]; c.detailTextLabel.text = t2[ip.row];
+        c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        c.selectionStyle = UITableViewCellSelectionStyleDefault;
+        return c;
+    }
     if (ip.section == 2) {
         NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
         if (ip.row == 0) {
@@ -1823,6 +1891,11 @@
 
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [t deselectRowAtIndexPath:ip animated:YES];
+    if (ip.section == 3) {
+        UIViewController *vc = ip.row == 0 ? [ADBookmarksController new] : (ip.row == 1 ? [ADStorageController new] : [ADBackupController new]);
+        [self.navigationController pushViewController:vc animated:YES];
+        return;
+    }
     if (ip.section == 2) {
         if (ip.row == 3) {
             [ADOptionSheet showIn:self title:@"自动清理预缓存" options:@[@"不清理", @"3 天", @"7 天", @"30 天"] destructive:-1 choose:^(NSInteger i2) {

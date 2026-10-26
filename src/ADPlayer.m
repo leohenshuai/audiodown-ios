@@ -16,6 +16,7 @@
 // 否则队列的「倒序」「快速选集」「缓存整本」都只能看到前 50 集。
 @property (nonatomic, assign) BOOL filling;
 - (void)ensureFullQueue;
+- (void)loadPagesOf:(NSString *)albumId upTo:(NSInteger)lastPage page:(NSInteger)page acc:(NSMutableArray *)acc tries:(NSInteger)tries done:(void (^)(NSArray *list))done;
 - (void)fillQueuePage:(NSInteger)page tries:(NSInteger)tries forAlbum:(NSString *)albumId;
 @end
 
@@ -97,6 +98,77 @@
         if (added == 0 || list.count < 50) { self.filling = NO; return; }
         [self fillQueuePage:page + 1 tries:0 forAlbum:albumId];
     }];
+}
+
+
+// ── 打开某本书并定位到某集（书签 / 启动恢复用）────────────
+- (void)loadPagesOf:(NSString *)albumId upTo:(NSInteger)lastPage page:(NSInteger)page acc:(NSMutableArray *)acc tries:(NSInteger)tries done:(void (^)(NSArray *list))done {
+    __block BOOL fired = NO;
+    __weak typeof(self) w = self;
+    [[ADApi shared] tracksOf:albumId page:page done:^(NSArray<ADTrack *> *list, NSInteger total, BOOL cached, NSString *err) {
+        __strong typeof(w) self = w; if (!self || fired) return;
+        if (err.length && !list.count) {
+            if (cached) return;
+            fired = YES;
+            if (tries < 2) {
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    [w loadPagesOf:albumId upTo:lastPage page:page acc:acc tries:tries + 1 done:done];
+                });
+            } else done(acc.count ? acc : nil);
+            return;
+        }
+        if (!list.count) { if (cached) return; fired = YES; done(acc.count ? acc : nil); return; }
+        fired = YES;
+        [acc addObjectsFromArray:list];
+        if (page >= lastPage || list.count < 50) done(acc);
+        else [self loadPagesOf:albumId upTo:lastPage page:page + 1 acc:acc tries:0 done:done];
+    }];
+}
+
+- (void)openAlbum:(ADAlbum *)album trackId:(NSString *)trackId index:(NSInteger)index seconds:(double)sec autoPlay:(BOOL)play {
+    if (!album.albumId.length) return;
+    // 已经在这本书的队列里：直接跳
+    if (_album && [_album.albumId isEqualToString:album.albumId] && _tracks.count) {
+        for (NSInteger i = 0; i < (NSInteger)_tracks.count; i++) {
+            if ([_tracks[i].trackId isEqualToString:trackId]) {
+                if (play) { if (trackId) [[ADStore shared] setPosition:sec for:trackId]; [self playAt:i]; }
+                return;
+            }
+        }
+    }
+    NSInteger lastPage = MAX(0, index) / 50 + 1;
+    self.statusText = play ? @"正在载入书签位置…" : nil;
+    if (play) [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
+    __weak typeof(self) w = self;
+    [self loadPagesOf:album.albumId upTo:lastPage page:1 acc:[NSMutableArray array] tries:0 done:^(NSArray *list) {
+        __strong typeof(w) self = w; if (!self) return;
+        if (!list.count) { self.statusText = @"目录载入失败"; [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil]; return; }
+        NSMutableArray *uniq = [NSMutableArray array]; NSMutableSet *seen = [NSMutableSet set];
+        for (ADTrack *t in list) { if (t.trackId.length && ![seen containsObject:t.trackId]) { [seen addObject:t.trackId]; [uniq addObject:t]; } }
+        NSInteger pos = -1;
+        for (NSInteger i = 0; i < (NSInteger)uniq.count; i++) if ([[uniq[i] trackId] isEqualToString:trackId]) { pos = i; break; }
+        if (pos < 0) pos = MIN(MAX(0, index), (NSInteger)uniq.count - 1);
+        self.album = album;
+        self.tracks = uniq;
+        self.index = pos;
+        self.statusText = nil;
+        if (trackId.length && sec > 0) [[ADStore shared] setPosition:sec for:trackId];
+        [[ADStore shared] setLastTrack:[uniq[pos] trackId] album:album.albumId];
+        if (play) { [[ADStore shared] touchHistory:album]; [self playAt:pos]; }
+        [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
+        [self ensureFullQueue];
+    }];
+}
+
+- (void)restoreLast {
+    if (self.album || self.tracks.count) return;
+    ADAlbum *a = [ADStore shared].history.firstObject;
+    if (!a) return;
+    NSDictionary *info = [[ADStore shared] lastInfoOf:a.albumId];
+    NSString *tid = info[@"trackId"] ?: [[ADStore shared] lastTrackOf:a.albumId];
+    if (!tid.length) return;
+    NSInteger idx = [info[@"index"] integerValue];
+    [self openAlbum:a trackId:tid index:idx seconds:[info[@"seconds"] doubleValue] autoPlay:NO];
 }
 
 - (void)ensureFullQueue {
@@ -318,7 +390,10 @@
         [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
         return;
     }
+    NSInteger mode = [NSUserDefaults.standardUserDefaults integerForKey:@"ad_playmode"];   // 0 顺序 1 单集循环 2 整本循环
+    if (mode == 1) { [self seekTo:0]; [_player play]; _player.rate = _rate; return; }
     if (_index + 1 < (NSInteger)_tracks.count) [self next];
+    else if (mode == 2 && _tracks.count) [self playAt:0];
     else { [_player pause]; [self nowPlaying]; }
 }
 

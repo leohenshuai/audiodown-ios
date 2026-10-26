@@ -56,6 +56,11 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setLastInfo:(NSDictionary *)info album:(NSString *)albumId;
 - (void)setLastTrack:(NSString *)trackId album:(NSString *)albumId;
 - (void)save;
+- (void)reload;                                      // 从磁盘重新读取（恢复备份后用）
+- (NSArray<NSDictionary *> *)bookmarks;              // 书签，新的在前
+- (void)addBookmark:(NSDictionary *)bm;
+- (void)removeBookmark:(NSDictionary *)bm;
+- (NSString *)docPath:(NSString *)name;
 @end
 
 // ───────────────── iOS26 设计系统 ─────────────────
@@ -183,6 +188,9 @@ typedef NS_ENUM(NSInteger, ADTaskState) {
 - (void)seekTo:(double)sec;
 - (void)seekBy:(double)delta;
 - (void)start;
+// 载入某本书的目录（补到包含目标集所在页），然后播放或只恢复到“待播”状态
+- (void)openAlbum:(ADAlbum *)album trackId:(nullable NSString *)trackId index:(NSInteger)index seconds:(double)sec autoPlay:(BOOL)play;
+- (void)restoreLast;                                 // 启动时恢复上次收听（不自动播放）
 @end
 
 // ───────────────── 工具 ─────────────────
@@ -215,5 +223,8 @@ NS_ASSUME_NONNULL_END
 + (void)showIn:(UIViewController *)vc title:(NSString *)title options:(NSArray<NSString *> *)options destructive:(NSInteger)destructiveIndex choose:(void (^)(NSInteger index))choose;
 @end
 
+@interface ADBookmarksController : UITableViewController @end
+@interface ADStorageController : UITableViewController @end
+@interface ADBackupController : UITableViewController @end
 @interface ADHistoryController : UITableViewController @end
 @interface ADDownloadsController : UITableViewController @end
