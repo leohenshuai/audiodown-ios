@@ -187,6 +187,24 @@ static NSString *ADFormEnc(NSString *s) {
     }];
 }
 
+- (void)categories:(void (^)(NSArray<NSDictionary *> *, NSString *))cb {
+    [self cachedGET:@"/open-api/v1/categories" key:@"categories" done:^(id json, BOOL cached, NSString *err) {
+        NSArray *c = nil;
+        if ([json isKindOfClass:NSDictionary.class]) {
+            id d = json[@"data"];
+            if ([d isKindOfClass:NSDictionary.class]) c = d[@"categories"];
+            if (![c isKindOfClass:NSArray.class]) c = json[@"categories"];
+        }
+        NSMutableArray *out = [NSMutableArray array];
+        if ([c isKindOfClass:NSArray.class]) for (NSDictionary *x in c) {
+            if (![x isKindOfClass:NSDictionary.class]) continue;
+            if (x[@"isDisplay"] && ![x[@"isDisplay"] boolValue]) continue;
+            if ([x[@"title"] length]) [out addObject:x];
+        }
+        cb(out, err);
+    }];
+}
+
 - (void)search:(NSString *)q page:(NSInteger)page done:(void (^)(NSArray<ADAlbum *> *, BOOL, BOOL, NSString *))cb {
     NSCharacterSet *strict = [NSCharacterSet characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"];
     NSString *enc = [q stringByAddingPercentEncodingWithAllowedCharacters:strict] ?: @"";

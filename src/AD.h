@@ -119,6 +119,7 @@ typedef void (^ADErr)(NSString * _Nullable err);
 @interface ADApi : NSObject
 + (instancetype)shared;
 - (void)discover:(void (^)(NSArray<NSDictionary *> *sections, BOOL cached, NSString * _Nullable err))cb;
+- (void)categories:(void (^)(NSArray<NSDictionary *> *list, NSString * _Nullable err))cb;
 - (void)search:(NSString *)q page:(NSInteger)page done:(void (^)(NSArray<ADAlbum *> *list, BOOL more, BOOL cached, NSString * _Nullable err))cb;
 - (void)albumDetail:(NSString *)albumId done:(void (^)(ADAlbum * _Nullable a, BOOL cached, NSString * _Nullable err))cb;
 - (void)tracksOf:(NSString *)albumId page:(NSInteger)page done:(void (^)(NSArray<ADTrack *> *list, NSInteger total, BOOL cached, NSString * _Nullable err))cb;
@@ -229,6 +230,13 @@ NS_ASSUME_NONNULL_END
 
 // 跨文件
 @interface ADDiscoverController : UIViewController @end
+@interface ADCategoryController : UIViewController
+@property (nonatomic, copy) NSString *catTitle;
+@property (nonatomic, strong) NSArray<NSString *> *keywords;
++ (NSArray<NSString *> *)keywordsFor:(NSString *)title;
++ (NSString *)iconFor:(NSString *)title;
++ (UIColor *)colorFor:(NSString *)title;
+@end
 @interface ADSearchController : UIViewController @end
 @interface ADShelfController : UIViewController @end
 @interface ADSettingsController : UIViewController @end

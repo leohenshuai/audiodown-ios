@@ -535,6 +535,8 @@
 @interface ADDiscoverController () <UICollectionViewDataSource, UICollectionViewDelegate, UIScrollViewDelegate>
 @property (nonatomic, strong) UIScrollView *scroll;
 @property (nonatomic, strong) NSArray<NSDictionary *> *sections;
+@property (nonatomic, strong) NSArray<NSDictionary *> *cats;
+@property (nonatomic, assign) BOOL catsOpen;
 @property (nonatomic, strong) UIRefreshControl *refresh;
 @property (nonatomic, strong) UILabel *hint;
 @property (nonatomic, strong) UIActivityIndicatorView *spin;
@@ -610,6 +612,90 @@
         }
         self.hint.text = sections.count ? @"" : (err ?: @"没有内容");
     }];
+    [[ADApi shared] categories:^(NSArray<NSDictionary *> *list, NSString *err) {
+        __strong typeof(w) self = w; if (!self) return;
+        if (list.count) {
+            NSArray *sorted = [list sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+                return [@([a[@"orderNum"] integerValue]) compare:@([b[@"orderNum"] integerValue])];
+            }];
+            if (![sorted isEqualToArray:self.cats ?: @[]]) { self.cats = sorted; [self build]; }
+        }
+    }];
+}
+
+// 首页分类区:两行图标格,默认显示 8 个,"全部"展开
+- (CGFloat)buildCats:(CGFloat)y width:(CGFloat)W {
+    NSArray *cats = self.cats;
+    if (!cats.count) {
+        // 接口还没回来时用固定分类兜底,避免页面跳动
+        NSMutableArray *fb = [NSMutableArray array];
+        for (NSString *t in @[@"有声书", @"儿童", @"相声评书", @"音乐", @"历史", @"悬疑", @"外语", @"个人成长"]) [fb addObject:@{@"title": t}];
+        cats = fb;
+    }
+    UILabel *t = [ADUtil label:@"PingFangSC-Semibold" size:24 color:UIColor.whiteColor];
+    t.frame = CGRectMake(16, y, W - 120, 32);
+    t.text = @"分类";
+    [self.scroll addSubview:t];
+    if (cats.count > 8) {
+        UIButton *all = [UIButton buttonWithType:UIButtonTypeSystem];
+        all.frame = CGRectMake(W - 16 - 80, y + 2, 80, 28);
+        all.contentHorizontalAlignment = UIControlContentHorizontalAlignmentRight;
+        all.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+        all.tintColor = [UIColor colorWithWhite:1 alpha:0.6];
+        [all setTitle:(self.catsOpen ? @"收起 ▴" : [NSString stringWithFormat:@"全部 %lu ▾", (unsigned long)cats.count]) forState:UIControlStateNormal];
+        [all addTarget:self action:@selector(toggleCats) forControlEvents:UIControlEventTouchUpInside];
+        [self.scroll addSubview:all];
+    }
+    y += 42;
+    NSInteger show = self.catsOpen ? cats.count : MIN(8, (NSInteger)cats.count);
+    NSInteger cols = 4;
+    CGFloat gap = 10, cw = floor((W - 32 - gap * (cols - 1)) / cols), ch = 78;
+    for (NSInteger i = 0; i < show; i++) {
+        NSString *title = cats[i][@"title"];
+        NSInteger r = i / cols, c = i % cols;
+        UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
+        b.frame = CGRectMake(16 + c * (cw + gap), y + r * (ch + gap), cw, ch);
+        [ADLiquid glassButton:b radius:16];
+        b.tag = 7000 + i;
+        b.accessibilityLabel = title;
+        UIColor *col = [ADCategoryController colorFor:title];
+        UIView *bg = [[UIView alloc] initWithFrame:CGRectMake((cw - 34) / 2, 11, 34, 34)];
+        bg.userInteractionEnabled = NO;
+        bg.layer.cornerRadius = 10;
+        if (@available(iOS 13.0, *)) bg.layer.cornerCurve = kCACornerCurveContinuous;
+        bg.backgroundColor = [col colorWithAlphaComponent:0.22];
+        UIImageView *ic = [[UIImageView alloc] initWithFrame:bg.bounds];
+        ic.contentMode = UIViewContentModeCenter;
+        ic.tintColor = col;
+        ic.image = [UIImage systemImageNamed:[ADCategoryController iconFor:title] withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:16 weight:UIImageSymbolWeightSemibold]];
+        [bg addSubview:ic];
+        [b addSubview:bg];
+        UILabel *l = [ADUtil label:nil size:12.5 color:[UIColor colorWithWhite:1 alpha:0.86]];
+        l.textAlignment = NSTextAlignmentCenter;
+        l.adjustsFontSizeToFitWidth = YES; l.minimumScaleFactor = 0.8;
+        l.frame = CGRectMake(4, 51, cw - 8, 18);
+        l.text = title;
+        [b addSubview:l];
+        [b addTarget:self action:@selector(openCat:) forControlEvents:UIControlEventTouchUpInside];
+        [self.scroll addSubview:b];
+    }
+    NSInteger rows = (show + cols - 1) / cols;
+    return y + rows * (ch + gap) - gap + 24;
+}
+
+- (void)toggleCats {
+    [ADHaptic select];
+    self.catsOpen = !self.catsOpen;
+    CGPoint off = self.scroll.contentOffset;
+    [self build];
+    self.scroll.contentOffset = off;
+}
+
+- (void)openCat:(UIButton *)b {
+    [ADHaptic tap];
+    ADCategoryController *vc = [ADCategoryController new];
+    vc.catTitle = b.accessibilityLabel;
+    [self.navigationController pushViewController:vc animated:YES];
 }
 
 - (void)build {
@@ -622,11 +708,11 @@
     // 顶部标题
     UILabel *logo = [ADUtil label:@"PingFangSC-Semibold" size:34 color:UIColor.whiteColor];
     logo.frame = CGRectMake(16, y + 6, 130, 40);
-    logo.text = @"听见";
+    logo.text = @"阅听";
     [self.scroll addSubview:logo];
     UILabel *sub = [ADUtil label:nil size:16 color:[UIColor colorWithWhite:1 alpha:0.4]];
     sub.frame = CGRectMake(104, y + 18, 120, 20);
-    sub.text = @"AudioDown";
+    sub.text = @"";
     [self.scroll addSubview:sub];
 
     NSArray *icons = @[@"clock.arrow.circlepath"];
@@ -660,6 +746,9 @@
     [self.scroll addSubview:searchPill];
     y += 44 + 18;
     [ADLiquid rise:searchPill delay:0.02];
+
+    // 分类
+    y = [self buildCats:y width:W];
 
     // 继续收听
     NSArray<ADAlbum *> *hist = [ADStore shared].history;
