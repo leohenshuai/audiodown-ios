@@ -16,6 +16,7 @@
 @property (nonatomic, assign) BOOL resolving;
 // 切换书目的序号：连点 A 又点 C 时，A 的目录载入结果按此作废，免得把队列覆盖回去。
 @property (nonatomic, assign) NSInteger openSeq;
+@property (nonatomic, assign) CFTimeInterval resolveT;   // 进入 resolving 的时刻,兜底用
 @property (nonatomic, assign) BOOL retriedItem;
 // 播放队列补全：专辑页只加载了前几十集时，播放器自己把后面的目录补齐，
 // 否则队列的「倒序」「快速选集」「缓存整本」都只能看到前 50 集。
@@ -57,6 +58,7 @@
 - (BOOL)isPlaying { return _player.rate > 0; }
 
 - (void)playAlbum:(ADAlbum *)album tracks:(NSArray<ADTrack *> *)tracks at:(NSInteger)index {
+    self.openSeq += 1;                         // 作废还在载入目录的 openAlbum
     _album = album;
     _tracks = tracks ?: @[];
     [[ADStore shared] touchHistory:album];
@@ -148,7 +150,7 @@
     if (play && (!_album || ![_album.albumId isEqualToString:album.albumId])) {
         [_player pause];
         self.resolveSeq += 1;                  // 作废在飞的取地址请求
-        self.resolving = YES;
+        self.resolving = YES; self.resolveT = CACurrentMediaTime();
     }
     // 用户连点 A 又点 C：给这次载入发个号，回来时不是最新的就丢掉
     self.openSeq += 1;
@@ -199,11 +201,12 @@
 
 - (void)playAt:(NSInteger)index {
     if (index < 0 || index >= (NSInteger)_tracks.count) return;
+    self.openSeq += 1;                         // 新的播放请求:作废还在载入目录的 openAlbum
     // 先掐掉旧音频：取地址要几秒，这段时间里不能让上一本的声音继续放。
     // 清掉 currentItem 之后 toggle 会走 playAt 重来，而不是去暂停一段已经过期的音频。
     [_player pause];
     [_player replaceCurrentItemWithPlayerItem:nil];
-    self.resolving = YES;
+    self.resolving = YES; self.resolveT = CACurrentMediaTime();
     _index = index;
     self.retriedItem = NO;
     ADTrack *t = _tracks[index];
@@ -412,6 +415,7 @@
 }
 
 - (void)failed:(NSNotification *)n {
+    if (n.object && n.object != _player.currentItem) return;   // 旧集迟到的失败通知,忽略
     // 音频地址有时效，过期后会 403。先按原集重新取一次地址再报错
     if (!self.retriedItem && self.index >= 0 && self.index < (NSInteger)_tracks.count) {
         self.retriedItem = YES;
@@ -426,6 +430,7 @@
 }
 
 - (void)itemEnded:(NSNotification *)n {
+    if (n.object && n.object != _player.currentItem) return;   // 旧集迟到的结束通知,忽略
     ADTrack *cur = self.current;
     if (cur.trackId) {
         BOOL last = (_index + 1 >= (NSInteger)_tracks.count);
@@ -449,7 +454,11 @@
     // 播放器还没有音频项（刚切书 / 上一个 item 已被清掉）：直接重新开这一集
     if (!_player || _player.currentItem == nil) { if (_tracks.count) [self playAt:_index]; return; }
     // 地址还在取：此时 currentItem 还是旧书的音频，不能拿它来暂停/恢复
-    if (self.resolving) return;
+    if (self.resolving) {
+        // 兜底:取地址空窗超过 20 秒仍没复位,说明链路断了,直接重开这一集
+        if (CACurrentMediaTime() - self.resolveT > 20 && _tracks.count) [self playAt:_index];
+        return;
+    }
     if (_player.rate > 0) [self pause];
     else { [_player play]; _player.rate = _rate; [self nowPlaying]; if (_album) [[ADStore shared] touchHistory:_album]; }
 }
