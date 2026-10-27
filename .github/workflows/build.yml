@@ -3,6 +3,11 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      release:
+        description: "是否同时发布 Release（默认不发，只出编译产物）"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -36,8 +41,10 @@ jobs:
           name: Audiodown-IPA
           path: Audiodown-unsigned.ipa
 
-      # 每次编译成功都发布一个 Release，App 的「检查更新」读取 releases/latest
+      # 只有显式要求发布时才创建 Release（App 的「检查更新」读取 releases/latest）。
+      # 默认 false：编译成功只保留 Actions 产物，不会对外发布新版。
       - name: Publish GitHub Release
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.release) || (github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AUTO_RELEASE == '1') }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
