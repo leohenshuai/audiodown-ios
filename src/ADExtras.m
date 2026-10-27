@@ -482,11 +482,14 @@ static UIView *ADSectionFooter(NSString *t, CGFloat W) {
 @end
 
 // ───────────── 备份与恢复 ─────────────
+// 备份里的用户偏好键前缀：片头片尾是 ad_skip_head / ad_skip_tail（每本书单独的值在 skip.dat 里），
+// 这里用前缀拼键名，恢复时旧备份缺这两个键也不会把用户的默认值写坏。
+static NSString *const kSkipPrefix = @"ad_skip";
 @interface ADBackupController () <UIDocumentPickerDelegate>
 @property (nonatomic, strong) NSArray<NSString *> *files;
 @end
 @implementation ADBackupController
-+ (NSArray<NSString *> *)keys { return @[@"fav.dat", @"hist.dat", @"pos.dat", @"last.dat", @"info.dat", @"done.dat", @"donealbums.dat", @"want.dat", @"pin.dat", @"bm.dat"]; }
++ (NSArray<NSString *> *)keys { return @[@"fav.dat", @"hist.dat", @"pos.dat", @"last.dat", @"info.dat", @"done.dat", @"donealbums.dat", @"want.dat", @"pin.dat", @"bm.dat", @"skip.dat"]; }
 - (NSString *)dir {
     NSString *d = [ADDocs() stringByAppendingPathComponent:@"backups"];
     [NSFileManager.defaultManager createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:nil];
@@ -521,7 +524,9 @@ static UIView *ADSectionFooter(NSString *t, CGFloat W) {
         if (d) pack[k] = d;
     }
     NSMutableDictionary *ud = [NSMutableDictionary dictionary];
-    for (NSString *k in @[@"ad.rate", @"ad_playmode", @"ad_prefetch", @"ad_prefetch_wifi", @"ad_prefetch_count", @"ad_prefetch_days", @"ad_haptic", @"ad_sound"]) {
+    NSArray *udKeys = @[@"ad.rate", @"ad_playmode", @"ad_prefetch", @"ad_prefetch_wifi", @"ad_prefetch_count", @"ad_prefetch_days", @"ad_haptic", @"ad_sound",
+                        [kSkipPrefix stringByAppendingString:@"_head"], [kSkipPrefix stringByAppendingString:@"_tail"]];
+    for (NSString *k in udKeys) {
         id v = [NSUserDefaults.standardUserDefaults objectForKey:k]; if (v) ud[k] = v;
     }
     ADStore *st = [ADStore shared];

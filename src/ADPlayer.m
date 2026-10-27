@@ -24,6 +24,9 @@
 // 锁屏/控制中心封面:按封面地址缓存一份 MPMediaItemArtwork,换书时才重新取
 @property (nonatomic, strong) MPMediaItemArtwork *artwork;
 @property (nonatomic, copy) NSString *artworkURL, *artworkLoading;
+// 片尾跳过是否已经触发过：每集起播（startWithURL）时复位，手动拖回片尾区之前也会复位，
+// 免得同一个 tick 反复进 trackFinished 把后面几集一起跳过。
+@property (nonatomic, assign) BOOL skipTailFired;
 - (void)ensureFullQueue;
 - (void)loadPagesOf:(NSString *)albumId upTo:(NSInteger)lastPage page:(NSInteger)page acc:(NSMutableArray *)acc tries:(NSInteger)tries done:(void (^)(NSArray *list))done;
 - (void)fillQueuePage:(NSInteger)page tries:(NSInteger)tries forAlbum:(NSString *)albumId;
@@ -363,6 +366,7 @@
 
 - (void)startWithURL:(NSString *)url headers:(NSDictionary *)headers track:(ADTrack *)t {
     self.resolving = NO;                       // 地址已经拿到，空窗结束
+    self.skipTailFired = NO;                   // 新的一集：片尾跳过重新武装
     [self prefetchAhead];
     [self cleanPrefetch];
     NSMutableDictionary *opts = [NSMutableDictionary dictionary];
@@ -391,10 +395,20 @@
         [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerTick" object:nil];
         [self refreshNowPlayingIfNeeded];
         double sec = CMTimeGetSeconds(time);
+        double d = self.player.currentItem ? CMTimeGetSeconds(self.player.currentItem.duration) : 0;
+        if (isnan(d) || d < 0) d = 0;
+        // 片尾跳过：只剩 tail 秒时当作这一集播完，直接进下一集。
+        // 整集要足够长（d > tail + 30）才生效，否则短集会被整集跳掉；暂停时不动。
+        double tail = [[ADStore shared] skipTailOf:self.album.albumId];
+        if (tail > 0 && d > tail + 30 && sec >= d - tail && !self.skipTailFired && self.player.rate > 0) {
+            self.skipTailFired = YES;
+            if (self.current.trackId) [[ADStore shared] setPosition:0 for:self.current.trackId];   // 这集算听完了,下次从头(片头)开始
+            [self trackFinished];
+            return;                            // 本次 tick 不再写进度：这一集已经结束，别把半截时间存成续播点
+        }
         if (self.current.trackId && sec > 0) {
             [[ADStore shared] setPosition:sec for:self.current.trackId];
             [[ADStore shared] setLastTrack:self.current.trackId album:self.album.albumId];
-            double d = self.player.currentItem ? CMTimeGetSeconds(self.player.currentItem.duration) : 0;
             [[ADStore shared] setLastInfo:@{@"trackId": self.current.trackId ?: @"",
                                             @"index": @(self.index),
                                             @"title": self.current.title ?: @"",
@@ -403,8 +417,12 @@
         }
     }];
 
+    double head = [[ADStore shared] skipHeadOf:self.album.albumId];
     double saved = [[ADStore shared] positionFor:t.trackId];
-    if (saved > 5) [_player seekToTime:CMTimeMakeWithSeconds(saved, 600) toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero];
+    // 续播优先：有过进度就从上次的位置继续；没有进度（新集 / 刚播完）才跳片头
+    double startAt = saved > 5 ? saved : 0;
+    if (startAt < head) startAt = head;        // 续播点还在片头里(或没有进度):从片头末尾开始
+    if (startAt > 0) [_player seekToTime:CMTimeMakeWithSeconds(startAt, 600) toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero];
     _player.rate = _rate;
     self.statusText = nil;
     [[ADStore shared] setLastTrack:t.trackId album:self.album.albumId];
@@ -431,6 +449,11 @@
 
 - (void)itemEnded:(NSNotification *)n {
     if (n.object && n.object != _player.currentItem) return;   // 旧集迟到的结束通知,忽略
+    [self trackFinished];
+}
+
+// 一集播完之后的统一处理：自然播完（AVPlayerItemDidPlayToEndTime）和片尾跳过都走这里。
+- (void)trackFinished {
     ADTrack *cur = self.current;
     if (cur.trackId) {
         BOOL last = (_index + 1 >= (NSInteger)_tracks.count);
@@ -444,10 +467,29 @@
         return;
     }
     NSInteger mode = [NSUserDefaults.standardUserDefaults integerForKey:@"ad_playmode"];   // 0 顺序 1 单集循环 2 整本循环
-    if (mode == 1) { [self seekTo:0]; [_player play]; _player.rate = _rate; return; }
+    if (mode == 1) {
+        // 单集循环：回到片头（不是 0），否则设了片头的书会每次连片头一起重听
+        double head = [[ADStore shared] skipHeadOf:self.album.albumId];
+        self.skipTailFired = NO;
+        [self seekTo:head > 0 ? head : 0];
+        [_player play]; _player.rate = _rate; return;
+    }
     if (_index + 1 < (NSInteger)_tracks.count) [self next];
     else if (mode == 2 && _tracks.count) [self playAt:0];
     else { [_player pause]; [self nowPlaying]; }
+}
+
+// ── 跳过片头片尾（给界面用的便捷方法）────────────
+- (double)skipHeadOf:(NSString *)albumId {
+    NSString *aid = albumId.length ? albumId : self.album.albumId;
+    if (!aid.length) return [NSUserDefaults.standardUserDefaults doubleForKey:@"ad_skip_head"];   // 还没有书：用全局默认
+    return [[ADStore shared] skipHeadOf:aid];
+}
+
+- (double)skipTailOf:(NSString *)albumId {
+    NSString *aid = albumId.length ? albumId : self.album.albumId;
+    if (!aid.length) return [NSUserDefaults.standardUserDefaults doubleForKey:@"ad_skip_tail"];   // 还没有书：用全局默认
+    return [[ADStore shared] skipTailOf:aid];
 }
 
 - (void)toggle {
@@ -482,6 +524,14 @@
 }
 - (void)seekTo:(double)sec {
     if (!_player) return;
+    // 手动拖回片尾区之前时，片尾跳过要能再次触发（否则拖动后这一集就再也不会自动结束）
+    double dur = _player.currentItem ? CMTimeGetSeconds(_player.currentItem.duration) : 0;
+    if (dur > 0 && !isnan(dur)) {
+        double tail = [[ADStore shared] skipTailOf:self.album.albumId];
+        if (sec < dur - tail) self.skipTailFired = NO;
+    } else {
+        self.skipTailFired = NO;               // 拿不到时长，保守复位
+    }
     __weak typeof(self) w2 = self;
     [_player seekToTime:CMTimeMakeWithSeconds(MAX(0, sec), 600) toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero completionHandler:^(BOOL f) {
         dispatch_async(dispatch_get_main_queue(), ^{ [w2 nowPlaying]; });

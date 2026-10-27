@@ -6,6 +6,85 @@
 #import <AVFoundation/AVFoundation.h>
 
 #define kSegLen 60
+
+// ───────────── 跳过片头片尾（设置入口） ─────────────
+// 真正的跳播在播放器里做；这里只负责：给菜单一行摘要文案、给用户一个能改的地方。
+// 每本书可以单独设，没单独设过就落回全局默认值（ad_skip_head / ad_skip_tail）。
+@protocol ADSkipReloader <NSObject>
+- (void)reloadSkipRows;      // 设置页实现：改完弹窗让那一行文案刷新
+@end
+
+static double ADSkipClamp(double v) {
+    if (isnan(v) || v < 0) v = 0;
+    if (v > 600) v = 600;
+    return v;
+}
+
+static NSString *ADSkipSummary(ADAlbum *album) {
+    double h = 0, t = 0;
+    if (album.albumId.length) {
+        h = [[ADStore shared] skipHeadOf:album.albumId];
+        t = [[ADStore shared] skipTailOf:album.albumId];
+    } else {
+        NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
+        h = [ud doubleForKey:@"ad_skip_head"];
+        t = [ud doubleForKey:@"ad_skip_tail"];
+    }
+    h = ADSkipClamp(h); t = ADSkipClamp(t);
+    if (h <= 0 && t <= 0) return @"未设置";
+    if (h <= 0) return [NSString stringWithFormat:@"片尾 %.0f 秒", t];
+    if (t <= 0) return [NSString stringWithFormat:@"片头 %.0f 秒", h];
+    return [NSString stringWithFormat:@"片头 %.0f 秒 · 片尾 %.0f 秒", h, t];
+}
+
+// album 非空 → 默认只存这本书，可选"同时设为所有书的默认"；album 为空 → 只改全局默认。
+void ADEditSkip(UIViewController *host, ADAlbum *album) {
+    if (!host) return;
+    NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
+    NSString *aid = album.albumId.length ? album.albumId : nil;
+    double head = aid ? [[ADStore shared] skipHeadOf:aid] : [ud doubleForKey:@"ad_skip_head"];
+    double tail = aid ? [[ADStore shared] skipTailOf:aid] : [ud doubleForKey:@"ad_skip_tail"];
+    head = ADSkipClamp(head); tail = ADSkipClamp(tail);
+
+    NSString *msg = aid
+        ? [NSString stringWithFormat:@"每集开始自动跳过片头、结尾提前进入下一集；填 0 表示不跳。当前仅对《%@》生效", album.title.length ? album.title : @"这本书"]
+        : @"每集开始自动跳过片头、结尾提前进入下一集；填 0 表示不跳。设置全局默认值，对没有单独设置过的书生效";
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"跳过片头片尾" message:msg preferredStyle:UIAlertControllerStyleAlert];
+    [a addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder = @"片头(秒)";
+        tf.keyboardType = UIKeyboardTypeDecimalPad;
+        tf.text = head > 0 ? [NSString stringWithFormat:@"%.0f", head] : @"";
+    }];
+    [a addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder = @"片尾(秒)";
+        tf.keyboardType = UIKeyboardTypeDecimalPad;
+        tf.text = tail > 0 ? [NSString stringWithFormat:@"%.0f", tail] : @"";
+    }];
+    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    if (aid && [[ADStore shared] hasSkipOf:aid]) {
+        [a addAction:[UIAlertAction actionWithTitle:@"恢复默认" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) {
+            [[ADStore shared] clearSkipOfAlbum:aid];
+            [ADHaptic warning];
+            if ([host respondsToSelector:@selector(reloadSkipRows)]) [(id<ADSkipReloader>)host reloadSkipRows];
+        }]];
+    }
+    void (^doSave)(BOOL) = ^(BOOL asDefault) {
+        double h = ADSkipClamp([[a.textFields[0] text] doubleValue]);
+        double t = ADSkipClamp([[a.textFields[1] text] doubleValue]);
+        if (aid) [[ADStore shared] setSkipHead:h tail:t forAlbum:aid];
+        if (asDefault || !aid) { [ud setDouble:h forKey:@"ad_skip_head"]; [ud setDouble:t forKey:@"ad_skip_tail"]; }
+        [ADHaptic success];
+        if ([host respondsToSelector:@selector(reloadSkipRows)]) [(id<ADSkipReloader>)host reloadSkipRows];
+    };
+    if (aid) {
+        [a addAction:[UIAlertAction actionWithTitle:@"保存并设为所有书的默认" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) { doSave(YES); }]];
+        [a addAction:[UIAlertAction actionWithTitle:@"只保存这本书" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) { doSave(NO); }]];
+    } else {
+        [a addAction:[UIAlertAction actionWithTitle:@"保存" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) { doSave(YES); }]];
+    }
+    [host presentViewController:a animated:YES completion:nil];
+}
+
 // ───────────── 专辑详情 ─────────────
 @interface ADAlbumController () <UITableViewDataSource, UITableViewDelegate>
 @property (nonatomic, copy) NSString *errText;
@@ -551,13 +630,15 @@
 
 - (void)showAlbumMenu {
     [ADHaptic tap];
-    [ADOptionSheet showIn:self title:self.album.title options:@[@"分段下载…", @"目录正序", @"目录倒序", @"缓存整本到本机", @"刷新目录", @"目录诊断"] destructive:-1 choose:^(NSInteger i) {
+    [ADOptionSheet showIn:self title:self.album.title options:@[@"分段下载…", @"目录正序", @"目录倒序", @"缓存整本到本机", @"刷新目录", @"目录诊断",
+                                                                [NSString stringWithFormat:@"跳过片头片尾：%@", ADSkipSummary(self.album)]] destructive:-1 choose:^(NSInteger i) {
         if (i == 0) { if (self.tracks.count) [ADDLSheet presentFrom:self album:self.album tracks:[self.tracks copy] total:MAX(self.total, (NSInteger)self.tracks.count)]; }
         else if (i == 1) [self setSortDescending:NO];
         else if (i == 2) [self setSortDescending:YES];
         else if (i == 3) [self downloadAll];
         else if (i == 4) [self refreshAll];
-        else [self runProbe];
+        else if (i == 5) [self runProbe];
+        else if (i == 6) { ADEditSkip(self, self.album); }
     }];
 }
 
@@ -1871,7 +1952,8 @@
     NSInteger mode = [NSUserDefaults.standardUserDefaults integerForKey:@"ad_playmode"];
     if (mode < 0 || mode > 2) mode = 0;
     NSArray *opts = @[@"从头播放", @"缓存整本到本机", @"打开专辑（排序 / 选集 / 下载）", @"在此处添加书签", @"书签列表",
-                      [NSString stringWithFormat:@"播放模式：%@", modes[mode]]];
+                      [NSString stringWithFormat:@"播放模式：%@", modes[mode]],
+                      [NSString stringWithFormat:@"跳过片头片尾：%@", ADSkipSummary(p.album)]];
     [ADOptionSheet showIn:self title:p.album.title options:opts destructive:-1 choose:^(NSInteger i) {
         if (i == 0) { [p playAt:0]; return; }
         if (i == 1) { [[ADDownloader shared] addAlbum:p.album tracks:p.tracks]; return; }
@@ -1884,6 +1966,7 @@
             return;
         }
         if (i == 5) { [self pickPlayMode]; return; }
+        if (i == 6) { ADEditSkip(self, p.album); return; }   // 必须在下面的“打开专辑”兜底之前返回
         ADAlbum *album = p.album;
         [self dismissViewControllerAnimated:YES completion:^{
             UIViewController *root = UIApplication.sharedApplication.keyWindow.rootViewController;
@@ -2296,6 +2379,7 @@
     [self.table reloadData];
 }
 - (void)closeSelf { [self dismissViewControllerAnimated:YES completion:nil]; }
+- (void)reloadSkipRows { [self.table reloadData]; }   // 跳过片头片尾弹窗保存/恢复后刷新文案
 
 - (void)prefetchSwitch:(UISwitch *)sw {
     [NSUserDefaults.standardUserDefaults setBool:sw.on forKey:@"ad_prefetch"];
@@ -2484,7 +2568,7 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
 }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
     if (s == ADSecServer) return self.status.text.length ? self.status.text : @"点 Token 那一行可以粘贴或修改";
-    if (s == ADSecPlay) return @"智能预缓存会提前准备后面几集，弱网和地铁里更顺";
+    if (s == ADSecPlay) return @"智能预缓存会提前准备后面几集，弱网和地铁里更顺；片头片尾默认值只对没单独设置的书生效";
     if (s == ADSecData) return @"备份文件在「文件」App → 阅听 → backups，重装前先备份";
     if (s == ADSecAbout) return self.updateHint;
     return nil;
@@ -2495,7 +2579,7 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s {
     switch (s) {
         case ADSecServer: return 4;     // 地址 / Token / 网页账号 / 测试连接
-        case ADSecPlay: return 4;       // 预缓存 / 仅 WiFi / 集数 / 自动清理
+        case ADSecPlay: return 5;       // 预缓存 / 仅 WiFi / 集数 / 自动清理 / 跳过片头片尾
         case ADSecStorage: return 3;    // 本机下载 / 离线存储 / 全部暂停继续
         case ADSecFeel: return 2;       // 触感 / 提示音
         case ADSecData: return 2;       // 书签 / 备份恢复
@@ -2582,11 +2666,17 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
             st.tintColor = orange;
             [st addTarget:self action:@selector(prefetchStepper:) forControlEvents:UIControlEventValueChanged];
             c.accessoryView = st;
-        } else {
+        } else if (ip.row == 3) {
             icon = @"clock.arrow.circlepath"; ic = teal;
             NSInteger days = [ud integerForKey:@"ad_prefetch_days"];
             c.textLabel.text = @"自动清理预缓存";
             c.detailTextLabel.text = days == 0 ? @"不自动清理" : [NSString stringWithFormat:@"超过 %ld 天自动删除", (long)days];
+            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            c.selectionStyle = UITableViewCellSelectionStyleDefault;
+        } else {
+            icon = @"forward.end.fill"; ic = indigo;
+            c.textLabel.text = @"跳过片头片尾(默认值)";
+            c.detailTextLabel.text = ADSkipSummary(nil);
             c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
             c.selectionStyle = UITableViewCellSelectionStyleDefault;
         }
@@ -2700,6 +2790,8 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
                 [ADPlayer.shared cleanPrefetch];
                 [self.table reloadData];
             }];
+        } else if (ip.row == 4) {
+            ADEditSkip(self, nil);      // 只改全局默认值；保存后弹窗回调会调 reloadSkipRows 刷新这一行
         }
         return;
     case ADSecStorage: {

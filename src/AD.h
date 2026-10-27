@@ -65,6 +65,12 @@ FOUNDATION_EXPORT id _Nullable ADUnarchive(NSData * _Nullable data, NSSet * _Non
 - (void)addBookmark:(NSDictionary *)bm;
 - (void)removeBookmark:(NSDictionary *)bm;
 - (NSString *)docPath:(NSString *)name;
+// 跳过片头片尾（按书保存；没单独设置过的书用全局默认 ad_skip_head / ad_skip_tail）
+- (double)skipHeadOf:(NSString *)albumId;          // 该书的片头秒数，没单独设置过则取全局默认 ad_skip_head，再没有返回 0
+- (double)skipTailOf:(NSString *)albumId;          // 同上，片尾 ad_skip_tail
+- (void)setSkipHead:(double)head tail:(double)tail forAlbum:(NSString *)albumId;   // 保存该书的设置；传 <0 的值当 0
+- (BOOL)hasSkipOf:(NSString *)albumId;             // 该书是否单独设置过（界面显示“已设置”）
+- (void)clearSkipOfAlbum:(NSString *)albumId;      // 删掉该书的单独设置，回到全局默认
 @end
 
 // ───────────────── iOS26 设计系统 ─────────────────
@@ -208,6 +214,10 @@ typedef NS_ENUM(NSInteger, ADTaskState) {
 // 载入某本书的目录（补到包含目标集所在页），然后播放或只恢复到“待播”状态
 - (void)openAlbum:(ADAlbum *)album trackId:(nullable NSString *)trackId index:(NSInteger)index seconds:(double)sec autoPlay:(BOOL)play;
 - (void)restoreLast;                                 // 启动时恢复上次收听（不自动播放）
+// 跳过片头片尾：给界面用的便捷方法（内部转 ADStore，albumId 传 nil 用当前书；都没有则读全局默认）
+- (double)skipHeadOf:(nullable NSString *)albumId;
+- (double)skipTailOf:(nullable NSString *)albumId;
+- (void)trackFinished;                               // 一集播完（自然结束 / 片尾跳过）后的统一处理
 @end
 
 // ───────────────── 工具 ─────────────────
@@ -270,3 +280,6 @@ NS_ASSUME_NONNULL_END
 @interface ADDownloadDetailController : UIViewController
 @property (nonatomic, strong) ADTask *task;
 @end
+
+// 跳过片头片尾：设置面板（实现在 ADDetail.m）
+extern void ADEditSkip(UIViewController * _Nullable host, ADAlbum * _Nullable album);

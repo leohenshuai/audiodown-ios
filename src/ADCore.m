@@ -149,6 +149,7 @@ id ADUnarchive(NSData *data, NSSet *classes) {
     NSMutableArray<ADAlbum *> *_want;
     NSMutableSet<NSString *> *_pin;
     NSMutableArray<NSDictionary *> *_bm;
+    NSMutableDictionary<NSString *, NSDictionary *> *_skip;   // albumId → @{@"h":@(片头秒), @"t":@(片尾秒)}
 }
 + (instancetype)shared {
     static ADStore *s; static dispatch_once_t once;
@@ -192,6 +193,15 @@ id ADUnarchive(NSData *data, NSSet *classes) {
     NSSet *setB = [NSSet setWithObjects:NSMutableArray.class, NSArray.class, NSDictionary.class, NSMutableDictionary.class, NSString.class, NSNumber.class, nil];
     _bm = (d10 ? ADUnarchive(d10, setB) : nil) ?: [NSMutableArray array];
     _bm = [_bm mutableCopy];
+    // 跳过片头片尾：albumId → @{@"h":…, @"t":…}；读不出来时先备份成 .bad，再当空字典，绝不覆盖原文件
+    NSData *d11 = [NSData dataWithContentsOfFile:[self path:@"skip.dat"]];
+    NSSet *setK = [NSSet setWithObjects:NSMutableDictionary.class, NSDictionary.class, NSString.class, NSNumber.class, nil];
+    id skipObj = d11.length ? ADUnarchive(d11, setK) : nil;
+    if (d11.length && ![skipObj isKindOfClass:NSDictionary.class]) {
+        NSLog(@"[AD] skip.dat 解档失败，已备份为 skip.dat.bad");
+        [d11 writeToFile:[[self path:@"skip.dat"] stringByAppendingString:@".bad"] atomically:YES];
+    }
+    _skip = ([skipObj isKindOfClass:NSDictionary.class] ? [skipObj mutableCopy] : [NSMutableDictionary dictionary]);
 }
 - (void)reload { [self load]; [NSNotificationCenter.defaultCenter postNotificationName:@"ADDoneChanged" object:nil]; }
 - (NSString *)docPath:(NSString *)name { return [self path:name]; }
@@ -209,6 +219,7 @@ id ADUnarchive(NSData *data, NSSet *classes) {
     [[NSKeyedArchiver archivedDataWithRootObject:_want requiringSecureCoding:NO error:nil] writeToFile:[self path:@"want.dat"] atomically:YES];
     [[NSKeyedArchiver archivedDataWithRootObject:_pin requiringSecureCoding:NO error:nil] writeToFile:[self path:@"pin.dat"] atomically:YES];
     [[NSKeyedArchiver archivedDataWithRootObject:_bm requiringSecureCoding:NO error:nil] writeToFile:[self path:@"bm.dat"] atomically:YES];
+    [[NSKeyedArchiver archivedDataWithRootObject:(_skip ?: @{}) requiringSecureCoding:NO error:nil] writeToFile:[self path:@"skip.dat"] atomically:YES];
 }
 - (NSArray<ADAlbum *> *)favorites { return _fav; }
 - (NSArray<ADAlbum *> *)history { return _hist; }
@@ -295,6 +306,54 @@ id ADUnarchive(NSData *data, NSSet *classes) {
 }
 - (void)setLastTrack:(NSString *)trackId album:(NSString *)albumId {
     if (albumId && trackId) _last[albumId] = trackId;
+    [self save];
+}
+
+// ── 跳过片头片尾 ────────────────────────────────
+static double ADSkipSanitize(double v) {          // 负数（<-1 那种误传）、NaN 都当 0
+    if (isnan(v) || v < 0) return 0;
+    return v;
+}
+
+- (double)skipHeadOf:(NSString *)albumId {
+    if (albumId.length) {
+        id v = _skip[albumId];
+        if ([v isKindOfClass:NSDictionary.class]) {
+            id h = ((NSDictionary *)v)[@"h"];
+            if ([h respondsToSelector:@selector(doubleValue)]) return ADSkipSanitize([h doubleValue]);
+        }
+    }
+    return ADSkipSanitize([NSUserDefaults.standardUserDefaults doubleForKey:@"ad_skip_head"]);
+}
+
+- (double)skipTailOf:(NSString *)albumId {
+    if (albumId.length) {
+        id v = _skip[albumId];
+        if ([v isKindOfClass:NSDictionary.class]) {
+            id t = ((NSDictionary *)v)[@"t"];
+            if ([t respondsToSelector:@selector(doubleValue)]) return ADSkipSanitize([t doubleValue]);
+        }
+    }
+    return ADSkipSanitize([NSUserDefaults.standardUserDefaults doubleForKey:@"ad_skip_tail"]);
+}
+
+- (void)setSkipHead:(double)head tail:(double)tail forAlbum:(NSString *)albumId {
+    if (!albumId.length) return;
+    if (!_skip) _skip = [NSMutableDictionary dictionary];
+    // 传 <0 的值当 0：表示“这本书不跳”，同时覆盖全局默认
+    _skip[albumId] = @{@"h": @(ADSkipSanitize(head)), @"t": @(ADSkipSanitize(tail))};
+    [self save];
+}
+
+- (BOOL)hasSkipOf:(NSString *)albumId {
+    if (!albumId.length) return NO;
+    return [_skip[albumId] isKindOfClass:NSDictionary.class];
+}
+
+- (void)clearSkipOfAlbum:(NSString *)albumId {
+    if (!albumId.length || !_skip.count) return;
+    if (!_skip[albumId]) return;
+    [_skip removeObjectForKey:albumId];
     [self save];
 }
 @end
