@@ -547,6 +547,9 @@
 @property (nonatomic, strong) UIActivityIndicatorView *spin;
 @property (nonatomic, assign) BOOL needsSetup;
 @property (nonatomic, strong) NSMutableArray<ADContinueCard *> *cards;
+@property (nonatomic, strong) NSMutableDictionary *kwCache;   // 关键词分类:title → NSArray<ADAlbum*>
+@property (nonatomic, strong) NSMutableSet *kwLoading;        // 正在请求的关键词分类 title
+@property (nonatomic, assign) CGFloat tabsX;                  // 分类页签横向滚动位置
 @end
 
 @implementation ADDiscoverController
@@ -573,6 +576,9 @@
     [self.view addSubview:self.hint];
     [self.view addSubview:self.spin];
     self.cards = [NSMutableArray array];
+    self.kwCache = [NSMutableDictionary dictionary];
+    self.kwLoading = [NSMutableSet set];
+    self.tabsX = 0;
 
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(reloadCards) name:@"ADContinueChanged" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refreshCards) name:@"ADPlayerTick" object:nil];
@@ -621,18 +627,142 @@
 
 // 首页分类(E 样式):文字页签 → 本类精选大卡 → 热门榜前 5,数据全部来自发现页板块
 - (NSArray<ADAlbum *> *)albumsOfSection:(NSDictionary *)sec {
+    id pre = sec[@"albums"];
+    if ([pre isKindOfClass:NSArray.class]) return (NSArray<ADAlbum *> *)pre;
     NSMutableArray *out = [NSMutableArray array];
     NSArray *its = sec[@"items"];
     if ([its isKindOfClass:NSArray.class]) for (id o in its) { ADAlbum *a = [ADAlbum fromJSON:o]; if (a) [out addObject:a]; }
     return out;
 }
+
+// 12 个关键词分类:点选后用搜索接口取书
+- (NSArray<NSDictionary *> *)kwCats {
+    return @[
+        @{@"title": @"悬疑", @"words": @[@"悬疑", @"推理", @"鬼故事"]},
+        @{@"title": @"盗墓", @"words": @[@"盗墓", @"探险"]},
+        @{@"title": @"玄幻", @"words": @[@"玄幻", @"修仙"]},
+        @{@"title": @"都市", @"words": @[@"都市", @"逆袭"]},
+        @{@"title": @"言情", @"words": @[@"言情", @"总裁"]},
+        @{@"title": @"历史", @"words": @[@"历史", @"三国", @"通史"]},
+        @{@"title": @"武侠", @"words": @[@"武侠", @"江湖"]},
+        @{@"title": @"科幻", @"words": @[@"科幻", @"末日"]},
+        @{@"title": @"广播剧", @"words": @[@"广播剧"]},
+        @{@"title": @"国学", @"words": @[@"国学", @"诗词"]},
+        @{@"title": @"财经", @"words": @[@"财经", @"商业"]},
+        @{@"title": @"心理", @"words": @[@"心理", @"情商"]},
+    ];
+}
+
 - (NSArray<NSDictionary *> *)catSections {
     NSMutableArray *out = [NSMutableArray array];
+    NSMutableSet *taken = [NSMutableSet set];
     for (NSDictionary *sec in self.sections) {
         NSArray *its = sec[@"items"];
-        if ([its isKindOfClass:NSArray.class] && its.count && [sec[@"title"] length]) [out addObject:sec];
+        if ([its isKindOfClass:NSArray.class] && its.count && [sec[@"title"] length]) {
+            [out addObject:sec];
+            [taken addObject:sec[@"title"]];
+        }
+    }
+    // 服务端板块之后追加关键词分类(同名跳过)
+    for (NSDictionary *k in [self kwCats]) {
+        NSString *title = k[@"title"];
+        if (![title isKindOfClass:NSString.class] || !title.length) continue;
+        if ([taken containsObject:title]) continue;
+        NSMutableDictionary *sec = [NSMutableDictionary dictionary];
+        sec[@"title"] = title;
+        sec[@"rankTitle"] = [title stringByAppendingString:@"热门"];
+        sec[@"hotWords"] = [k[@"words"] isKindOfClass:NSArray.class] ? k[@"words"] : @[];
+        sec[@"kw"] = @YES;
+        NSArray *cached = self.kwCache[title];
+        if ([cached isKindOfClass:NSArray.class] && cached.count) sec[@"albums"] = cached;
+        [out addObject:sec];
+        [taken addObject:title];
     }
     return out;
+}
+
+// ── 关键词分类取书:并行搜索,回调可能来两次(先缓存后网络),容忍 ──
+- (void)loadKw:(NSDictionary *)sec {
+    NSString *title = sec[@"title"];
+    if (![title isKindOfClass:NSString.class] || !title.length) return;
+    if (self.kwCache[title]) return;
+    if ([self.kwLoading containsObject:title]) return;
+    NSArray *raw = sec[@"hotWords"];
+    NSMutableArray<NSString *> *words = [NSMutableArray array];
+    if ([raw isKindOfClass:NSArray.class]) for (id w in raw) if ([w isKindOfClass:NSString.class] && [w length]) [words addObject:w];
+    if (!words.count) return;
+    [self.kwLoading addObject:title];
+
+    NSMutableArray *slots = [NSMutableArray array];   // 每个词一袋结果,占位 NSNull
+    for (NSInteger i = 0; i < (NSInteger)words.count; i++) [slots addObject:[NSNull null]];
+    NSInteger total = (NSInteger)words.count;
+    __block NSInteger done = 0;
+    __weak typeof(self) w = self;
+    for (NSInteger i = 0; i < total; i++) {
+        NSString *q = words[i];
+        __block BOOL got = NO;                        // 该词是否已采纳结果
+        __block NSInteger cbCount = 0;                // 该词回调次数(缓存一次 + 网络一次)
+        [[ADApi shared] search:q page:1 done:^(NSArray<ADAlbum *> *list, BOOL more, BOOL cached, NSString *err) {
+            BOOL ok = [list isKindOfClass:NSArray.class] && list.count > 0;
+            NSInteger left = 0;
+            @synchronized (slots) {
+                if (got) return;
+                cbCount += 1;
+                if (!ok && cached && cbCount == 1) return;   // 先到的缓存空结果:等网络那次,不计数
+                got = YES;
+                if (ok) slots[i] = [list copy];
+                else slots[i] = @[];
+                done += 1;
+                left = total - done;
+            }
+            if (left > 0) return;
+            __strong typeof(w) self = w; if (!self) return;
+            [self finishKw:title slots:slots];
+        }];
+    }
+    // 兜底:网络长时间无回音也别卡在“加载中”
+    __weak typeof(self) w2 = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(12.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        __strong typeof(w2) self = w2; if (!self) return;
+        [self finishKw:title slots:slots];
+    });
+}
+
+// 合并各词结果并按 playCount 降序,写缓存;主线程执行且只生效一次
+- (void)finishKw:(NSString *)title slots:(NSArray *)slots {
+    __weak typeof(self) w = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        __strong typeof(w) self = w; if (!self) return;
+        if (![self.kwLoading containsObject:title]) return;   // 已经处理过
+        [self.kwLoading removeObject:title];
+        if (!self.kwCache) self.kwCache = [NSMutableDictionary dictionary];
+        NSMutableArray<ADAlbum *> *all = [NSMutableArray array];
+        NSMutableSet *seen = [NSMutableSet set];
+        for (id bag in slots) {
+            if (![bag isKindOfClass:NSArray.class]) continue;
+            for (id o in (NSArray *)bag) {
+                if (![o isKindOfClass:ADAlbum.class]) continue;
+                ADAlbum *a = (ADAlbum *)o;
+                NSString *key = a.albumId.length ? a.albumId : a.title;
+                if (!key.length || [seen containsObject:key]) continue;
+                [seen addObject:key];
+                [all addObject:a];
+            }
+        }
+        NSArray<ADAlbum *> *sorted = [all sortedArrayUsingComparator:^NSComparisonResult(ADAlbum *a, ADAlbum *b) {
+            return [@(b.playCount) compare:@(a.playCount)];
+        }];
+        self.kwCache[title] = sorted;
+        NSArray<NSDictionary *> *secs = [self catSections];
+        if (self.catSel >= 0 && self.catSel < (NSInteger)secs.count) {
+            NSDictionary *cur = secs[self.catSel];
+            if ([cur[@"kw"] boolValue] && [cur[@"title"] isEqualToString:title]) {
+                CGPoint off = self.scroll.contentOffset;
+                [self build];
+                self.scroll.contentOffset = off;
+            }
+        }
+    });
 }
 
 - (CGFloat)buildCats:(CGFloat)y width:(CGFloat)W {
@@ -667,8 +797,16 @@
         x += tw + 22;
     }
     tabs.contentSize = CGSizeMake(x, 40);
+    tabs.contentOffset = CGPointMake(MIN(self.tabsX, MAX(0, tabs.contentSize.width - W)), 0);
     [self.scroll addSubview:tabs];
+    UIButton *selBtn = (UIButton *)[tabs viewWithTag:7000 + self.catSel];
+    if (selBtn) [tabs scrollRectToVisible:CGRectInset(selBtn.frame, -40, 0) animated:NO];
     y += 52;
+
+    NSString *secTitle = sec[@"title"];
+    BOOL kwCached = (secTitle.length && self.kwCache[secTitle] != nil);
+    BOOL kwPending = [sec[@"kw"] boolValue] && ![sec[@"albums"] isKindOfClass:NSArray.class] && !kwCached;
+    if (kwPending) [self loadKw:sec];
 
     NSArray<ADAlbum *> *all = [self albumsOfSection:sec];
     NSArray<ADAlbum *> *rank = [all sortedArrayUsingComparator:^NSComparisonResult(ADAlbum *a, ADAlbum *b) {
@@ -681,6 +819,23 @@
     if (conts.count) {
         y = [self buildContinuePager:conts y:y width:W];
         hero = nil;
+    }
+    // 关键词分类还没取到书:原精选/榜单的位置放加载提示
+    if (kwPending) {
+        UILabel *loading = [ADUtil label:nil size:14 color:[UIColor colorWithWhite:1 alpha:0.45]];
+        loading.text = @"加载中…";
+        loading.textAlignment = NSTextAlignmentCenter;
+        loading.frame = CGRectMake(16, y, W - 32, 120);
+        [self.scroll addSubview:loading];
+        return y + 120 + 22;
+    }
+    if ([sec[@"kw"] boolValue] && !all.count) {
+        UILabel *empty = [ADUtil label:nil size:14 color:[UIColor colorWithWhite:1 alpha:0.45]];
+        empty.text = @"这个分类暂时没搜到内容";
+        empty.textAlignment = NSTextAlignmentCenter;
+        empty.frame = CGRectMake(16, y, W - 32, 120);
+        [self.scroll addSubview:empty];
+        return y + 120 + 22;
     }
     // 精选大卡:虚化封面做底
     if (hero) {
@@ -973,6 +1128,7 @@
     NSInteger i = b.tag - 7000;
     if (i == self.catSel) return;
     [ADHaptic select];
+    if ([b.superview isKindOfClass:UIScrollView.class]) self.tabsX = ((UIScrollView *)b.superview).contentOffset.x;
     self.catSel = i;
     CGPoint off = self.scroll.contentOffset;
     [UIView transitionWithView:self.scroll duration:0.22 options:UIViewAnimationOptionTransitionCrossDissolve animations:^{
