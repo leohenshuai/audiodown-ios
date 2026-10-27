@@ -86,7 +86,15 @@ static void ADCacheSet(NSString *key, id json) {
         id json = data.length ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingAllowFragments error:nil] : nil;
         NSString *message = nil;
         if (err) {
-            message = (err.code == NSURLErrorTimedOut) ? @"请求超时，检查网络后重试" : err.localizedDescription;
+            // 网络类错误说人话,别把系统的 "似乎已断开与互联网的连接。" 直接甩到界面上
+            switch (err.code) {
+                case NSURLErrorNotConnectedToInternet: message = @"网络未连接"; break;
+                case NSURLErrorTimedOut: message = @"请求超时"; break;
+                case NSURLErrorCannotFindHost: case NSURLErrorCannotConnectToHost: case NSURLErrorDNSLookupFailed:
+                    message = @"连不上服务器"; break;
+                case NSURLErrorNetworkConnectionLost: message = @"网络不稳定"; break;
+                default: message = err.localizedDescription;
+            }
         } else if (code >= 400) {
             if ([json isKindOfClass:NSDictionary.class] && [json[@"error"] isKindOfClass:NSString.class]) message = json[@"error"];
             else message = [NSString stringWithFormat:@"HTTP %ld", (long)code];

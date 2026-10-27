@@ -547,6 +547,8 @@
 @property (nonatomic, strong) UIActivityIndicatorView *spin;
 @property (nonatomic, assign) BOOL needsSetup;
 @property (nonatomic, strong) NSMutableArray<ADContinueCard *> *cards;
+@property (nonatomic, assign) NSInteger loadGen;      // 每次拉取编号,旧的自动作废
+@property (nonatomic, assign) NSInteger netFails;     // 连续失败次数,决定重试节奏
 @property (nonatomic, strong) NSMutableDictionary *kwCache;   // 关键词分类:title → NSArray<ADAlbum*>
 @property (nonatomic, strong) NSMutableSet *kwLoading;        // 正在请求的关键词分类 title
 @property (nonatomic, assign) CGFloat tabsX;
@@ -585,6 +587,8 @@
 
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(reloadCards) name:@"ADContinueChanged" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refreshCards) name:@"ADPlayerTick" object:nil];
+    // 从后台回来、网络恢复后,自动再拉一次,不用用户杀进程重开
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onForeground) name:UIApplicationDidBecomeActiveNotification object:nil];
 
     [self load];
     self.needsSetup = ([ADConfig shared].token.length == 0);
@@ -610,23 +614,61 @@
     }
 }
 
+- (void)onForeground {
+    if (!self.sections.count) [self load];
+    else if (self.netFails > 0) [self load];
+}
+
 - (void)reloadCards { [self build]; }
 - (void)refreshCards { for (ADContinueCard *c in self.cards) [c refresh]; [self refreshHero]; }
 
 - (void)load {
-    if (self.refresh.isRefreshing) { [self.kwCache removeAllObjects]; [self.kwEmpty removeAllObjects]; }
+    self.loadGen += 1;
+    NSInteger gen = self.loadGen;
+    // 没有板块数据时(断网/失败),顺带清掉关键词分类的空结果,等这次拉通后重新搜
+    if (self.refresh.isRefreshing || !self.sections.count) {
+        [self.kwCache removeAllObjects];
+        [self.kwEmpty removeAllObjects];
+    }
     if (!self.sections.count) [self.spin startAnimating];
     __weak typeof(self) w = self;
     [[ADApi shared] discover:^(NSArray<NSDictionary *> *sections, BOOL cached, NSString *err) {
-        __strong typeof(w) self = w; if (!self) return;
+        __strong typeof(w) self = w; if (!self || gen != self.loadGen) return;
         [self.spin stopAnimating];
         [self.refresh endRefreshing];
         if (sections.count) {
             self.sections = sections;
+            self.netFails = 0;
+            self.hint.text = @"";
             [self build];
+            return;
         }
-        self.hint.text = sections.count ? @"" : (err ?: @"没有内容");
+        self.netFails += 1;
+        self.hint.text = [self netHintWith:err];
+        [self retryLater];
     }];
+}
+
+- (NSString *)netHintWith:(NSString *)err {
+    if (!err.length) return @"没有内容";
+    if ([err isEqualToString:@"网络未连接"]) return @"网络未连接，恢复后会自动刷新";
+    if ([err isEqualToString:@"请求超时"] || [err isEqualToString:@"连不上服务器"]) return [NSString stringWithFormat:@"%@，正在自动重试…", err];
+    return [NSString stringWithFormat:@"%@，正在自动重试…", err];
+}
+
+// 失败后自动重试:2、4、6…最多 15 秒一次;应用在后台时暂停,回到前台由 onForeground 接着拉
+- (void)retryLater {
+    if (!self.sections.count) self.hint.text = self.hint.text.length ? self.hint.text : @"正在重试…";
+    if (self.netFails > 200) return;
+    NSInteger gen = self.loadGen;
+    NSTimeInterval wait = MIN(15.0, 2.0 * self.netFails);
+    __weak typeof(self) w = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(wait * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        __strong typeof(w) self = w; if (!self) return;
+        if (gen != self.loadGen) return;                                    // 已经有更新的请求了
+        if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive) return;
+        [self load];
+    });
 }
 
 // 首页分类(E 样式):文字页签 → 本类精选大卡 → 热门榜前 5,数据全部来自发现页板块
@@ -1239,6 +1281,7 @@
 
     // 分类
     y = [self buildCats:y width:W];
+    CGFloat hintY = y;
 
 
     // 推荐内容面板
@@ -1289,7 +1332,7 @@
     panel.frame = pf;
     self.scroll.contentSize = CGSizeMake(W, y + py);
 
-    self.hint.frame = CGRectMake(30, self.view.bounds.size.height / 2 - 40, W - 60, 40);
+    self.hint.frame = CGRectMake(24, hintY + 6, W - 48, 44);   // 放在内容区,不压卡片
     self.spin.center = CGPointMake(W / 2, self.view.bounds.size.height / 2 - 70);
 
     [ADMiniBar.shared refresh];
