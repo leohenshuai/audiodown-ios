@@ -175,7 +175,12 @@
         self.tracks = uniq;
         self.index = pos;
         self.statusText = nil;
-        if (trackId.length && sec > 0) [[ADStore shared] setPosition:sec for:trackId];
+        if (trackId.length && sec > 0) {
+            double tl = [[ADStore shared] skipTailOf:album.albumId];
+            NSDictionary *li = [[ADStore shared] lastInfoOf:album.albumId];
+            double ld = [li[@"duration"] doubleValue];
+            if (!(tl > 0 && ld > tl + 30 && sec >= ld - tl)) [[ADStore shared] setPosition:sec for:trackId];   // 落在片尾区的进度不恢复
+        }
         [[ADStore shared] setLastTrack:[uniq[pos] trackId] album:album.albumId];
         if (play) { [[ADStore shared] touchHistory:album]; [self playAt:pos]; }
         [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
@@ -402,7 +407,11 @@
         double tail = [[ADStore shared] skipTailOf:self.album.albumId];
         if (tail > 0 && d > tail + 30 && sec >= d - tail && !self.skipTailFired && self.player.rate > 0) {
             self.skipTailFired = YES;
-            if (self.current.trackId) [[ADStore shared] setPosition:0 for:self.current.trackId];   // 这集算听完了,下次从头(片头)开始
+            if (self.current.trackId) {            // 这集算听完了:续播点、续播卡片里的进度都归零,下次从头(片头)开始
+                [[ADStore shared] setPosition:0 for:self.current.trackId];
+                [[ADStore shared] setLastInfo:@{@"trackId": self.current.trackId ?: @"", @"index": @(self.index),
+                                                @"title": self.current.title ?: @"", @"seconds": @0, @"duration": @(d)} album:self.album.albumId];
+            }
             [self trackFinished];
             return;                            // 本次 tick 不再写进度：这一集已经结束，别把半截时间存成续播点
         }
@@ -421,6 +430,9 @@
     double saved = [[ADStore shared] positionFor:t.trackId];
     // 续播优先：有过进度就从上次的位置继续；没有进度（新集 / 刚播完）才跳片头
     double startAt = saved > 5 ? saved : 0;
+    double tailNow = [[ADStore shared] skipTailOf:self.album.albumId];
+    double knownDur = _player.currentItem ? CMTimeGetSeconds(_player.currentItem.duration) : 0;
+    if (tailNow > 0 && knownDur > tailNow + 30 && startAt >= knownDur - tailNow) startAt = 0;   // 上次停在片尾区:别一开播就被跳走
     if (startAt < head) startAt = head;        // 续播点还在片头里(或没有进度):从片头末尾开始
     if (startAt > 0) [_player seekToTime:CMTimeMakeWithSeconds(startAt, 600) toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero];
     _player.rate = _rate;
@@ -470,8 +482,9 @@
     if (mode == 1) {
         // 单集循环：回到片头（不是 0），否则设了片头的书会每次连片头一起重听
         double head = [[ADStore shared] skipHeadOf:self.album.albumId];
-        self.skipTailFired = NO;
-        [self seekTo:head > 0 ? head : 0];
+        [self seekTo:head > 0 ? head : 0];      // seek 是异步的:skipTailFired 留着,等 seek 完成回调再复位,避免 tick 还在片尾区时重复触发
+        __weak typeof(self) wl = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ wl.skipTailFired = NO; });
         [_player play]; _player.rate = _rate; return;
     }
     if (_index + 1 < (NSInteger)_tracks.count) [self next];

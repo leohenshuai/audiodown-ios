@@ -31,7 +31,7 @@ static NSString *ADSkipSummary(ADAlbum *album) {
         t = [ud doubleForKey:@"ad_skip_tail"];
     }
     h = ADSkipClamp(h); t = ADSkipClamp(t);
-    if (h <= 0 && t <= 0) return @"未设置";
+    if (h <= 0 && t <= 0) return (album.albumId.length && [[ADStore shared] hasSkipOf:album.albumId]) ? @"不跳（已单独设置）" : @"未设置";
     if (h <= 0) return [NSString stringWithFormat:@"片尾 %.0f 秒", t];
     if (t <= 0) return [NSString stringWithFormat:@"片头 %.0f 秒", h];
     return [NSString stringWithFormat:@"片头 %.0f 秒 · 片尾 %.0f 秒", h, t];
@@ -68,9 +68,11 @@ void ADEditSkip(UIViewController *host, ADAlbum *album) {
             if ([host respondsToSelector:@selector(reloadSkipRows)]) [(id<ADSkipReloader>)host reloadSkipRows];
         }]];
     }
+    __weak UIAlertController *wa = a;          // 弱引用:alert 持有 action → handler,handler 不能反过来强持有 alert
     void (^doSave)(BOOL) = ^(BOOL asDefault) {
-        double h = ADSkipClamp([[a.textFields[0] text] doubleValue]);
-        double t = ADSkipClamp([[a.textFields[1] text] doubleValue]);
+        UIAlertController *ac = wa; if (!ac) return;
+        double h = ADSkipClamp([[ac.textFields[0] text] doubleValue]);
+        double t = ADSkipClamp([[ac.textFields[1] text] doubleValue]);
         if (aid) [[ADStore shared] setSkipHead:h tail:t forAlbum:aid];
         if (asDefault || !aid) { [ud setDouble:h forKey:@"ad_skip_head"]; [ud setDouble:t forKey:@"ad_skip_tail"]; }
         [ADHaptic success];
