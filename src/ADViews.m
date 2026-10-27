@@ -1383,13 +1383,10 @@
 - (void)playCard:(ADAlbum *)a {
     ADPlayer *p = ADPlayer.shared;
     if (p.album && [p.album.albumId isEqualToString:a.albumId]) { [p toggle]; [self refreshCards]; return; }
+    // 交给播放器自己去按书签定位：它会翻到第 index/50+1 页，不会只拿第 1 页
     NSDictionary *info = [[ADStore shared] lastInfoOf:a.albumId];
-    NSInteger idx = [info[@"index"] integerValue];
-    [[ADApi shared] tracksOf:a.albumId page:1 done:^(NSArray<ADTrack *> *list, NSInteger total, BOOL cached, NSString *err) {
-        if (!list.count) return;
-        [ADPlayer.shared playAlbum:a tracks:list at:idx];
-        [self refreshCards];
-    }];
+    [ADPlayer.shared openAlbum:a trackId:info[@"trackId"] index:[info[@"index"] integerValue] seconds:[info[@"seconds"] doubleValue] autoPlay:YES];
+    [self refreshCards];
 }
 
 - (void)moreCard:(ADAlbum *)a { [ADHaptic tap]; [self menuCard:a]; }

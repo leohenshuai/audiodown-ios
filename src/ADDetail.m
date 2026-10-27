@@ -24,6 +24,7 @@
 @property (nonatomic, strong) NSMutableSet *selected;
 @property (nonatomic, strong) UIScrollView *rangeBar;
 @property (nonatomic, strong) UIScrollView *floatBar;
+@property (nonatomic, strong) UIView *floatBack;
 @property (nonatomic, strong) UIView *actionBar;
 @property (nonatomic, strong) UILabel *actionLabel;
 @property (nonatomic, assign) NSInteger jumpTarget;
@@ -592,13 +593,35 @@
     self.rangeBar.contentSize = CGSizeMake(x + 8, 44);
     UIView *head = self.table.tableHeaderView;
     if (!self.floatBar) {
-        self.floatBar = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 44)];
+        CGFloat W0 = self.view.bounds.size.width;
+        // 吸顶背板：超薄深色模糊 + 一层深色渐变，底部渐隐，替掉原来那条生硬的黑带
+        self.floatBack = [[UIView alloc] initWithFrame:CGRectMake(0, 0, W0, 44)];
+        self.floatBack.userInteractionEnabled = NO;
+        self.floatBack.clipsToBounds = YES;
+        self.floatBack.hidden = YES;
+        UIVisualEffectView *fx = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
+        fx.frame = self.floatBack.bounds;
+        fx.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [self.floatBack addSubview:fx];
+        UIView *tint = [[UIView alloc] initWithFrame:self.floatBack.bounds];
+        tint.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        tint.backgroundColor = [UIColor colorWithRed:0.07 green:0.065 blue:0.08 alpha:0.35];
+        [self.floatBack addSubview:tint];
+        // 底部渐隐遮罩：上不透明 → 下透明，滚过导航栏的集标题在分段条下方自然淡出
+        CAGradientLayer *m = [CAGradientLayer layer];
+        m.colors = @[(id)UIColor.blackColor.CGColor, (id)UIColor.blackColor.CGColor, (id)UIColor.clearColor.CGColor];
+        m.locations = @[@0, @0.72, @1];
+        m.startPoint = CGPointMake(0.5, 0);
+        m.endPoint = CGPointMake(0.5, 1);
+        m.frame = self.floatBack.bounds;
+        self.floatBack.layer.mask = m;
+        [self.view addSubview:self.floatBack];      // 先加背板，floatBar 再压在它上面
+
+        self.floatBar = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, W0, 44)];
         self.floatBar.showsHorizontalScrollIndicator = NO;
         self.floatBar.contentInset = UIEdgeInsetsMake(0, 16, 0, 16);
-        self.floatBar.backgroundColor = [UIColor colorWithRed:0.07 green:0.065 blue:0.08 alpha:0.96];
-        self.floatBar.layer.shadowColor = UIColor.blackColor.CGColor;
-        self.floatBar.layer.shadowOpacity = 0.35; self.floatBar.layer.shadowRadius = 10; self.floatBar.layer.shadowOffset = CGSizeMake(0, 6);
-        self.floatBar.clipsToBounds = NO;
+        self.floatBar.backgroundColor = UIColor.clearColor;
+        self.floatBar.clipsToBounds = YES;
         self.floatBar.hidden = YES;
         [self.view addSubview:self.floatBar];
     }
@@ -611,6 +634,8 @@
         copy.tag = b.tag;
         copy.titleLabel.font = b.titleLabel.font;
         copy.layer.cornerRadius = b.layer.cornerRadius;
+        copy.layer.borderWidth = 0.5;
+        copy.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.12].CGColor;
         copy.backgroundColor = b.backgroundColor;
         [copy setTitle:[b titleForState:UIControlStateNormal] forState:UIControlStateNormal];
         [copy setTitleColor:[b titleColorForState:UIControlStateNormal] forState:UIControlStateNormal];
@@ -632,6 +657,8 @@
             if (![v isKindOfClass:UIButton.class]) continue;
             UIButton *btn = (UIButton *)v;
             btn.backgroundColor = [UIColor colorWithWhite:1 alpha:0.1];
+            btn.layer.borderWidth = 0.5;
+            btn.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.12].CGColor;
             [btn setTitleColor:[UIColor colorWithWhite:1 alpha:0.85] forState:UIControlStateNormal];
         }
     }
@@ -640,6 +667,7 @@
             if ([v isKindOfClass:UIButton.class] && v.tag == b.tag) {
                 UIButton *btn = (UIButton *)v;
                 btn.backgroundColor = UIColor.whiteColor;
+                btn.layer.borderWidth = 0.0;
                 [btn setTitleColor:UIColor.blackColor forState:UIControlStateNormal];
             }
         }
@@ -667,6 +695,15 @@
     CGFloat safe = MAX(self.view.safeAreaInsets.top, 44) + 44;
     self.floatBar.hidden = !(barTop < safe);
     self.floatBar.frame = CGRectMake(0, safe - 44, self.view.bounds.size.width, 44);
+    // 背板：盖住状态栏+导航栏+分段条，并在条下多留 12pt 做渐隐
+    self.floatBack.hidden = self.floatBar.hidden;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    self.floatBack.frame = CGRectMake(0, 0, self.view.bounds.size.width, safe + 12);
+    ((CAGradientLayer *)self.floatBack.layer.mask).frame = self.floatBack.bounds;
+    // 渐隐只落在条下面那 12pt（起点按真实高度算），否则胶囊下半截会透出滚过的集标题
+    ((CAGradientLayer *)self.floatBack.layer.mask).locations = @[@0, @(safe / (safe + 12.0)), @1];
+    [CATransaction commit];
 }
 
 - (BOOL)segMode { return self.segStart >= 0 && self.total > 0 && self.pageSize == 50; }
@@ -725,6 +762,8 @@
             if (![v isKindOfClass:UIButton.class]) continue;
             UIButton *btn = (UIButton *)v; BOOL on = (v.tag == tag);
             btn.backgroundColor = on ? UIColor.whiteColor : [UIColor colorWithWhite:1 alpha:0.1];
+            btn.layer.borderWidth = on ? 0.0 : 0.5;
+            btn.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.12].CGColor;
             [btn setTitleColor:(on ? UIColor.blackColor : [UIColor colorWithWhite:1 alpha:0.85]) forState:UIControlStateNormal];
             btn.titleLabel.font = [UIFont systemFontOfSize:13 weight:on ? UIFontWeightSemibold : UIFontWeightMedium];
             if (on) {

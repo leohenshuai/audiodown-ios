@@ -11,6 +11,11 @@
 // 旧写法里连续点两集时，前一次请求没回来，后一次会被直接丢弃，
 // 界面就一直停在「正在获取音频…」。现在新请求直接接管，旧回调按序号作废。
 @property (nonatomic, assign) NSInteger resolveSeq;
+// 正在异步取音频地址：此时 _album 已经切到新书，但 _player 里可能还是旧书的声音。
+// 这段空窗里 toggle 不能去暂停/恢复旧音频，pause 要顺手作废在飞的请求。
+@property (nonatomic, assign) BOOL resolving;
+// 切换书目的序号：连点 A 又点 C 时，A 的目录载入结果按此作废，免得把队列覆盖回去。
+@property (nonatomic, assign) NSInteger openSeq;
 @property (nonatomic, assign) BOOL retriedItem;
 // 播放队列补全：专辑页只加载了前几十集时，播放器自己把后面的目录补齐，
 // 否则队列的「倒序」「快速选集」「缓存整本」都只能看到前 50 集。
@@ -139,13 +144,23 @@
             }
         }
     }
+    // 要载入目录才能定位：切到别的书时先把旧书静音，别让它在加载期间继续出声
+    if (play && (!_album || ![_album.albumId isEqualToString:album.albumId])) {
+        [_player pause];
+        self.resolveSeq += 1;                  // 作废在飞的取地址请求
+        self.resolving = YES;
+    }
+    // 用户连点 A 又点 C：给这次载入发个号，回来时不是最新的就丢掉
+    self.openSeq += 1;
+    NSInteger myOpen = self.openSeq;
     NSInteger lastPage = MAX(0, index) / 50 + 1;
     self.statusText = play ? @"正在载入书签位置…" : nil;
     if (play) [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
     __weak typeof(self) w = self;
     [self loadPagesOf:album.albumId upTo:lastPage page:1 acc:[NSMutableArray array] tries:0 done:^(NSArray *list) {
         __strong typeof(w) self = w; if (!self) return;
-        if (!list.count) { self.statusText = @"目录载入失败"; [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil]; return; }
+        if (myOpen != self.openSeq) return;    // 过期的载入结果，丢弃
+        if (!list.count) { self.statusText = @"目录载入失败"; self.resolving = NO; [ADHaptic warning]; [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil]; return; }
         NSMutableArray *uniq = [NSMutableArray array]; NSMutableSet *seen = [NSMutableSet set];
         for (ADTrack *t in list) { if (t.trackId.length && ![seen containsObject:t.trackId]) { [seen addObject:t.trackId]; [uniq addObject:t]; } }
         NSInteger pos = -1;
@@ -184,6 +199,11 @@
 
 - (void)playAt:(NSInteger)index {
     if (index < 0 || index >= (NSInteger)_tracks.count) return;
+    // 先掐掉旧音频：取地址要几秒，这段时间里不能让上一本的声音继续放。
+    // 清掉 currentItem 之后 toggle 会走 playAt 重来，而不是去暂停一段已经过期的音频。
+    [_player pause];
+    [_player replaceCurrentItemWithPlayerItem:nil];
+    self.resolving = YES;
     _index = index;
     self.retriedItem = NO;
     ADTrack *t = _tracks[index];
@@ -313,6 +333,7 @@
                 return;
             }
             self.statusText = err ?: @"无法播放";
+            self.resolving = NO;
             [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
             return;
         }
@@ -320,6 +341,7 @@
             // 番茄源需要先下载，轮询到就绪
             if (attempt > 40) {
                 self.statusText = @"音频还在准备，稍后会自动开始";
+                self.resolving = NO;
                 [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
                 return;
             }
@@ -337,6 +359,7 @@
 }
 
 - (void)startWithURL:(NSString *)url headers:(NSDictionary *)headers track:(ADTrack *)t {
+    self.resolving = NO;                       // 地址已经拿到，空窗结束
     [self prefetchAhead];
     [self cleanPrefetch];
     NSMutableDictionary *opts = [NSMutableDictionary dictionary];
@@ -347,7 +370,7 @@
     }];
     if (h.count) opts[@"AVURLAssetHTTPHeaderFieldsKey"] = h;
     NSURL *u = [NSURL URLWithString:url];
-    if (!u) { self.statusText = @"音频地址无效"; return; }
+    if (!u) { self.statusText = @"音频地址无效"; self.resolving = NO; return; }
     AVURLAsset *asset = [AVURLAsset URLAssetWithURL:u options:opts];
     AVPlayerItem *item = [AVPlayerItem playerItemWithAsset:asset];
     if (!_player) _player = [AVPlayer playerWithPlayerItem:item];
@@ -423,11 +446,25 @@
 }
 
 - (void)toggle {
-    if (!_player) { if (_tracks.count) [self playAt:_index]; return; }
+    // 播放器还没有音频项（刚切书 / 上一个 item 已被清掉）：直接重新开这一集
+    if (!_player || _player.currentItem == nil) { if (_tracks.count) [self playAt:_index]; return; }
+    // 地址还在取：此时 currentItem 还是旧书的音频，不能拿它来暂停/恢复
+    if (self.resolving) return;
     if (_player.rate > 0) [self pause];
     else { [_player play]; _player.rate = _rate; [self nowPlaying]; if (_album) [[ADStore shared] touchHistory:_album]; }
 }
-- (void)pause { [_player pause]; [self nowPlaying]; }
+- (void)pause {
+    if (self.resolving) {
+        // 取消在飞的取地址，别等它回来又把声音放出来
+        self.resolveSeq += 1;
+        self.openSeq += 1;                     // 目录还在载入时按暂停:载入完成后也不要自动开播
+        self.resolving = NO;
+        self.statusText = nil;
+        [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
+    }
+    [_player pause];
+    [self nowPlaying];
+}
 - (void)next { if (_index + 1 < (NSInteger)_tracks.count) [self playAt:_index + 1]; }
 - (void)prev {
     double sec = _player ? CMTimeGetSeconds(_player.currentTime) : 0;
