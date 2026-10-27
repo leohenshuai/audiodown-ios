@@ -549,7 +549,9 @@
 @property (nonatomic, strong) NSMutableArray<ADContinueCard *> *cards;
 @property (nonatomic, strong) NSMutableDictionary *kwCache;   // 关键词分类:title → NSArray<ADAlbum*>
 @property (nonatomic, strong) NSMutableSet *kwLoading;        // 正在请求的关键词分类 title
-@property (nonatomic, assign) CGFloat tabsX;                  // 分类页签横向滚动位置
+@property (nonatomic, assign) CGFloat tabsX;
+@property (nonatomic, strong) NSMutableDictionary *kwEmpty;
+@property (nonatomic, copy) NSString *catSelTitle;                  // 分类页签横向滚动位置
 @end
 
 @implementation ADDiscoverController
@@ -578,6 +580,7 @@
     self.cards = [NSMutableArray array];
     self.kwCache = [NSMutableDictionary dictionary];
     self.kwLoading = [NSMutableSet set];
+    self.kwEmpty = [NSMutableDictionary dictionary];
     self.tabsX = 0;
 
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(reloadCards) name:@"ADContinueChanged" object:nil];
@@ -611,6 +614,7 @@
 - (void)refreshCards { for (ADContinueCard *c in self.cards) [c refresh]; [self refreshHero]; }
 
 - (void)load {
+    if (self.refresh.isRefreshing) { [self.kwCache removeAllObjects]; [self.kwEmpty removeAllObjects]; }
     if (!self.sections.count) [self.spin startAnimating];
     __weak typeof(self) w = self;
     [[ADApi shared] discover:^(NSArray<NSDictionary *> *sections, BOOL cached, NSString *err) {
@@ -685,7 +689,7 @@
 - (void)loadKw:(NSDictionary *)sec {
     NSString *title = sec[@"title"];
     if (![title isKindOfClass:NSString.class] || !title.length) return;
-    if (self.kwCache[title]) return;
+    if (self.kwCache[title] || self.kwEmpty[title]) return;
     if ([self.kwLoading containsObject:title]) return;
     NSArray *raw = sec[@"hotWords"];
     NSMutableArray<NSString *> *words = [NSMutableArray array];
@@ -706,6 +710,12 @@
             BOOL ok = [list isKindOfClass:NSArray.class] && list.count > 0;
             NSInteger left = 0;
             @synchronized (slots) {
+                if (got && !cached && cbCount == 1 && ok) {   // 先用了缓存,网络新结果到了:替换并刷新缓存
+                    cbCount += 1; slots[i] = [list copy];
+                    __strong typeof(w) self = w;
+                    if (self && self.kwCache[title]) { [self.kwCache removeObjectForKey:title]; [self.kwLoading addObject:title]; [self finishKw:title slots:slots]; }
+                    return;
+                }
                 if (got) return;
                 cbCount += 1;
                 if (!ok && cached && cbCount == 1) return;   // 先到的缓存空结果:等网络那次,不计数
@@ -722,7 +732,7 @@
     }
     // 兜底:网络长时间无回音也别卡在“加载中”
     __weak typeof(self) w2 = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(12.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(25.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         __strong typeof(w2) self = w2; if (!self) return;
         [self finishKw:title slots:slots];
     });
@@ -752,7 +762,8 @@
         NSArray<ADAlbum *> *sorted = [all sortedArrayUsingComparator:^NSComparisonResult(ADAlbum *a, ADAlbum *b) {
             return [@(b.playCount) compare:@(a.playCount)];
         }];
-        self.kwCache[title] = sorted;
+        if (sorted.count) self.kwCache[title] = sorted;
+        else self.kwEmpty[title] = @YES;   // 本次没搜到:显示空态,下拉刷新后重试
         NSArray<NSDictionary *> *secs = [self catSections];
         if (self.catSel >= 0 && self.catSel < (NSInteger)secs.count) {
             NSDictionary *cur = secs[self.catSel];
@@ -768,6 +779,10 @@
 - (CGFloat)buildCats:(CGFloat)y width:(CGFloat)W {
     NSArray<NSDictionary *> *secs = [self catSections];
     if (!secs.count) return y;
+    if (self.catSelTitle.length) {
+        for (NSInteger i = 0; i < (NSInteger)secs.count; i++)
+            if ([secs[i][@"title"] isEqualToString:self.catSelTitle]) { self.catSel = i; break; }
+    }
     if (self.catSel >= (NSInteger)secs.count) self.catSel = 0;
     NSDictionary *sec = secs[self.catSel];
     UIColor *brand = [ADUtil brand];
@@ -804,7 +819,7 @@
     y += 52;
 
     NSString *secTitle = sec[@"title"];
-    BOOL kwCached = (secTitle.length && self.kwCache[secTitle] != nil);
+    BOOL kwCached = (secTitle.length && (self.kwCache[secTitle] != nil || self.kwEmpty[secTitle] != nil));
     BOOL kwPending = [sec[@"kw"] boolValue] && ![sec[@"albums"] isKindOfClass:NSArray.class] && !kwCached;
     if (kwPending) [self loadKw:sec];
 
@@ -1130,6 +1145,8 @@
     [ADHaptic select];
     if ([b.superview isKindOfClass:UIScrollView.class]) self.tabsX = ((UIScrollView *)b.superview).contentOffset.x;
     self.catSel = i;
+    NSArray *allSecs = [self catSections];
+    self.catSelTitle = (i >= 0 && i < (NSInteger)allSecs.count) ? allSecs[i][@"title"] : nil;
     CGPoint off = self.scroll.contentOffset;
     [UIView transitionWithView:self.scroll duration:0.22 options:UIViewAnimationOptionTransitionCrossDissolve animations:^{
         [self build];
