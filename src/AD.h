@@ -253,6 +253,7 @@ typedef NS_ENUM(NSInteger, ADTaskState) {
 + (NSString *)count:(double)n;
 + (void)cover:(UIImageView *)iv url:(nullable NSString *)url;
 + (void)coverImage:(nullable NSString *)url done:(void (^)(UIImage * _Nullable img))done;
++ (void)purgeMemoryCaches;   // 内存警告时清封面内存缓存
 + (NSString *)coverDir;
 + (void)togglePlaceholder:(UIImageView *)iv hidden:(BOOL)hidden;
 + (double)parseDuration:(nullable NSString *)text;

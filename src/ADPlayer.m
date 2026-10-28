@@ -542,7 +542,7 @@
     __block BOOL anyOK = NO;
     if (self.catalogLoading) return;               // 已经在补了,别叠着发
     self.catalogLoading = YES;
-    dispatch_semaphore_t sem = dispatch_semaphore_create(4);
+    dispatch_semaphore_t sem = dispatch_semaphore_create(2);   // 每页约 320KB,同时解析太多会顶内存
     __weak typeof(self) w = self;
     for (NSInteger pg = 1; pg <= total; pg++) {
         __block BOOL got = NO;

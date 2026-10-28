@@ -830,8 +830,11 @@ void ADEditSkip(UIViewController *host, ADAlbum *album) {
     NSInteger a = self.segStart / 50 + 1, b = (self.segStart + [self segLen] - 1) / 50 + 1;
     NSMutableArray *order = [NSMutableArray array];
     for (NSInteger q = a; q <= b; q++) [order addObject:@(q)];
-    NSInteger need = self.pendingPlay >= 0 ? self.pendingPlay / 50 + 1 : b;
-    for (NSInteger q = 1; q <= need; q++) if (q < a || q > b) [order addObject:@(q)];
+    // 前面的页只在真要从这一段起播时才补(那时要组成连续队列);光是看看目录不补,省掉几十个请求
+    if (self.pendingPlay >= 0) {
+        NSInteger need = self.pendingPlay / 50 + 1;
+        for (NSInteger q = 1; q <= need; q++) if (q < a || q > b) [order addObject:@(q)];
+    }
     for (NSNumber *n in order) {
         if (self.pageMap[n] || [self.pageLoading containsObject:n]) continue;
         if (self.pageLoading.count >= 4) break;
@@ -1214,8 +1217,22 @@ void ADEditSkip(UIViewController *host, ADAlbum *album) {
 }
 
 - (void)loadTracks {
-    if (!self.pageMap.count) { [self loadPage:1]; return; }
+    if (!self.pageMap.count) { [self seedFromPlayer]; [self loadPage:1]; return; }
     if (self.hasMore) [self loadNextPage];
+}
+
+// 播放器手里已经有这本书从第 1 集起的完整队列:按 50 集一页切好垫进来,打开专辑页就不用再拉 30 页
+- (void)seedFromPlayer {
+    ADPlayer *pl = ADPlayer.shared;
+    if (!pl.album || ![pl.album.albumId isEqualToString:self.album.albumId]) return;
+    if (pl.episodeBase > 0 || pl.tracks.count < 50 || self.pageSize != 50) return;
+    NSArray *all = pl.tracks;
+    for (NSInteger i = 0, pg = 1; i < (NSInteger)all.count; i += 50, pg++) {
+        NSInteger n = MIN(50, (NSInteger)all.count - i);
+        if (n < 50 && i + n < (NSInteger)all.count) break;
+        self.pageMap[@(pg)] = [all subarrayWithRange:NSMakeRange(i, n)];
+    }
+    ADLogTag(@"UI", @"专辑页复用播放队列 %lu 集,免拉目录", (unsigned long)all.count);
 }
 
 - (void)loadNextPage {

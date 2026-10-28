@@ -2,6 +2,14 @@
 #import <AVFoundation/AVFoundation.h>
 #import <Network/Network.h>
 #import <os/proc.h>
+#import <mach/mach.h>
+
+// 本 App 实际占用的内存(和 Xcode 内存表同一口径)
+static unsigned long ADFootprintMB(void) {
+    task_vm_info_data_t info; mach_msg_type_number_t n = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &n) != KERN_SUCCESS) return 0;
+    return (unsigned long)(info.phys_footprint / 1048576);
+}
 
 // ───────────── 系统事件监控 ─────────────
 // 前台/后台、内存警告、网络变化、音频打断、路由变化、省电模式——这些都是"为什么突然没声音/没网"最常见的真凶。
@@ -49,7 +57,7 @@ static ADLogWatcher *gWatcher;
     });
 }
 - (void)active {
-    ADLogTag(@"SYS", @"回到前台 · 可用内存 %luMB", (unsigned long)(os_proc_available_memory() / 1048576));
+    ADLogTag(@"SYS", @"回到前台 · 本App占用 %luMB · 还可申请 %luMB", ADFootprintMB(), (unsigned long)(os_proc_available_memory() / 1048576));
     [NSFileManager.defaultManager createFileAtPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/logs/.active"] contents:nil attributes:nil];
 }
 - (void)resign {
@@ -58,7 +66,10 @@ static ADLogWatcher *gWatcher;
 }
 - (void)terminate { ADLogTag(@"SYS", @"应用正常退出"); }
 - (void)mem {
-    ADLogWarn(@"SYS", @"⚠ 收到内存警告 · 剩余可用 %luMB(再不释放可能被系统杀掉)", (unsigned long)(os_proc_available_memory() / 1048576));
+    unsigned long before = ADFootprintMB();
+    [ADUtil purgeMemoryCaches];
+    [NSURLCache.sharedURLCache removeAllCachedResponses];
+    ADLogWarn(@"SYS", @"⚠ 收到内存警告 · 本App占用 %luMB(清缓存后 %luMB) · 还可申请 %luMB", before, ADFootprintMB(), (unsigned long)(os_proc_available_memory() / 1048576));
 }
 - (void)interrupt:(NSNotification *)n {
     NSUInteger t = [n.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue];

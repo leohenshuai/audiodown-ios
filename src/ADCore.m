@@ -414,11 +414,13 @@ static double ADSkipSanitize(double v) {          // 负数（<-1 那种误传�
     return d;
 }
 
+static NSUInteger ADImgCost(UIImage *i) { return (NSUInteger)(i.size.width * i.scale * i.size.height * i.scale * 4); }
 static NSCache *ADCoverCache(void) {
     static NSCache *cache; static dispatch_once_t once;
-    dispatch_once(&once, ^{ cache = [NSCache new]; cache.countLimit = 400; });
+    dispatch_once(&once, ^{ cache = [NSCache new]; cache.countLimit = 200; cache.totalCostLimit = 60 * 1024 * 1024; });
     return cache;
 }
++ (void)purgeMemoryCaches { [ADCoverCache() removeAllObjects]; }
 // 不依赖图片视图取封面:内存 → 磁盘 → 网络,回调在主线程
 + (void)coverImage:(NSString *)url done:(void (^)(UIImage *img))done {
     if (!url.length) { done(nil); return; }
@@ -426,12 +428,12 @@ static NSCache *ADCoverCache(void) {
     if (hit) { done(hit); return; }
     NSString *path = [[self coverDir] stringByAppendingPathComponent:[NSString stringWithFormat:@"%lu.jpg", (unsigned long)url.hash]];
     UIImage *disk = [UIImage imageWithContentsOfFile:path];
-    if (disk) { [ADCoverCache() setObject:disk forKey:url]; done(disk); return; }
+    if (disk) { [ADCoverCache() setObject:disk forKey:url cost:ADImgCost(disk)]; done(disk); return; }
     NSURL *u = [url hasPrefix:@"http"] ? [NSURL URLWithString:url] : [NSURL URLWithString:[[ADConfig shared] url:url]];
     if (!u) { done(nil); return; }
     [[[NSURLSession sharedSession] dataTaskWithURL:u completionHandler:^(NSData *data, NSURLResponse *r, NSError *e) {
         UIImage *img = data.length ? [UIImage imageWithData:data] : nil;
-        if (img) { [ADCoverCache() setObject:img forKey:url]; [data writeToFile:path atomically:YES]; }
+        if (img) { [ADCoverCache() setObject:img forKey:url cost:ADImgCost(img)]; [data writeToFile:path atomically:YES]; }
         dispatch_async(dispatch_get_main_queue(), ^{ done(img); });
     }] resume];
 }
@@ -450,14 +452,14 @@ static NSCache *ADCoverCache(void) {
                       [NSString stringWithFormat:@"%lu.jpg", (unsigned long)url.hash]];
     UIImage *disk = [UIImage imageWithContentsOfFile:path];
     if (disk) { [self togglePlaceholder:iv hidden:YES];
-        [cache setObject:disk forKey:url];
+        [cache setObject:disk forKey:url cost:ADImgCost(disk)];
         iv.image = disk;
         return;
     }
     [[[NSURLSession sharedSession] dataTaskWithURL:u completionHandler:^(NSData *data, NSURLResponse *r, NSError *e) {
         UIImage *img = data.length ? [UIImage imageWithData:data] : nil;
         if (!img) return;
-        [cache setObject:img forKey:url];
+        [cache setObject:img forKey:url cost:ADImgCost(img)];
         [data writeToFile:path atomically:YES];
         dispatch_async(dispatch_get_main_queue(), ^{
             iv.image = img;

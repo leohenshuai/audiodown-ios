@@ -195,6 +195,7 @@
 @interface ADMiniBar : UIView
 + (instancetype)shared;
 - (void)refresh;
+- (void)unfoldNow;
 @end
 
 @implementation ADMiniBar {
@@ -1425,6 +1426,7 @@
 
 - (void)playCard:(ADAlbum *)a {
     ADPlayer *p = ADPlayer.shared;
+    [ADMiniBar.shared unfoldNow];   // 点继续播放时,右下角收起的播放条展开一下(8 秒后自动再收)
     if (p.album && [p.album.albumId isEqualToString:a.albumId]) { [p toggle]; [self refreshCards]; return; }
     // 交给播放器自己去按书签定位：它会翻到第 index/50+1 页，不会只拿第 1 页
     NSDictionary *info = [[ADStore shared] lastInfoOf:a.albumId];

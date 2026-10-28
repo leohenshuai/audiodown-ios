@@ -119,10 +119,25 @@ static void ADCacheSet(NSString *key, id json) {
     NSTimeInterval age = 0;
     id cached = ADCacheGet(key, &age);
     if (cached) cb(cached, YES, nil);
-    [self JSON:path method:@"GET" body:nil timeout:timeout done:^(id json, NSString *err) {
-        if (!err && json) { ADCacheSet(key, json); cb(json, NO, nil); return; }
+    // 同一个 key 已经有请求在飞:挂上去等结果,不再重复发(继续播放/专辑页/播放器会同时要同一页)
+    static NSMutableDictionary<NSString *, NSMutableArray *> *inflight;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ inflight = [NSMutableDictionary dictionary]; });
+    void (^finish)(id, NSString *) = ^(id json, NSString *err) {
+        if (!err && json) { cb(json, NO, nil); return; }
         if (!cached) cb(nil, NO, err);
         else cb(cached, YES, err);   // 有缓存时把错误一并带回去，界面可提示离线
+    };
+    @synchronized (inflight) {
+        NSMutableArray *waiters = inflight[key];
+        if (waiters) { [waiters addObject:[finish copy]]; ADLogTag(@"NET", @"合并重复请求 %@", path); return; }
+        inflight[key] = [NSMutableArray arrayWithObject:[finish copy]];
+    }
+    [self JSON:path method:@"GET" body:nil timeout:timeout done:^(id json, NSString *err) {
+        if (!err && json) ADCacheSet(key, json);
+        NSArray *list;
+        @synchronized (inflight) { list = inflight[key]; [inflight removeObjectForKey:key]; }
+        for (void (^f)(id, NSString *) in list) f(json, err);
     }];
 }
 
