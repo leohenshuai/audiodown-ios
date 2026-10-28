@@ -299,7 +299,9 @@ NS_ASSUME_NONNULL_END
 @interface ADGlassPage : UIViewController @end
 @interface ADBookmarksController : ADGlassPage @end
 @interface ADStorageController : ADGlassPage @end
-@interface ADBackupController : ADGlassPage @end
+@interface ADBackupController : ADGlassPage
++ (void)autoSnapshotIfNeeded;     // 每天最多一份、只留最近 3 份(auto- 前缀),在备份页里能直接恢复
+@end
 @interface ADHistoryController : UIViewController @end
 @interface ADDownloadsController : UIViewController @end
 @interface ADDownloadDetailController : UIViewController

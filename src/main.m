@@ -31,6 +31,7 @@
     NSString *bd = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleVersion"] ?: @"?";
     ADLogTag(@"SYS", @"──── 启动 阅听 %@ (%@) iOS %@ %@ ────", v, bd, UIDevice.currentDevice.systemVersion, ADLogLastRunAbnormal() ? @"· 上次异常退出" : @"");
     ADLogStartWatching();
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [ADBackupController autoSnapshotIfNeeded]; });
     [[ADPlayer shared] restoreLast];
     [ADUpdater backgroundCheck];
     NSLog(@"[AD] launched");
