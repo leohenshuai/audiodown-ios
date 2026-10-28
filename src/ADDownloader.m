@@ -55,15 +55,15 @@
         d.failedIds = fa ? [NSMutableSet setWithArray:fa] : [NSMutableSet set];
         d.bgTask = UIBackgroundTaskInvalid;
         [d load];
-        // 后台会话:切 App、锁屏、甚至应用被系统回收,正在下的这一集都会继续,下完再唤醒我们
-        NSURLSessionConfiguration *c = [NSURLSessionConfiguration backgroundSessionConfigurationWithIdentifier:@"com.leo.audiodown.downloads"];
-        c.sessionSendsLaunchEvents = YES;
-        c.discretionary = NO;                       // 立即开始,不等系统挑时机
+        // 普通会话。试过后台会话:这个下载地址要带 Cookie/Referer,后台会话下请求头没送达,
+        // 服务端回空内容(实测 22 次全是 0 字节)。切后台时靠 beginBackgroundTask 撑住。
+        NSURLSessionConfiguration *c = [NSURLSessionConfiguration defaultSessionConfiguration];
         c.timeoutIntervalForResource = 24 * 3600;
         d.session = [NSURLSession sessionWithConfiguration:c delegate:d delegateQueue:nil];
         dispatch_async(dispatch_get_main_queue(), ^{
             [d reconcile];
             [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { [d reconcile]; }];
+            [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidEnterBackgroundNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { [d holdForBackground]; }];
         });
     });
     return d;
@@ -133,14 +133,18 @@
     }];
 }
 
+// 应用进入后台时,正在下的任务靠后台任务多活一会儿(通常几分钟到约 30 秒,系统说了算)
+- (void)holdForBackground {
+    if (self.runningTask) [self beginBG];
+}
+
 - (void)beginBG {
     @synchronized (self) {
         if (self.bgTask != UIBackgroundTaskInvalid) return;
         __weak typeof(self) w = self;
         self.bgTask = [UIApplication.sharedApplication beginBackgroundTaskWithName:@"ad.dl.chain" expirationHandler:^{ [w endBG]; }];
     }
-    __weak typeof(self) w2 = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(28 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [w2 endBG]; });   // 保险
+    // 不再设固定 28 秒保险:下载期间要一直撑着,系统到期会走 expirationHandler 自己收回
 }
 - (void)endBG {
     @synchronized (self) {
@@ -444,8 +448,7 @@
         self.current = [self.session downloadTaskWithRequest:r];
         self.current.taskDescription = tr.trackId;
         [self.current resume];
-        ADLogTag(@"DL", @"开始下载 第%ld/%lu集 %@", (long)t.cursor + 1, (unsigned long)t.tracks.count, tr.title ?: tr.trackId);
-        [self endBG];                                        // 这一集已交给后台会话,接下来不需要我们醒着
+        ADLogTag(@"DL", @"开始下载 第%ld/%lu集 %@ · 请求头 %lu 个", (long)t.cursor + 1, (unsigned long)t.tracks.count, tr.title ?: tr.trackId, (unsigned long)r.allHTTPHeaderFields.count);
         [self notify];
     }];
 }
@@ -463,7 +466,8 @@
     NSString *dst = [self pathFor:tid ext:ext];
     [fm copyItemAtPath:location.path toPath:dst error:nil];
     NSDictionary *attr = [fm attributesOfItemAtPath:dst error:nil];
-    if ([attr fileSize] < 8000) ADLogError(@"DL", @"✗ 下载落盘过小 trackId=%@ %lluB(多半是服务端返回了错误页)", tid, [attr fileSize]);
+    NSHTTPURLResponse *hr = [task.response isKindOfClass:NSHTTPURLResponse.class] ? (NSHTTPURLResponse *)task.response : nil;
+    if ([attr fileSize] < 8000) ADLogError(@"DL", @"✗ 下载落盘过小 trackId=%@ %lluB · HTTP %ld · 类型 %@ · 声明长度 %lld(多半是服务端返回了错误页)", tid, [attr fileSize], (long)hr.statusCode, hr.MIMEType ?: @"?", task.countOfBytesExpectedToReceive);
     else ADLogTag(@"DL", @"下载完成 trackId=%@ %.1fMB .%@", tid, [attr fileSize] / 1048576.0, ext);
     // 文件没写成 / 太小（多半是服务端返回的错误页）就别当成功，交回重试
     if (!attr || [attr fileSize] < 8000) {
