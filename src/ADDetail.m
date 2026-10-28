@@ -1607,6 +1607,8 @@ void ADEditSkip(UIViewController *host, ADAlbum *album) {
 @property (nonatomic, strong) NSMutableSet *queueSel;
 @property (nonatomic, strong) UIView *queueBar;
 @property (nonatomic, strong) UIButton *sortBtn, *pickBtn, *selBtn, *dlBtn;
+@property (nonatomic, strong) ADTranscriptView *trView;
+@property (nonatomic, strong) UIButton *trBtn;
 @end
 
 @implementation ADPlayerController
@@ -1683,6 +1685,21 @@ void ADEditSkip(UIViewController *host, ADAlbum *album) {
                         self.elapsed, self.mid, self.duration, self.status, self.playBtn]) {
         [self.view addSubview:v];
     }
+
+    // AI 文稿:和封面占同一块位置,用小胶囊按钮切换;上次停在文稿就继续显示文稿
+    self.trView = [[ADTranscriptView alloc] initFull:NO];
+    self.trView.hidden = YES;
+    [self.view addSubview:self.trView];
+    self.trBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.trBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    self.trBtn.tintColor = UIColor.whiteColor;
+    self.trBtn.backgroundColor = [UIColor colorWithWhite:0 alpha:0.38];
+    self.trBtn.layer.cornerRadius = 14;
+    self.trBtn.layer.borderWidth = 0.5;
+    self.trBtn.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.18].CGColor;
+    [self.trBtn addTarget:self action:@selector(toggleTranscript) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:self.trBtn];
+    [self showTranscript:[NSUserDefaults.standardUserDefaults boolForKey:@"ad_tr_show"] animated:NO];
 
     // 控制行
     UIButton *prev = [self iconButton:@"backward.end.fill" size:19 action:@selector(prev)];
@@ -1808,6 +1825,10 @@ void ADEditSkip(UIViewController *host, ADAlbum *album) {
     CGFloat y = top;
     self.cover.frame = CGRectMake((W - coverH) / 2, y, coverH, coverH);
     self.coverLabel.frame = self.cover.bounds;
+    self.trView.frame = CGRectMake(0, y, W, coverH);
+    [self.trBtn sizeToFit];
+    CGFloat tbw = MAX(76, self.trBtn.bounds.size.width);
+    self.trBtn.frame = CGRectMake((W - coverH) / 2 + 10, y + coverH - 28 - 10, tbw, 28);
     y = CGRectGetMaxY(self.cover.frame) + gap;
 
     self.titleLabel.frame = CGRectMake(24, y, W - 24 - 130, 34);
@@ -1857,6 +1878,26 @@ void ADEditSkip(UIViewController *host, ADAlbum *album) {
     }
 }
 
+- (void)toggleTranscript {
+    [ADHaptic select];
+    BOOL on = self.trView.hidden;
+    [NSUserDefaults.standardUserDefaults setBool:on forKey:@"ad_tr_show"];
+    [self showTranscript:on animated:YES];
+}
+- (void)showTranscript:(BOOL)on animated:(BOOL)anim {
+    [self.trBtn setTitle:(on ? @"  封面  " : @"  AI 文稿  ") forState:UIControlStateNormal];
+    UIView *shadow = [self.view viewWithTag:8802];
+    void (^apply)(void) = ^{
+        self.trView.alpha = on ? 1 : 0;
+        self.cover.alpha = on ? 0 : 1;
+        shadow.alpha = on ? 0 : 1;
+    };
+    if (on) self.trView.hidden = NO;
+    if (anim) [UIView animateWithDuration:0.25 animations:apply completion:^(BOOL f) { if (!on) self.trView.hidden = YES; }];
+    else { apply(); if (!on) self.trView.hidden = YES; }
+    if (on) [self.trView tick:YES];
+}
+
 - (void)tintFromCover {
     UIImage *img = self.cover.image;
     if (!img) return;
@@ -1894,6 +1935,8 @@ void ADEditSkip(UIViewController *host, ADAlbum *album) {
         [self.view insertSubview:shadow belowSubview:self.cover];
     }
     shadow.frame = self.cover.frame;
+    shadow.alpha = self.trView.hidden ? 1 : 0;
+    if (!self.trView.hidden) [self.trView tick:NO];
     [ADLiquid breathe:shadow on:p.isPlaying];
     [ADLiquid breathe:self.cover on:p.isPlaying];
     [self tintFromCover];
@@ -1972,7 +2015,7 @@ void ADEditSkip(UIViewController *host, ADAlbum *album) {
     if (mode < 0 || mode > 2) mode = 0;
     NSArray *opts = @[@"从头播放", @"缓存整本到本机", @"打开专辑（排序 / 选集 / 下载）", @"在此处添加书签", @"书签列表",
                       [NSString stringWithFormat:@"播放模式：%@", modes[mode]],
-                      [NSString stringWithFormat:@"跳过片头片尾：%@", ADSkipSummary(p.album)]];
+                      [NSString stringWithFormat:@"跳过片头片尾：%@", ADSkipSummary(p.album)], @"AI 文稿设置"];
     [ADOptionSheet showIn:self title:p.album.title options:opts destructive:-1 choose:^(NSInteger i) {
         if (i == 0) { [p playAt:0]; return; }
         if (i == 1) { [[ADDownloader shared] addAlbum:p.album tracks:p.tracks]; return; }
@@ -1986,6 +2029,12 @@ void ADEditSkip(UIViewController *host, ADAlbum *album) {
         }
         if (i == 5) { [self pickPlayMode]; return; }
         if (i == 6) { ADEditSkip(self, p.album); return; }   // 必须在下面的“打开专辑”兜底之前返回
+        if (i == 7) {
+            UINavigationController *n = [[UINavigationController alloc] initWithRootViewController:[ADTranscriptSettingsController new]];
+            n.modalPresentationStyle = UIModalPresentationPageSheet;
+            [self presentViewController:n animated:YES completion:nil];
+            return;
+        }
         ADAlbum *album = p.album;
         [self dismissViewControllerAnimated:YES completion:^{
             UIViewController *root = UIApplication.sharedApplication.keyWindow.rootViewController;
@@ -2601,7 +2650,7 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
         case ADSecPlay: return 5;       // 预缓存 / 仅 WiFi / 集数 / 自动清理 / 跳过片头片尾
         case ADSecStorage: return 3;    // 本机下载 / 离线存储 / 全部暂停继续
         case ADSecFeel: return 2;       // 触感 / 提示音
-        case ADSecData: return 3;       // 书签 / 备份恢复 / 运行日志
+        case ADSecData: return 4;       // 书签 / 备份恢复 / 运行日志 / AI 文稿
         default: return 4;              // 版本 / 检查更新 / GitHub 令牌 / 项目主页
     }
 }
@@ -2740,7 +2789,8 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
     case ADSecData: {
         if (ip.row == 0) { icon = @"bookmark.fill"; ic = orange; c.textLabel.text = @"书签"; c.detailTextLabel.text = [NSString stringWithFormat:@"%ld 条", (long)[ADStore shared].bookmarks.count]; }
         else if (ip.row == 1) { icon = @"externaldrive.badge.timemachine"; ic = blue; c.textLabel.text = @"备份与恢复"; c.detailTextLabel.text = @"收藏、进度、听完标记、书签"; }
-        else { icon = @"doc.text.magnifyingglass"; ic = purple; c.textLabel.text = @"运行日志"; c.detailTextLabel.text = @"出问题时导出并分享,可筛选网络、播放、错误"; }
+        else if (ip.row == 2) { icon = @"doc.text.magnifyingglass"; ic = purple; c.textLabel.text = @"运行日志"; c.detailTextLabel.text = @"出问题时导出并分享,可筛选网络、播放、错误"; }
+        else { icon = @"text.bubble.fill"; ic = blue; c.textLabel.text = @"AI 文稿"; c.detailTextLabel.text = [NSUserDefaults.standardUserDefaults stringForKey:@"ad_asr_model"].length ? [NSUserDefaults.standardUserDefaults stringForKey:@"ad_asr_model"] : @"未设置"; }
         c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         c.selectionStyle = UITableViewCellSelectionStyleDefault;
         break;
@@ -2828,6 +2878,7 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
     }
     case ADSecData:
         [ADHaptic tap];
+        if (ip.row == 3) { UINavigationController *n = [[UINavigationController alloc] initWithRootViewController:[ADTranscriptSettingsController new]]; n.modalPresentationStyle = UIModalPresentationPageSheet; [self presentViewController:n animated:YES completion:nil]; return; }
         if (ip.row == 2) [self.navigationController pushViewController:[ADLogController new] animated:YES];
         else [self.navigationController pushViewController:(ip.row == 0 ? [ADBookmarksController new] : [ADBackupController new]) animated:YES];
         return;

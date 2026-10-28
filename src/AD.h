@@ -278,6 +278,14 @@ NS_ASSUME_NONNULL_END
 @property (nonatomic, strong) ADAlbum *album;
 @end
 @interface ADPlayerController : UIViewController @end
+
+// ───────────────── AI 文稿 ─────────────────
+@interface ADTranscriptView : UIView
+- (instancetype)initFull:(BOOL)full;
+- (void)tick:(BOOL)force;          // 按当前播放进度高亮并滚动
+@end
+@interface ADTranscriptFullController : UIViewController @end
+@interface ADTranscriptSettingsController : UIViewController @end
 @interface ADUpdater : NSObject
 + (NSString *)repo;
 + (NSString *)token;
