@@ -518,6 +518,36 @@ static NSString *const kSkipPrefix = @"ad_skip";
 }
 - (NSString *)makeBackup:(NSString *)prefix {
     [[ADStore shared] save];
+    return [ADBackupController writeBackup:prefix];
+}
+
+// 自动快照:每天最多一份,只保留最近 3 份。
+// 刻意不调用 [ADStore save]:快照的目的是保住"磁盘上现在的样子",如果启动时数据已经被
+// 误清空,先 save 一次只会把空数据也存进快照。
++ (void)autoSnapshotIfNeeded {
+    NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
+    NSDateFormatter *df = [NSDateFormatter new]; df.dateFormat = @"yyyyMMdd";
+    NSString *today = [df stringFromDate:NSDate.date];
+    if ([[ud stringForKey:@"ad_snap_day"] isEqualToString:today]) return;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        // 磁盘上几乎没数据(全新安装/刚被清空)就不存,免得 3 份快照被空数据挤满
+        NSUInteger total = 0;
+        for (NSString *k in [ADBackupController keys]) total += [NSData dataWithContentsOfFile:[ADDocs() stringByAppendingPathComponent:k]].length;
+        if (total < 600) { ADLogTag(@"APP", @"数据几乎为空,跳过自动快照"); return; }
+        NSString *name = [ADBackupController writeBackup:@"auto"];
+        [ud setObject:today forKey:@"ad_snap_day"];
+        // 只清自动快照,不动用户手动存的
+        NSString *dir = [ADDocs() stringByAppendingPathComponent:@"backups"];
+        NSFileManager *fm = NSFileManager.defaultManager;
+        NSMutableArray *autos = [NSMutableArray array];
+        for (NSString *f in [fm contentsOfDirectoryAtPath:dir error:nil]) if ([f hasPrefix:@"auto-"] && [f hasSuffix:@".adbak"]) [autos addObject:f];
+        [autos sortUsingSelector:@selector(compare:)];          // 文件名里是时间戳,字典序即时间序
+        while (autos.count > 3) { [fm removeItemAtPath:[dir stringByAppendingPathComponent:autos.firstObject] error:nil]; [autos removeObjectAtIndex:0]; }
+        ADLogTag(@"APP", @"自动快照 %@(现有 %lu 份)", name, (unsigned long)autos.count);
+    });
+}
+
++ (NSString *)writeBackup:(NSString *)prefix {
     NSMutableDictionary *pack = [NSMutableDictionary dictionary];
     for (NSString *k in [ADBackupController keys]) {
         NSData *d = [NSData dataWithContentsOfFile:[ADDocs() stringByAppendingPathComponent:k]];
@@ -535,7 +565,9 @@ static NSString *const kSkipPrefix = @"ad_skip";
     NSData *out = [NSPropertyListSerialization dataWithPropertyList:root format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
     NSDateFormatter *df = [NSDateFormatter new]; df.dateFormat = @"yyyyMMdd-HHmmss";
     NSString *name = [NSString stringWithFormat:@"%@-%@.adbak", prefix, [df stringFromDate:NSDate.date]];
-    [out writeToFile:[[self dir] stringByAppendingPathComponent:name] atomically:YES];
+    NSString *dir = [ADDocs() stringByAppendingPathComponent:@"backups"];
+    [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    [out writeToFile:[dir stringByAppendingPathComponent:name] atomically:YES];
     return name;
 }
 - (NSDictionary *)summaryOf:(NSString *)f {
