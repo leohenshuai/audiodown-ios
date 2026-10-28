@@ -39,6 +39,8 @@
 @property (nonatomic, assign, readwrite) double currentWritten, currentExpected;
 @property (nonatomic, strong) NSMutableSet<NSString *> *failedIds;
 @property (nonatomic, assign) NSInteger gen;
+// 切后台时,一集下完到下一集开始之间要联网取地址;用后台任务把这几秒撑住
+@property (nonatomic, assign) UIBackgroundTaskIdentifier bgTask;
 @end
 
 @implementation ADDownloader
@@ -51,9 +53,18 @@
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ [d fixExtensions]; });
         NSArray *fa = [NSUserDefaults.standardUserDefaults arrayForKey:@"ad_dl_failed"];
         d.failedIds = fa ? [NSMutableSet setWithArray:fa] : [NSMutableSet set];
+        d.bgTask = UIBackgroundTaskInvalid;
         [d load];
-        NSURLSessionConfiguration *c = [NSURLSessionConfiguration defaultSessionConfiguration];
+        // 后台会话:切 App、锁屏、甚至应用被系统回收,正在下的这一集都会继续,下完再唤醒我们
+        NSURLSessionConfiguration *c = [NSURLSessionConfiguration backgroundSessionConfigurationWithIdentifier:@"com.leo.audiodown.downloads"];
+        c.sessionSendsLaunchEvents = YES;
+        c.discretionary = NO;                       // 立即开始,不等系统挑时机
+        c.timeoutIntervalForResource = 24 * 3600;
         d.session = [NSURLSession sessionWithConfiguration:c delegate:d delegateQueue:nil];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [d reconcile];
+            [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { [d reconcile]; }];
+        });
     });
     return d;
 }
@@ -73,7 +84,70 @@
     NSSet *set = [NSSet setWithObjects:NSMutableArray.class, NSArray.class, ADTask.class, ADTrack.class, NSString.class, nil];
     NSData *d = [NSData dataWithContentsOfFile:[self listPath]];
     _tasks = [(d ? ADUnarchive(d, set) : nil) mutableCopy] ?: [NSMutableArray array];
-    for (ADTask *t in _tasks) if (t.state == ADTaskStateRunning) t.state = ADTaskStatePaused;
+    // 以前这里把"下载中"一律改成"暂停"。有了后台会话,应用被回收后下载可能还在继续,
+    // 是否真的还在下要查过会话里的任务才知道:见 reconcile。
+}
+
+// 当前"下载中"的任务;进程被后台事件拉起时 runningTask 还是空的,在这里接上
+- (ADTask *)activeTask {
+    if (self.runningTask) return self.runningTask;
+    for (ADTask *t in _tasks) if (t.state == ADTaskStateRunning) { self.runningTask = t; return t; }
+    return nil;
+}
+
+// 启动/回前台时对一遍账:列表里"下载中"的任务,后台会话里是不是真有一个在下
+- (void)reconcile {
+    if (self.runningTask && self.current) return;            // 本进程里正常在下,不用动
+    __weak typeof(self) w = self;
+    [self.session getTasksWithCompletionHandler:^(NSArray *d, NSArray *u, NSArray<NSURLSessionDownloadTask *> *downloads) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(w) self = w; if (!self) return;
+            if (self.runningTask && self.current) return;
+            ADTask *run = nil;
+            for (ADTask *t in self->_tasks) if (t.state == ADTaskStateRunning) { run = t; break; }
+            NSURLSessionDownloadTask *live = nil;
+            for (NSURLSessionDownloadTask *k in downloads) {
+                if (k.state != NSURLSessionTaskStateRunning && k.state != NSURLSessionTaskStateSuspended) continue;
+                if (!live && run) live = k; else [k cancel];      // 多出来的/没有主人的:取消
+            }
+            if (live && run) {
+                // 接管:应用被回收之后,这一集还在后台下着
+                self.runningTask = run; self.current = live; self.currentTrackId = live.taskDescription; self.resolving = NO;
+                self.currentWritten = (double)live.countOfBytesReceived; self.currentExpected = (double)live.countOfBytesExpectedToReceive;
+                ADLogTag(@"DL", @"接管后台下载 %@ 第%ld/%lu集", run.title ?: @"", (long)run.cursor + 1, (unsigned long)run.tracks.count);
+                [self notify];
+                return;
+            }
+            if (!run) return;
+            if (UIApplication.sharedApplication.applicationState == UIApplicationStateBackground) return;   // 后台被拉起:完成事件可能还在路上,先别判死
+            // 前台打开,会话里没有任务:多半是被强退过(强退会取消后台下载)。等 3 秒看有没有迟到的完成事件。
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                __strong typeof(w) self = w; if (!self || self.runningTask || self.current) return;
+                for (ADTask *t in self->_tasks) if (t.state == ADTaskStateRunning) {
+                    t.state = ADTaskStatePaused;
+                    ADLogWarn(@"DL", @"上次下载没能在后台继续(可能被强退),已暂停:%@", t.title ?: @"");
+                }
+                [self save]; [self notify];
+            });
+        });
+    }];
+}
+
+- (void)beginBG {
+    @synchronized (self) {
+        if (self.bgTask != UIBackgroundTaskInvalid) return;
+        __weak typeof(self) w = self;
+        self.bgTask = [UIApplication.sharedApplication beginBackgroundTaskWithName:@"ad.dl.chain" expirationHandler:^{ [w endBG]; }];
+    }
+    __weak typeof(self) w2 = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(28 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [w2 endBG]; });   // 保险
+}
+- (void)endBG {
+    @synchronized (self) {
+        if (self.bgTask == UIBackgroundTaskInvalid) return;
+        [UIApplication.sharedApplication endBackgroundTask:self.bgTask];
+        self.bgTask = UIBackgroundTaskInvalid;
+    }
 }
 - (void)save {
     [[NSKeyedArchiver archivedDataWithRootObject:_tasks requiringSecureCoding:NO error:nil] writeToFile:[self listPath] atomically:YES];
@@ -304,8 +378,10 @@
 }
 
 - (void)stepTask:(ADTask *)t {
-    if (t.state != ADTaskStateRunning) { self.runningTask = nil; [self pump]; return; }
+    if (t.state == ADTaskStateRunning && !self.runningTask) self.runningTask = t;   // 被后台事件拉起时接上
+    if (t.state != ADTaskStateRunning) { self.runningTask = nil; [self endBG]; [self pump]; return; }
     if (t.cursor >= (NSInteger)t.tracks.count) {
+        [self endBG];
         self.currentTrackId = nil;
         t.state = t.failed ? ADTaskStateFailed : ADTaskStateDone;
         self.runningTask = nil;
@@ -368,11 +444,14 @@
         self.current = [self.session downloadTaskWithRequest:r];
         self.current.taskDescription = tr.trackId;
         [self.current resume];
+        ADLogTag(@"DL", @"开始下载 第%ld/%lu集 %@", (long)t.cursor + 1, (unsigned long)t.tracks.count, tr.title ?: tr.trackId);
+        [self endBG];                                        // 这一集已交给后台会话,接下来不需要我们醒着
         [self notify];
     }];
 }
 
 - (void)URLSession:(NSURLSession *)s downloadTask:(NSURLSessionDownloadTask *)task didFinishDownloadingToURL:(NSURL *)location {
+    [self beginBG];                                          // 马上要联网取下一集的地址,别在这之前被挂起
     NSString *tid = task.taskDescription;
     NSFileManager *fm = [NSFileManager defaultManager];
     for (NSString *e in [self exts]) [fm removeItemAtPath:[self pathFor:tid ext:e] error:nil];
@@ -392,8 +471,8 @@
         __weak typeof(self) w0 = self;
         dispatch_async(dispatch_get_main_queue(), ^{
             __strong typeof(w0) self = w0; if (!self) return;
-            ADTask *t0 = self.runningTask;
-            if (!t0 || t0.state != ADTaskStateRunning) return;
+            ADTask *t0 = [self activeTask];
+            if (!t0 || t0.state != ADTaskStateRunning) { [self endBG]; return; }
             NSInteger tries = tid.length ? [self.retryMap[tid] integerValue] : 99;
             if (tries < 2) {
                 if (tid.length) self.retryMap[tid] = @(tries + 1);
@@ -413,12 +492,15 @@
     }
     if (tid.length) [self.retryMap removeObjectForKey:tid];
     self.waitCount = 0;
-    ADTask *t = self.runningTask;
-    if (!t) { for (ADTask *x in _tasks) if (x.state == ADTaskStateRunning) { t = x; break; } }
     __weak typeof(self) w = self;
     dispatch_async(dispatch_get_main_queue(), ^{
         __strong typeof(w) self = w; if (!self) return;
-        if (t) { t.done += 1; t.cursor += 1; }
+        ADTask *t = [self activeTask];                       // 被后台事件拉起时 runningTask 还是空的
+        if (t) {
+            ADTrack *cur = (t.cursor < (NSInteger)t.tracks.count) ? t.tracks[t.cursor] : nil;
+            if (cur && [cur.trackId isEqualToString:tid]) { t.done += 1; t.cursor += 1; }
+            else ADLogWarn(@"DL", @"完成的这集(%@)不是当前游标那集,只落盘不计数", tid);
+        } else [self endBG];
         if (tid.length && [self.failedIds containsObject:tid]) { [self.failedIds removeObject:tid]; [self saveFailed]; }
         self.currentTrackId = nil; self.currentWritten = 0; self.currentExpected = 0;
         self.current = nil;
@@ -430,10 +512,12 @@
 - (void)URLSession:(NSURLSession *)s task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
     if (!error || error.code == NSURLErrorCancelled) return;   // 暂停/删除时主动取消，不算失败
     ADLogError(@"DL", @"✗ 下载出错 trackId=%@ %@ (code %ld)", task.taskDescription, error.localizedDescription, (long)error.code);
+    [self beginBG];
     __weak typeof(self) w = self;
     dispatch_async(dispatch_get_main_queue(), ^{
         __strong typeof(w) self = w; if (!self) return;
-        ADTask *t = self.runningTask;
+        ADTask *t = [self activeTask];
+        if (!t || t.state != ADTaskStateRunning) [self endBG];
         if (t && t.state == ADTaskStateRunning) {
             NSString *tid = task.taskDescription;
             NSInteger tries = tid.length ? [self.retryMap[tid] integerValue] : 99;
@@ -451,6 +535,16 @@
             [self save]; [self notify];
             [self stepTask:t];
         }
+    });
+}
+
+// 系统因后台下载事件唤醒我们、且这批事件都已交付完:通知系统可以重新挂起(下一集的联网由 bgTask 撑着)
+- (void)URLSessionDidFinishEventsForBackgroundURLSession:(NSURLSession *)session {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        void (^h)(void) = self.bgCompletion;
+        self.bgCompletion = nil;
+        ADLogTag(@"DL", @"后台下载事件处理完毕");
+        if (h) h();
     });
 }
 

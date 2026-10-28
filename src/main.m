@@ -43,6 +43,14 @@
 }
 
 - (void)applicationDidEnterBackground:(UIApplication *)app { [[ADStore shared] save]; }
+
+// 应用被杀或挂起后,后台下载仍在继续;有下载完成时系统会拉起应用走这里。
+// 必须马上重建同名会话(取 shared 即可),系统才会把完成事件交给下载器。
+- (void)application:(UIApplication *)app handleEventsForBackgroundURLSession:(NSString *)identifier completionHandler:(void (^)(void))handler {
+    ADLogTag(@"DL", @"被后台下载唤醒 %@", identifier);
+    ADDownloader *d = [ADDownloader shared];
+    d.bgCompletion = handler;
+}
 @end
 
 int main(int argc, char *argv[]) {

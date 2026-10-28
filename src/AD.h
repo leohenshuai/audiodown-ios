@@ -178,6 +178,8 @@ typedef NS_ENUM(NSInteger, ADTaskState) {
 
 @interface ADDownloader : NSObject
 + (instancetype)shared;
+// 系统因后台下载事件唤醒应用时交给我们的完成回调:全部事件处理完再调用,系统才会重新挂起应用
+@property (nonatomic, copy, nullable) void (^bgCompletion)(void);
 - (NSArray<ADTask *> *)tasks;
 - (nullable ADTask *)taskForAlbum:(NSString *)albumId;
 - (void)addAlbum:(ADAlbum *)a tracks:(NSArray<ADTrack *> *)tracks;
