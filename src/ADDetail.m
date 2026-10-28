@@ -1935,7 +1935,8 @@ void ADEditSkip(UIViewController *host, ADAlbum *album) {
         [sleepBtn setTitle:@"" forState:UIControlStateNormal];
         [sleepBtn setImage:[UIImage systemImageNamed:@"moon.zzz.fill"] forState:UIControlStateNormal];
         sleepBtn.tintColor = [ADUtil brand];
-        self.mid.text = [NSString stringWithFormat:@"%@ · 本集播完停", self.mid.text ?: @""];
+        // 定时状态已经在下面按钮上显示了,中间只留码率,不再重复
+        self.mid.text = mid ?: @"在线播放";
     } else if (p.sleepDeadline > 0) {
         double left = p.sleepDeadline - [NSDate date].timeIntervalSince1970;
         // 开了定时就把按钮直接换成剩余时间（和听见有声一致）
@@ -1944,7 +1945,7 @@ void ADEditSkip(UIViewController *host, ADAlbum *album) {
         sleepBtn.titleLabel.font = [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightMedium];
         [sleepBtn setTitleColor:[ADUtil brand] forState:UIControlStateNormal];
         sleepBtn.tintColor = [ADUtil brand];
-        self.mid.text = [NSString stringWithFormat:@"%@ · %@后停", self.mid.text ?: @"", [ADUtil time:left]];
+        self.mid.text = mid ?: @"在线播放";
     } else {
         [sleepBtn setTitle:@"" forState:UIControlStateNormal];
         [sleepBtn setImage:[UIImage systemImageNamed:@"moon.zzz.fill"] forState:UIControlStateNormal];
