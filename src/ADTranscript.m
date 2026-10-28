@@ -105,6 +105,10 @@ static void ADTRDistribute(NSString *text, double s, double e, NSMutableArray<AD
 @property (nonatomic, assign) double duration;
 @property (nonatomic, assign) NSInteger chunks, next;
 @property (nonatomic, strong) NSMutableArray<ADTLine *> *lines;
+@property (nonatomic, assign) double chunkSec;
+@property (nonatomic, assign) BOOL qwen;                       // 阿里百炼 qwen3-asr:30 秒一段 wav,走 chat/completions
+@property (nonatomic, strong) NSMutableArray *pending;         // 等待批量校对的段(每段一个 {start,end,text})
+@property (nonatomic, assign) NSInteger groupStart;            // pending 对应的第一行在 lines 里的位置
 @end
 @implementation ADTJob @end
 
@@ -122,6 +126,10 @@ static void ADTRDistribute(NSString *text, double s, double e, NSMutableArray<AD
 + (instancetype)shared { static ADTranscriber *s; static dispatch_once_t o; dispatch_once(&o, ^{ s = [ADTranscriber new]; s.status = [NSMutableDictionary dictionary]; s.mem = [NSMutableDictionary dictionary]; s.queue = [NSMutableArray array]; s.views = [NSHashTable weakObjectsHashTable]; }); return s; }
 
 + (BOOL)configured { return ADTRDef(@"ad_asr_base").length > 0 && ADTRDef(@"ad_asr_model").length > 0; }
++ (BOOL)isQwen {
+    NSString *b = ADTRDef(@"ad_asr_base").lowercaseString;
+    return [b containsString:@"dashscope"] || [b containsString:@"aliyuncs"];
+}
 
 - (void)post:(NSString *)tid { dispatch_async(dispatch_get_main_queue(), ^{ [NSNotificationCenter.defaultCenter postNotificationName:kTRChanged object:tid]; }); }
 - (void)setState:(NSString *)s for:(NSString *)tid { dispatch_async(dispatch_get_main_queue(), ^{ if (s) self.status[tid] = s; else [self.status removeObjectForKey:tid]; [self post:tid]; }); }
@@ -203,7 +211,9 @@ static void ADTRDistribute(NSString *text, double s, double e, NSMutableArray<AD
             double dur = CMTimeGetSeconds(asset.duration);
             if (isnan(dur) || dur <= 0) dur = 0;
             j.duration = dur;
-            j.chunks = dur > 0 ? (NSInteger)ceil(dur / kChunkSec) : 1;
+            j.qwen = [ADTranscriber isQwen];
+            j.chunkSec = j.qwen ? 30 : kChunkSec;
+            j.chunks = dur > 0 ? (NSInteger)ceil(dur / j.chunkSec) : 1;
             j.next = 0;
             // 上次做到一半:从断点续(已识别的行保留)
             NSDictionary *old = [self rawFor:j.track.trackId];
@@ -242,6 +252,7 @@ static void ADTRDistribute(NSString *text, double s, double e, NSMutableArray<AD
 
 // 逐段:导出 5 分钟 → 识别 → 校对 → 落盘 → 下一段
 - (void)chunk:(ADTJob *)j {
+    if (j.qwen) { [self chunkQ:j]; return; }
     if (j.next >= j.chunks) { [self save:j]; [self finish:j]; return; }
     NSInteger k = j.next;
     [self setState:(j.chunks > 1 ? [NSString stringWithFormat:@"AI 识别中 %ld/%ld…", (long)k + 1, (long)j.chunks] : @"AI 识别中…") for:j.track.trackId];
@@ -249,8 +260,8 @@ static void ADTRDistribute(NSString *text, double s, double e, NSMutableArray<AD
     [self exportChunk:j index:k done:^(NSURL *part, BOOL temp, NSString *err) {
         __strong typeof(w) self = w; if (!self) return;
         if (!part) { [self fail:j msg:err ?: @"音频切段失败"]; return; }
-        double off = (j.chunks > 1) ? k * kChunkSec : 0;
-        double len = j.duration > 0 ? MIN(kChunkSec, j.duration - off) : 0;
+        double off = (j.chunks > 1) ? k * j.chunkSec : 0;
+        double len = j.duration > 0 ? MIN(j.chunkSec, j.duration - off) : 0;
         [self asr:part album:j.album verbose:YES done:^(NSArray *segs, NSString *aerr) {
             if (temp) [NSFileManager.defaultManager removeItemAtURL:part error:nil];
             if (!segs) { [self fail:j msg:aerr ?: @"识别失败"]; return; }
@@ -319,8 +330,8 @@ static void ADTRDistribute(NSString *text, double s, double e, NSMutableArray<AD
     [NSFileManager.defaultManager removeItemAtURL:out error:nil];
     ex.outputURL = out;
     ex.outputFileType = AVFileTypeAppleM4A;
-    double off = k * kChunkSec;
-    ex.timeRange = CMTimeRangeMake(CMTimeMakeWithSeconds(off, 600), CMTimeMakeWithSeconds(MIN(kChunkSec, MAX(1, j.duration - off)), 600));
+    double off = k * j.chunkSec;
+    ex.timeRange = CMTimeRangeMake(CMTimeMakeWithSeconds(off, 600), CMTimeMakeWithSeconds(MIN(j.chunkSec, MAX(1, j.duration - off)), 600));
     [ex exportAsynchronouslyWithCompletionHandler:^{
         if (ex.status == AVAssetExportSessionStatusCompleted) cb(out, YES, nil);
         else cb(nil, NO, [NSString stringWithFormat:@"音频切段失败 %@", ex.error.localizedDescription ?: @""]);
@@ -373,6 +384,7 @@ static void ADTRDistribute(NSString *text, double s, double e, NSMutableArray<AD
             if (verbose && code == 400) { ADLogWarn(@"AI", @"接口不支持分段时间,改用纯文本"); [self asr:file album:a verbose:NO done:cb]; return; }
             NSString *msg = [j isKindOfClass:NSDictionary.class] ? ([j[@"error"] isKindOfClass:NSDictionary.class] ? j[@"error"][@"message"] : [j[@"error"] description]) : nil;
             if (!msg.length) msg = [[NSString alloc] initWithData:[data subdataWithRange:NSMakeRange(0, MIN(160, data.length))] encoding:NSUTF8StringEncoding];
+            if (code == 404 && !msg.length) msg = @"这个地址下没有语音识别接口,请确认服务商支持 /audio/transcriptions";
             cb(nil, [NSString stringWithFormat:@"识别接口 %ld:%@", (long)code, msg ?: @""]);
             return;
         }
@@ -393,6 +405,144 @@ static void ADTRDistribute(NSString *text, double s, double e, NSMutableArray<AD
         }
         cb(segs, nil);
     }] resume];
+}
+
+// ── 阿里百炼 qwen3-asr-flash ──
+// 兼容接口只返回整段文字,没有时间戳:所以每 30 秒一段,段起止时间已知,段内按字数分行。
+static NSData *ADTRWav(NSURL *file, double off, double len) {
+    AVURLAsset *as = [AVURLAsset URLAssetWithURL:file options:nil];
+    AVAssetTrack *trk = [[as tracksWithMediaType:AVMediaTypeAudio] firstObject];
+    if (!trk) return nil;
+    AVAssetReader *rd = [[AVAssetReader alloc] initWithAsset:as error:nil];
+    if (!rd) return nil;
+    rd.timeRange = CMTimeRangeMake(CMTimeMakeWithSeconds(off, 600), CMTimeMakeWithSeconds(len, 600));
+    NSDictionary *st = @{AVFormatIDKey: @(kAudioFormatLinearPCM), AVSampleRateKey: @16000, AVNumberOfChannelsKey: @1,
+                         AVLinearPCMBitDepthKey: @16, AVLinearPCMIsFloatKey: @NO, AVLinearPCMIsBigEndianKey: @NO, AVLinearPCMIsNonInterleaved: @NO};
+    AVAssetReaderTrackOutput *out = [AVAssetReaderTrackOutput assetReaderTrackOutputWithTrack:trk outputSettings:st];
+    [rd addOutput:out];
+    if (![rd startReading]) return nil;
+    NSMutableData *pcm = [NSMutableData data];
+    CMSampleBufferRef sb;
+    while ((sb = [out copyNextSampleBuffer])) {
+        CMBlockBufferRef bb = CMSampleBufferGetDataBuffer(sb);
+        size_t n = bb ? CMBlockBufferGetDataLength(bb) : 0;
+        if (n) { NSMutableData *tmp = [NSMutableData dataWithLength:n]; CMBlockBufferCopyDataBytes(bb, 0, n, tmp.mutableBytes); [pcm appendData:tmp]; }
+        CFRelease(sb);
+    }
+    if (pcm.length < 3200) return nil;
+    uint32_t dl = (uint32_t)pcm.length, rl = dl + 36, sr = 16000, br = 32000, fl = 16;
+    uint16_t fmt = 1, ch = 1, ba = 2, bits = 16;
+    NSMutableData *w = [NSMutableData dataWithCapacity:44 + pcm.length];
+    [w appendBytes:"RIFF" length:4]; [w appendBytes:&rl length:4]; [w appendBytes:"WAVEfmt " length:8];
+    [w appendBytes:&fl length:4]; [w appendBytes:&fmt length:2]; [w appendBytes:&ch length:2];
+    [w appendBytes:&sr length:4]; [w appendBytes:&br length:4]; [w appendBytes:&ba length:2]; [w appendBytes:&bits length:2];
+    [w appendBytes:"data" length:4]; [w appendBytes:&dl length:4]; [w appendData:pcm];
+    return w;
+}
+
+- (void)asrQwen:(NSData *)wav album:(ADAlbum *)a context:(BOOL)ctx done:(void (^)(NSString *, NSString *))cb {
+    NSURL *url = ADTREndpoint(ADTRDef(@"ad_asr_base"), @"/chat/completions");
+    if (!url) { cb(nil, @"识别接口地址不对"); return; }
+    NSString *key = ADTRKeyGet(@"asr");
+    NSMutableArray *msgs = [NSMutableArray array];
+    if (ctx) {
+        NSArray *names = [self namesOf:a.albumId];
+        NSString *c = [NSString stringWithFormat:@"有声书《%@》的朗读。%@", a.title ?: @"", names.count ? [NSString stringWithFormat:@"人物:%@。", [names componentsJoinedByString:@"、"]] : @""];
+        if (c.length > 300) c = [c substringToIndex:300];
+        [msgs addObject:@{@"role": @"system", @"content": c}];
+    }
+    NSString *dataURL = [@"data:audio/wav;base64," stringByAppendingString:[wav base64EncodedStringWithOptions:0]];
+    [msgs addObject:@{@"role": @"user", @"content": @[@{@"type": @"input_audio", @"input_audio": @{@"data": dataURL}}]}];
+    NSMutableDictionary *opts = [@{@"enable_itn": @NO} mutableCopy];
+    NSString *lang = ADTRDef(@"ad_asr_lang");
+    if (lang.length) opts[@"language"] = lang;
+    NSDictionary *payload = @{@"model": ADTRDef(@"ad_asr_model"), @"messages": msgs, @"stream": @NO, @"asr_options": opts};
+    NSMutableURLRequest *r = [NSMutableURLRequest requestWithURL:url];
+    r.HTTPMethod = @"POST";
+    r.timeoutInterval = 90;
+    [r setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    if (key.length) [r setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
+    r.HTTPBody = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
+    __weak typeof(self) w = self;
+    [[NSURLSession.sharedSession dataTaskWithRequest:r completionHandler:^(NSData *data, NSURLResponse *resp, NSError *e) {
+        __strong typeof(w) self = w; if (!self) return;
+        NSInteger code = [(NSHTTPURLResponse *)resp statusCode];
+        if (e) { cb(nil, e.localizedDescription); return; }
+        id j = data.length ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+        if (code < 200 || code >= 300) {
+            // 带 system 上下文被拒:去掉上下文再试一次(不确定这个模型是否接受 system 消息)
+            if (ctx && code == 400) { ADLogWarn(@"AI", @"接口不接受上下文提示,去掉后重试"); [self asrQwen:wav album:a context:NO done:cb]; return; }
+            NSString *msg = nil;
+            if ([j isKindOfClass:NSDictionary.class]) {
+                id er = j[@"error"];
+                msg = [er isKindOfClass:NSDictionary.class] ? [er[@"message"] description] : ([j[@"message"] description] ?: ([er description]));
+            }
+            if (!msg.length && data.length) msg = [[NSString alloc] initWithData:[data subdataWithRange:NSMakeRange(0, MIN(160, data.length))] encoding:NSUTF8StringEncoding];
+            if (code == 401) msg = [@"Key 不对或没开通 " stringByAppendingString:msg ?: @""];
+            if (code == 404 && !msg.length) msg = @"接口地址或模型名不对";
+            cb(nil, [NSString stringWithFormat:@"识别接口 %ld:%@", (long)code, msg ?: @""]);
+            return;
+        }
+        NSString *content = nil;
+        id ch = [j isKindOfClass:NSDictionary.class] && [j[@"choices"] isKindOfClass:NSArray.class] ? [j[@"choices"] firstObject] : nil;
+        id msg = [ch isKindOfClass:NSDictionary.class] ? ch[@"message"] : nil;
+        id ct = [msg isKindOfClass:NSDictionary.class] ? msg[@"content"] : nil;
+        if ([ct isKindOfClass:NSString.class]) content = ct;
+        else if ([ct isKindOfClass:NSArray.class]) { NSMutableString *m = [NSMutableString string]; for (id p in ct) if ([p isKindOfClass:NSDictionary.class] && p[@"text"]) [m appendString:[p[@"text"] description]]; content = m; }
+        cb(content ?: @"", nil);   // 静音段返回空串是正常的
+    }] resume];
+}
+
+// 阿里模式的主循环:30 秒一段 → 识别 → 立即显示;每满 6 段(约 3 分钟)批量校对一次,校对好了替换这几行
+- (void)chunkQ:(ADTJob *)j {
+    if (j.next >= j.chunks) { [self correctGroup:j done:^{ [self save:j]; [self finish:j]; }]; return; }
+    NSInteger k = j.next;
+    [self setState:[NSString stringWithFormat:@"AI 识别中 %ld/%ld…", (long)k + 1, (long)j.chunks] for:j.track.trackId];
+    double off = k * j.chunkSec;
+    double len = j.duration > 0 ? MIN(j.chunkSec, j.duration - off) : j.chunkSec;
+    if (len < 0.4) { j.next = k + 1; [self chunkQ:j]; return; }
+    __weak typeof(self) w = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        __strong typeof(w) self = w; if (!self) return;
+        NSData *wav = ADTRWav(j.file, off, len);
+        if (!wav.length) {
+            // 这一段读不出来(多半是尾部太短或静音):跳过,不让整集失败
+            ADLogWarn(@"AI", @"第 %ld 段音频转码为空,跳过", (long)k + 1);
+            j.next = k + 1; [self chunkQ:j]; return;
+        }
+        [self asrQwen:wav album:j.album context:YES done:^(NSString *text, NSString *err) {
+            if (!text) { [self fail:j msg:err ?: @"识别失败"]; return; }
+            NSString *tx = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+            BOOL llm = [NSUserDefaults.standardUserDefaults boolForKey:@"ad_llm_on"] && ADTRDef(@"ad_llm_model").length;
+            if (tx.length) {
+                if (llm) {
+                    if (!j.pending) j.pending = [NSMutableArray array];
+                    if (!j.pending.count) j.groupStart = j.lines.count;
+                    [j.pending addObject:@{@"start": @(off), @"end": @(off + len), @"text": tx}];
+                }
+                ADTRDistribute(tx, off, off + len, j.lines);
+            }
+            j.next = k + 1;
+            [self save:j];
+            if (j.pending.count >= 6) [self correctGroup:j done:^{ [self chunkQ:j]; }];
+            else [self chunkQ:j];
+        }];
+    });
+}
+- (void)correctGroup:(ADTJob *)j done:(void (^)(void))done {
+    NSArray *segs = [j.pending copy];
+    if (!segs.count) { done(); return; }
+    [j.pending removeAllObjects];
+    [self setState:@"AI 校对中…" for:j.track.trackId];
+    [self correct:segs album:j.album done:^(NSArray *fixed) {
+        // correct: 失败时回传的就是原数组对象;成功才替换这几段已显示的行
+        if (fixed != segs && j.groupStart <= (NSInteger)j.lines.count) {
+            [j.lines removeObjectsInRange:NSMakeRange(j.groupStart, j.lines.count - j.groupStart)];
+            for (NSDictionary *sg in fixed) ADTRDistribute(sg[@"text"], [sg[@"start"] doubleValue], [sg[@"end"] doubleValue], j.lines);
+            [self save:j];
+        }
+        done();
+    }];
 }
 
 // ── 大模型校对:只改错字/人名/标点,行数必须一致,对不上就用原文 ──
@@ -763,7 +913,7 @@ static NSArray *ADTRFields(void) {
     return @[@"语音识别(OpenAI 兼容 /audio/transcriptions)", @"大模型校对(OpenAI 兼容 /chat/completions)", @"", @"缓存"][s];
 }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
-    if (s == 0) return @"服务商和模型由你决定:OpenAI、阿里云百炼、硅基流动、Groq 或自建服务,只要兼容 OpenAI 接口格式都能用。Key 存在本机钥匙串,不进备份,也不会写进日志。";
+    if (s == 0) return @"· OpenAI 兼容(Groq、OpenAI 等):地址填到 /v1,模型如 whisper-large-v3。\n· 阿里百炼:地址 https://dashscope.aliyuncs.com/compatible-mode/v1,模型 qwen3-asr-flash(自动按 30 秒分段)。\nDeepSeek 没有语音识别接口,不能填在这里。Key 存在本机钥匙串,不进备份,也不写进日志。";
     if (s == 1) return @"校对只改错字、统一人名、补标点,不改写内容。会把书名、简介和识别出的人名一起发给模型,人名会越用越准。";
     if (s == 2) return @"打开文稿并听完当前集识别后,自动识别下一集,切集时不用等。";
     return nil;
