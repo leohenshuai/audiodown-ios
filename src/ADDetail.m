@@ -2790,7 +2790,7 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
         if (ip.row == 0) { icon = @"bookmark.fill"; ic = orange; c.textLabel.text = @"书签"; c.detailTextLabel.text = [NSString stringWithFormat:@"%ld 条", (long)[ADStore shared].bookmarks.count]; }
         else if (ip.row == 1) { icon = @"externaldrive.badge.timemachine"; ic = blue; c.textLabel.text = @"备份与恢复"; c.detailTextLabel.text = @"收藏、进度、听完标记、书签"; }
         else if (ip.row == 2) { icon = @"doc.text.magnifyingglass"; ic = purple; c.textLabel.text = @"运行日志"; c.detailTextLabel.text = @"出问题时导出并分享,可筛选网络、播放、错误"; }
-        else { icon = @"text.bubble.fill"; ic = blue; c.textLabel.text = @"AI 文稿"; c.detailTextLabel.text = [NSUserDefaults.standardUserDefaults stringForKey:@"ad_asr_model"].length ? [NSUserDefaults.standardUserDefaults stringForKey:@"ad_asr_model"] : @"未设置"; }
+        else { icon = @"text.bubble.fill"; ic = blue; c.textLabel.text = @"AI 文稿"; c.detailTextLabel.text = @"系统自带离线识别,不联网、免费"; }
         c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         c.selectionStyle = UITableViewCellSelectionStyleDefault;
         break;
