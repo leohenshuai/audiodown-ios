@@ -2584,7 +2584,7 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
         case ADSecPlay: return 5;       // 预缓存 / 仅 WiFi / 集数 / 自动清理 / 跳过片头片尾
         case ADSecStorage: return 3;    // 本机下载 / 离线存储 / 全部暂停继续
         case ADSecFeel: return 2;       // 触感 / 提示音
-        case ADSecData: return 2;       // 书签 / 备份恢复
+        case ADSecData: return 3;       // 书签 / 备份恢复 / 运行日志
         default: return 4;              // 版本 / 检查更新 / GitHub 令牌 / 项目主页
     }
 }
@@ -2722,7 +2722,8 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
     }
     case ADSecData: {
         if (ip.row == 0) { icon = @"bookmark.fill"; ic = orange; c.textLabel.text = @"书签"; c.detailTextLabel.text = [NSString stringWithFormat:@"%ld 条", (long)[ADStore shared].bookmarks.count]; }
-        else { icon = @"externaldrive.badge.timemachine"; ic = blue; c.textLabel.text = @"备份与恢复"; c.detailTextLabel.text = @"收藏、进度、听完标记、书签"; }
+        else if (ip.row == 1) { icon = @"externaldrive.badge.timemachine"; ic = blue; c.textLabel.text = @"备份与恢复"; c.detailTextLabel.text = @"收藏、进度、听完标记、书签"; }
+        else { icon = @"doc.text.magnifyingglass"; ic = purple; c.textLabel.text = @"运行日志"; c.detailTextLabel.text = @"出问题时打开这里,可分享给我定位"; }
         c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         c.selectionStyle = UITableViewCellSelectionStyleDefault;
         break;
@@ -2810,7 +2811,8 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
     }
     case ADSecData:
         [ADHaptic tap];
-        [self.navigationController pushViewController:(ip.row == 0 ? [ADBookmarksController new] : [ADBackupController new]) animated:YES];
+        if (ip.row == 2) [self.navigationController pushViewController:[ADLogController new] animated:YES];
+        else [self.navigationController pushViewController:(ip.row == 0 ? [ADBookmarksController new] : [ADBackupController new]) animated:YES];
         return;
     case ADSecAbout:
         if (ip.row == 1) [self checkUpdate:YES];

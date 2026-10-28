@@ -81,6 +81,9 @@ static void ADCacheSet(NSString *key, id json) {
     NSMutableURLRequest *r = [self request:path method:method body:body];
     if (timeout > 0) r.timeoutInterval = timeout;
     NSLog(@"[AD] %@ %@", method, r.URL.absoluteString);
+    NSString *lp = r.URL.path ?: @"";
+    CFTimeInterval t0 = CACurrentMediaTime();
+    ADLog(@"→ %@ %@", method, lp);
     [[self.session dataTaskWithRequest:r completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
         NSInteger code = [(NSHTTPURLResponse *)resp statusCode];
         id json = data.length ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingAllowFragments error:nil] : nil;
@@ -99,6 +102,9 @@ static void ADCacheSet(NSString *key, id json) {
             if ([json isKindOfClass:NSDictionary.class] && [json[@"error"] isKindOfClass:NSString.class]) message = json[@"error"];
             else message = [NSString stringWithFormat:@"HTTP %ld", (long)code];
         }
+        long ms = (long)((CACurrentMediaTime() - t0) * 1000);
+        if (message) ADLog(@"✗ %@ %@ %ldms %@", method, lp, ms, message);
+        else ADLog(@"← %@ %ld %@ %ldms %luB", method, (long)code, lp, ms, (unsigned long)data.length);
         dispatch_async(dispatch_get_main_queue(), ^{ cb(json, message); });
     }] resume];
 }

@@ -178,6 +178,7 @@
         [[ADStore shared] setLastTrack:trackId album:album.albumId];
         if (play) { [[ADStore shared] touchHistory:album]; [self playAt:0]; }
         [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
+        ADLog(@"快起播 %@ 第%ld集(目录后台补)", album.title ?: @"", (long)(index + 1));
         [self loadCatalogAround:album around:index];
         return;
     }
@@ -245,6 +246,7 @@
     self.resolving = YES; self.resolveT = CACurrentMediaTime();
     _index = index;
     self.retriedItem = NO;
+    ADLog(@"playAt 第%ld集 %@ 队列%lu 偏移%ld", (long)(index + self.episodeBase + 1), _tracks[index].title ?: @"", (unsigned long)_tracks.count, (long)self.episodeBase);
     ADTrack *t = _tracks[index];
     NSURL *local = [[ADDownloader shared] localURL:t.trackId];
     if (!local) {
@@ -360,6 +362,7 @@
     [[ADApi shared] playURLOf:t done:^(NSString *url, NSDictionary *headers, NSString *err) {
         __strong typeof(w) self = w; if (!self) return;
         if (seq != self.resolveSeq) return;          // 已被后来的请求取代
+        ADLog(@"取地址%@ %@ %@", url ? @"成功" : @"失败", t.title ?: @"", url ? @"" : (err ?: @""));
         if (!url) {
             // 取地址失败（超时 / 服务端 5xx）先自己重试一次，别直接甩错误
             if (attempt < 1) {
@@ -398,6 +401,7 @@
 }
 
 - (void)startWithURL:(NSString *)url headers:(NSDictionary *)headers track:(ADTrack *)t {
+    ADLog(@"起播 第%ld集 %@", (long)(self.index + self.episodeBase + 1), t.title ?: @"");
     self.resolving = NO;                       // 地址已经拿到，空窗结束
     self.skipTailFired = NO;                   // 新的一集：片尾跳过重新武装
     [self prefetchAhead];
@@ -495,6 +499,7 @@
 // 一集播完之后的统一处理：自然播完（AVPlayerItemDidPlayToEndTime）和片尾跳过都走这里。
 - (void)trackFinished {
     ADTrack *cur = self.current;
+    ADLog(@"本集结束 第%ld集", (long)(self.index + self.episodeBase + 1));
     if (cur.trackId) {
         BOOL last = (_index + 1 >= (NSInteger)_tracks.count) && self.episodeBase == 0;
         [[ADStore shared] markDone:cur.trackId album:_album.albumId wholeBook:last];
@@ -578,6 +583,7 @@
                     self.index = pos;
                     self.episodeBase = 0;
                     self.trackPageSize = size;
+                    ADLog(@"目录补齐 %ld 集(到第%ld集)", (long)uniq.count, (long)(pos + 1));
                     [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
                     [self appendRestOfCatalog:album fromPage:lastPage + 1 size:size];
                 });

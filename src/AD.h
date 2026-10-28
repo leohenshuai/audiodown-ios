@@ -74,6 +74,16 @@ FOUNDATION_EXPORT id _Nullable ADUnarchive(NSData * _Nullable data, NSSet * _Non
 @end
 
 // ───────────────── iOS26 设计系统 ─────────────────
+
+// ───────────────── 运行日志（排查用）─────────────────
+void ADLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1, 2);
+void ADLogInstallCrashHandler(void);
+void ADLogClear(void);
+NSString *ADLogTail(NSUInteger maxLines);
+NSString *ADLogFilePath(void);
+void ADLogExceptionHandler(NSException *e);
+@interface ADLogController : UIViewController @end
+
 @interface ADLiquid : NSObject
 + (void)canvas:(UIView *)v;                                  // 背景：渐变 + 双光斑（带缓慢漂移）
 + (void)glass:(UIView *)v radius:(CGFloat)r;                 // 玻璃面
