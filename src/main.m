@@ -29,7 +29,8 @@
     [self.window makeKeyAndVisible];
     NSString *v = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"?";
     NSString *bd = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleVersion"] ?: @"?";
-    ADLog(@"──── 启动 阅听 %@ (%@) iOS %@ ────", v, bd, UIDevice.currentDevice.systemVersion);
+    ADLogTag(@"SYS", @"──── 启动 阅听 %@ (%@) iOS %@ %@ ────", v, bd, UIDevice.currentDevice.systemVersion, ADLogLastRunAbnormal() ? @"· 上次异常退出" : @"");
+    ADLogStartWatching();
     [[ADPlayer shared] restoreLast];
     [ADUpdater backgroundCheck];
     NSLog(@"[AD] launched");
@@ -41,10 +42,7 @@
     [[ADNavDock shared] show:atRoot animated:animated];
 }
 
-- (void)applicationDidEnterBackground:(UIApplication *)app {
-    ADLog(@"app 进入后台");
-    [[ADStore shared] save];
-}
+- (void)applicationDidEnterBackground:(UIApplication *)app { [[ADStore shared] save]; }
 @end
 
 int main(int argc, char *argv[]) {

@@ -2723,7 +2723,7 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
     case ADSecData: {
         if (ip.row == 0) { icon = @"bookmark.fill"; ic = orange; c.textLabel.text = @"书签"; c.detailTextLabel.text = [NSString stringWithFormat:@"%ld 条", (long)[ADStore shared].bookmarks.count]; }
         else if (ip.row == 1) { icon = @"externaldrive.badge.timemachine"; ic = blue; c.textLabel.text = @"备份与恢复"; c.detailTextLabel.text = @"收藏、进度、听完标记、书签"; }
-        else { icon = @"doc.text.magnifyingglass"; ic = purple; c.textLabel.text = @"运行日志"; c.detailTextLabel.text = @"出问题时打开这里,可分享给我定位"; }
+        else { icon = @"doc.text.magnifyingglass"; ic = purple; c.textLabel.text = @"运行日志"; c.detailTextLabel.text = @"出问题时导出并分享,可筛选网络、播放、错误"; }
         c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         c.selectionStyle = UITableViewCellSelectionStyleDefault;
         break;

@@ -76,11 +76,22 @@ FOUNDATION_EXPORT id _Nullable ADUnarchive(NSData * _Nullable data, NSSet * _Non
 // ───────────────── iOS26 设计系统 ─────────────────
 
 // ───────────────── 运行日志（排查用）─────────────────
-void ADLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1, 2);
+// 标签:NET 网络 / PLAY 播放 / DL 下载 / UI 界面 / SYS 系统 / APP 其它
+void ADLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1, 2);                        // 兼容旧写法(APP 标签,以 ✗ 开头记为错误)
+void ADLogTag(NSString *tag, NSString *fmt, ...) NS_FORMAT_FUNCTION(2, 3);      // 信息
+void ADLogWarn(NSString *tag, NSString *fmt, ...) NS_FORMAT_FUNCTION(2, 3);     // 警告
+void ADLogError(NSString *tag, NSString *fmt, ...) NS_FORMAT_FUNCTION(2, 3);    // 错误
 void ADLogInstallCrashHandler(void);
+void ADLogStartWatching(void);          // 前后台 / 内存警告 / 网络变化 / 音频打断 / 路由变化
 void ADLogClear(void);
 NSString *ADLogTail(NSUInteger maxLines);
+NSArray<NSString *> *ADLogLines(void);
+uint64_t ADLogVersion(void);            // 有新日志就加一,界面据此决定要不要刷新
 NSString *ADLogFilePath(void);
+NSString *ADLogExportPath(void);        // 合成"设备信息 + 上一份 + 本次"的可分享文本文件
+BOOL ADLogLastRunAbnormal(void);        // 上次是否在前台中断(崩溃 / 被系统杀)
+NSString *ADLogNetState(void);
+void ADLogSetNetState(NSString *s);
 void ADLogExceptionHandler(NSException *e);
 @interface ADLogController : UIViewController @end
 

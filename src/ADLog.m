@@ -1,246 +1,297 @@
 #import "AD.h"
-#import <ImageIO/ImageIO.h>
+#import <AVFoundation/AVFoundation.h>
+#import <Network/Network.h>
+#import <os/lock.h>
+#import <os/proc.h>
+#import <execinfo.h>
+#import <signal.h>
+#import <fcntl.h>
+#import <unistd.h>
+#import <sys/time.h>
+#import <sys/sysctl.h>
+#import <sys/stat.h>
 
-// 运行日志:写 Documents/logs/app.log,内存里留最近 800 行供界面直接看。
-// 目的很单一——出问题时能拿到"那一刻经历了什么",所以只记状态变化和网络往返,不当调试器用。
+// 运行日志:目标只有一个——出问题时能还原"那一刻经历了什么"。
+// 行格式固定宽度: "MM-dd HH:mm:ss.SSS L TAG  消息"
+//   L = I 信息 / W 警告 / E 错误;TAG = NET 网络 / PLAY 播放 / DL 下载 / UI 界面 / SYS 系统 / APP 其它
+// 写入用 write(2) 直接落盘(同步、很快),所以崩溃前最后几行不会丢;文件 >1MB 轮转成 app.prev.log。
 
-static NSLock *gLock;
+static const NSUInteger kMaxLines = 1500;
+static const unsigned long long kMaxFileBytes = 1024 * 1024;
+
+static os_unfair_lock gLock = OS_UNFAIR_LOCK_INIT;
 static NSMutableArray<NSString *> *gLines;
-static NSString *gPath;
-static BOOL gReady;
-static NSFileHandle *gFile;
+static int gFD = -1;
 static unsigned long long gSize;
+static NSString *gDir, *gPath, *gPrevPath, *gMarker;
+static uint64_t gVersion;
+static BOOL gAbnormal;
+static NSString *gNet = @"未知";
+// 连续重复的同一条日志折叠成"↑ 上条重复 N 次"
+static NSString *gRepKey, *gRepTag;
+static NSUInteger gRepCount;
+static char gRepLvl = 'I';
+static double gRepLast;
+
+static void ADLogOpenFD(void) {
+    if (gFD >= 0) close(gFD);
+    gFD = open(gPath.fileSystemRepresentation, O_WRONLY | O_APPEND | O_CREAT, 0644);
+    struct stat st;
+    gSize = (gFD >= 0 && fstat(gFD, &st) == 0) ? (unsigned long long)st.st_size : 0;
+}
 
 static void ADLogSetup(void) {
-    if (gReady) return;
-    gReady = YES;
-    gLock = [NSLock new];
-    gLines = [NSMutableArray array];
-    NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/logs"];
-    [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
-    gPath = [dir stringByAppendingPathComponent:@"app.log"];
-    // 上次的日志留一份,方便出问题后翻上一次
-    [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
-    NSString *old = [dir stringByAppendingPathComponent:@"app.prev.log"];
-    unsigned long long sz = [NSFileManager.defaultManager attributesOfItemAtPath:gPath error:nil].fileSize;
-    if (sz > 1024 * 1024) {
-        [NSFileManager.defaultManager removeItemAtPath:old error:nil];
-        [NSFileManager.defaultManager moveItemAtPath:gPath toPath:old error:nil];
-        sz = 0;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSFileManager *fm = NSFileManager.defaultManager;
+        gLines = [NSMutableArray array];
+        gDir = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/logs"];
+        [fm createDirectoryAtPath:gDir withIntermediateDirectories:YES attributes:nil error:nil];
+        gPath = [gDir stringByAppendingPathComponent:@"app.log"];
+        gPrevPath = [gDir stringByAppendingPathComponent:@"app.prev.log"];
+        gMarker = [gDir stringByAppendingPathComponent:@".active"];
+        gAbnormal = [fm fileExistsAtPath:gMarker];     // 上次是在前台活跃时中断的(崩溃 / 被系统杀)
+        unsigned long long sz = [fm attributesOfItemAtPath:gPath error:nil].fileSize;
+        if (sz > kMaxFileBytes) {
+            [fm removeItemAtPath:gPrevPath error:nil];
+            [fm moveItemAtPath:gPath toPath:gPrevPath error:nil];
+        }
+        ADLogOpenFD();
+        // 只读文件尾部 400KB,从第一个换行之后开始(避免截断 UTF-8 多字节字符)
+        NSData *d = [NSData dataWithContentsOfFile:gPath options:NSDataReadingMappedIfSafe error:nil];
+        if (d.length) {
+            NSUInteger off = d.length > 400 * 1024 ? d.length - 400 * 1024 : 0;
+            const uint8_t *b = d.bytes;
+            if (off > 0) { while (off < d.length && b[off] != 0x0A) off++; off++; }
+            if (off < d.length) {
+                NSString *all = [[NSString alloc] initWithData:[d subdataWithRange:NSMakeRange(off, d.length - off)] encoding:NSUTF8StringEncoding];
+                for (NSString *l in [all componentsSeparatedByString:@"\n"]) if (l.length) [gLines addObject:l];
+                while (gLines.count > kMaxLines) [gLines removeObjectAtIndex:0];
+            }
+        }
+    });
+}
+
+// 密钥脱敏:xmd_ 开头的 token 和当前配置里的 token 一律打码
+static NSString *ADRedact(NSString *s) {
+    if (!s.length) return s;
+    NSString *tk = [ADConfig shared].token;
+    if (tk.length > 8 && [s containsString:tk]) s = [s stringByReplacingOccurrencesOfString:tk withString:@"xmd_***"];
+    if ([s containsString:@"xmd_"]) {
+        static NSRegularExpression *re; static dispatch_once_t o;
+        dispatch_once(&o, ^{ re = [NSRegularExpression regularExpressionWithPattern:@"xmd_[A-Za-z0-9_]{6,}" options:0 error:nil]; });
+        s = [re stringByReplacingMatchesInString:s options:0 range:NSMakeRange(0, s.length) withTemplate:@"xmd_***"];
     }
-    if (![NSFileManager.defaultManager fileExistsAtPath:gPath]) [NSFileManager.defaultManager createFileAtPath:gPath contents:nil attributes:nil];
-    gFile = [NSFileHandle fileHandleForWritingAtPath:gPath];
-    [gFile seekToEndOfFile];
-    gSize = sz;
-    NSData *data = [NSData dataWithContentsOfFile:gPath];
-    if (data.length) {
-        NSString *all = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-        for (NSString *l in [all componentsSeparatedByString:@"\n"]) if (l.length) [gLines addObject:l];
-        while (gLines.count > 800) [gLines removeObjectAtIndex:0];
+    return s;
+}
+
+static void ADLogWriteLocked(char lvl, NSString *tag, NSString *msg) {
+    struct timeval tv; gettimeofday(&tv, NULL);
+    struct tm tmv; localtime_r(&tv.tv_sec, &tmv);
+    char ts[24];
+    snprintf(ts, sizeof ts, "%02d-%02d %02d:%02d:%02d.%03d", tmv.tm_mon + 1, tmv.tm_mday, tmv.tm_hour, tmv.tm_min, tmv.tm_sec, (int)(tv.tv_usec / 1000));
+    NSString *t4 = tag.length > 4 ? [tag substringToIndex:4] : tag;
+    NSString *line = [NSString stringWithFormat:@"%s %c %-4s %@", ts, lvl, t4.UTF8String, msg];
+    [gLines addObject:line];
+    if (gLines.count > kMaxLines + 100) [gLines removeObjectsInRange:NSMakeRange(0, gLines.count - kMaxLines)];
+    gVersion++;
+    if (gFD < 0) return;
+    if (gSize > kMaxFileBytes) {                      // 轮转:当前文件变上一份
+        close(gFD); gFD = -1;
+        NSFileManager *fm = NSFileManager.defaultManager;
+        [fm removeItemAtPath:gPrevPath error:nil];
+        [fm moveItemAtPath:gPath toPath:gPrevPath error:nil];
+        ADLogOpenFD();
     }
+    NSData *d = [[line stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding];
+    ssize_t n = write(gFD, d.bytes, d.length);
+    if (n > 0) gSize += (unsigned long long)n;
+}
+
+static void ADLogFlushRepeatLocked(void) {
+    if (gRepCount == 0) return;
+    NSString *m = [NSString stringWithFormat:@"↑ 上条重复 %lu 次", (unsigned long)gRepCount];
+    gRepCount = 0;
+    ADLogWriteLocked(gRepLvl, gRepTag ?: @"APP", m);
+}
+
+static void ADLogEmit(char lvl, NSString *tag, NSString *msg) {
+    if (!msg) return;
+    ADLogSetup();
+    msg = ADRedact(msg);
+    msg = [msg stringByReplacingOccurrencesOfString:@"\n" withString:@" ⏎ "];
+    NSString *key = [NSString stringWithFormat:@"%c|%@|%@", lvl, tag, msg];
+    double now = CFAbsoluteTimeGetCurrent();
+    os_unfair_lock_lock(&gLock);
+    if (gRepKey && [gRepKey isEqualToString:key] && now - gRepLast < 3.0) {
+        gRepCount++; gRepLast = now; gVersion++;
+        os_unfair_lock_unlock(&gLock);
+        return;
+    }
+    ADLogFlushRepeatLocked();
+    gRepKey = key; gRepLast = now; gRepLvl = lvl; gRepTag = tag;
+    ADLogWriteLocked(lvl, tag, msg);
+    os_unfair_lock_unlock(&gLock);
 }
 
 void ADLog(NSString *fmt, ...) {
     if (!fmt.length) return;
-    ADLogSetup();
-    va_list ap;
-    va_start(ap, fmt);
-    NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:ap];
+    va_list ap; va_start(ap, fmt);
+    NSString *m = [[NSString alloc] initWithFormat:fmt arguments:ap];
     va_end(ap);
-    NSDateFormatter *df = [NSDateFormatter new];
-    df.dateFormat = @"HH:mm:ss.SSS";
-    NSString *line = [NSString stringWithFormat:@"%@ %@", [df stringFromDate:[NSDate date]], msg];
-    [gLock lock];
-    [gLines addObject:line];
-    while (gLines.count > 800) [gLines removeObjectAtIndex:0];
-    NSData *d = [[line stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding];
-    @try { [gFile writeData:d]; gSize += d.length; } @catch (NSException *e) { gFile = nil; }
-    [gLock unlock];
-    NSLog(@"[AD] %@", line);
+    ADLogEmit([m hasPrefix:@"✗"] ? 'E' : 'I', @"APP", m);
+}
+void ADLogTag(NSString *tag, NSString *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    NSString *m = [[NSString alloc] initWithFormat:fmt arguments:ap];
+    va_end(ap);
+    ADLogEmit('I', tag, m);
+}
+void ADLogWarn(NSString *tag, NSString *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    NSString *m = [[NSString alloc] initWithFormat:fmt arguments:ap];
+    va_end(ap);
+    ADLogEmit('W', tag, m);
+}
+void ADLogError(NSString *tag, NSString *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    NSString *m = [[NSString alloc] initWithFormat:fmt arguments:ap];
+    va_end(ap);
+    ADLogEmit('E', tag, m);
+}
+
+NSArray<NSString *> *ADLogLines(void) {
+    ADLogSetup();
+    os_unfair_lock_lock(&gLock);
+    ADLogFlushRepeatLocked();
+    NSArray *out = [gLines copy];
+    os_unfair_lock_unlock(&gLock);
+    return out;
+}
+
+uint64_t ADLogVersion(void) {
+    os_unfair_lock_lock(&gLock);
+    uint64_t v = gVersion;
+    os_unfair_lock_unlock(&gLock);
+    return v;
 }
 
 NSString *ADLogTail(NSUInteger n) {
-    ADLogSetup();
-    [gLock lock];
-    NSUInteger cnt = MIN(n, gLines.count);
-    NSArray *out = [gLines subarrayWithRange:NSMakeRange(gLines.count - cnt, cnt)];
-    [gLock unlock];
-    return [out componentsJoinedByString:@"\n"];
+    NSArray *all = ADLogLines();
+    NSUInteger cnt = MIN(n, all.count);
+    return [[all subarrayWithRange:NSMakeRange(all.count - cnt, cnt)] componentsJoinedByString:@"\n"];
 }
 
-// 崩溃/信号也落进同一个文件:下次打开就能看到死在哪
-static void ADLogSignal(int sig) {
-    ADLog(@"✗✗✗ 收到信号 %d,进程即将退出", sig);
+NSString *ADLogFilePath(void) { ADLogSetup(); return gPath; }
+BOOL ADLogLastRunAbnormal(void) { ADLogSetup(); return gAbnormal; }
+
+void ADLogSetNetState(NSString *st) {
+    os_unfair_lock_lock(&gLock);
+    gNet = [st copy] ?: @"未知";
+    gVersion++;
+    os_unfair_lock_unlock(&gLock);
+}
+
+NSString *ADLogNetState(void) {
+    os_unfair_lock_lock(&gLock);
+    NSString *s = gNet;
+    os_unfair_lock_unlock(&gLock);
+    return s;
+}
+
+void ADLogClear(void) {
+    ADLogSetup();
+    os_unfair_lock_lock(&gLock);
+    gRepCount = 0; gRepKey = nil;
+    [gLines removeAllObjects];
+    if (gFD >= 0) { close(gFD); gFD = -1; }
+    NSFileManager *fm = NSFileManager.defaultManager;
+    [fm removeItemAtPath:gPath error:nil];
+    [fm removeItemAtPath:gPrevPath error:nil];
+    ADLogOpenFD();
+    gVersion++;
+    os_unfair_lock_unlock(&gLock);
+    ADLogTag(@"APP", @"日志已清空");
+}
+
+// ───────────── 设备信息 / 导出 ─────────────
+static NSString *ADMachine(void) {
+    size_t sz = 0;
+    sysctlbyname("hw.machine", NULL, &sz, NULL, 0);
+    if (sz == 0) return @"?";
+    char *m = malloc(sz);
+    sysctlbyname("hw.machine", m, &sz, NULL, 0);
+    NSString *s = [NSString stringWithUTF8String:m] ?: @"?";
+    free(m);
+    return s;
+}
+
+static NSString *ADDeviceSummary(void) {
+    NSProcessInfo *pi = NSProcessInfo.processInfo;
+    double freeGB = [[NSFileManager.defaultManager attributesOfFileSystemForPath:NSHomeDirectory() error:nil][NSFileSystemFreeSize] doubleValue] / 1e9;
+    return [NSString stringWithFormat:@"%@ · iOS %@ · 内存 %.0fGB · 可用 %luMB · 磁盘剩余 %.1fGB · 省电%@ · %@",
+            ADMachine(), UIDevice.currentDevice.systemVersion, pi.physicalMemory / 1e9,
+            (unsigned long)(os_proc_available_memory() / 1048576), freeGB,
+            pi.lowPowerModeEnabled ? @"开" : @"关", NSLocale.preferredLanguages.firstObject ?: @"?"];
+}
+
+NSString *ADLogExportPath(void) {
+    ADLogSetup();
+    ADLogLines();    // 先把待折叠的重复计数落盘
+    NSDictionary *info = NSBundle.mainBundle.infoDictionary;
+    NSDateFormatter *df = [NSDateFormatter new];
+    df.dateFormat = @"yyyy-MM-dd HH:mm:ss";
+    NSMutableString *out = [NSMutableString string];
+    [out appendFormat:@"阅听 运行日志\n版本 %@ (%@)\n设备 %@\n网络 %@\n导出 %@\n说明 行格式: 时间 级别(I信息/W警告/E错误) 标签(NET网络/PLAY播放/DL下载/UI界面/SYS系统) 内容\n",
+        info[@"CFBundleShortVersionString"] ?: @"?", info[@"CFBundleVersion"] ?: @"?", ADDeviceSummary(), ADLogNetState(), [df stringFromDate:NSDate.date]];
+    if (gAbnormal) [out appendString:@"注意 上一次运行是在前台中断的(崩溃 / 被系统杀掉 / 内存不足)\n"];
+    NSString *prev = [NSString stringWithContentsOfFile:gPrevPath encoding:NSUTF8StringEncoding error:nil];
+    if (prev.length) { [out appendString:@"\n==== 上一份 app.prev.log ====\n"]; [out appendString:prev]; }
+    NSString *cur = [NSString stringWithContentsOfFile:gPath encoding:NSUTF8StringEncoding error:nil];
+    [out appendString:@"\n==== 本次 app.log ====\n"];
+    if (cur.length) [out appendString:cur];
+    df.dateFormat = @"yyyyMMdd-HHmmss";
+    NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"yueting-log-%@.txt", [df stringFromDate:NSDate.date]]];
+    [out writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    return path;
+}
+
+// ───────────── 崩溃 ─────────────
+// 信号处理函数里只能用 async-signal-safe 的调用:这里只有 write / backtrace_symbols_fd,不碰 ObjC。
+static void ADFatalSignal(int sig) {
+    if (gFD >= 0) {
+        const char *nm = "?";
+        switch (sig) {
+            case SIGABRT: nm = "SIGABRT"; break; case SIGSEGV: nm = "SIGSEGV"; break;
+            case SIGBUS: nm = "SIGBUS"; break;   case SIGILL: nm = "SIGILL"; break;
+            case SIGFPE: nm = "SIGFPE"; break;   case SIGTRAP: nm = "SIGTRAP"; break;
+        }
+        const char *a = "\n!! 致命信号 ";
+        write(gFD, a, strlen(a)); write(gFD, nm, strlen(nm)); write(gFD, "\n", 1);
+        void *frames[48];
+        int cnt = backtrace(frames, 48);
+        backtrace_symbols_fd(frames, cnt, gFD);
+        fsync(gFD);
+    }
     signal(sig, SIG_DFL);
     raise(sig);
 }
 
 void ADLogExceptionHandler(NSException *e) {
-    ADLog(@"✗✗✗ 未捕获异常 %@: %@\n%@", e.name, e.reason, [e.callStackSymbols componentsJoinedByString:@"\n"]);
+    NSArray *st = e.callStackSymbols;
+    NSString *s = [[st subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)25, st.count))] componentsJoinedByString:@" ⏎ "];
+    ADLogError(@"APP", @"未捕获异常 %@: %@ ⏎ %@", e.name, e.reason, s);
 }
 
 void ADLogInstallCrashHandler(void) {
     ADLogSetup();
     NSSetUncaughtExceptionHandler(&ADLogExceptionHandler);
-    for (int i = 0; i < 5; i++) {
-        int sigs[] = {SIGABRT, SIGILL, SIGSEGV, SIGFPE, SIGBUS};
-        signal(sigs[i], ADLogSignal);
+    int sigs[] = {SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP};
+    for (size_t i = 0; i < sizeof(sigs) / sizeof(sigs[0]); i++) {
+        struct sigaction sa; memset(&sa, 0, sizeof sa);
+        sa.sa_handler = ADFatalSignal;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = SA_RESETHAND;
+        sigaction(sigs[i], &sa, NULL);
     }
 }
-
-NSString *ADLogFilePath(void) {
-    ADLogSetup();
-    return gPath;
-}
-
-void ADLogClear(void) {
-    ADLogSetup();
-    [gLock lock];
-    [gLines removeAllObjects];
-    [gFile closeFile];
-    [NSFileManager.defaultManager removeItemAtPath:gPath error:nil];
-    [NSFileManager.defaultManager createFileAtPath:gPath contents:nil attributes:nil];
-    gFile = [NSFileHandle fileHandleForWritingAtPath:gPath];
-    gSize = 0;
-    [gLock unlock];
-}
-
-// ───────────── 日志页 ─────────────
-@interface ADLogCell : UITableViewCell
-@property (nonatomic, strong) UILabel *line;
-@end
-@implementation ADLogCell
-- (instancetype)initWithStyle:(UITableViewCellStyle)s reuseIdentifier:(NSString *)r {
-    if ((self = [super initWithStyle:UITableViewCellStyleDefault reuseIdentifier:r])) {
-        self.backgroundColor = UIColor.clearColor;
-        self.selectionStyle = UITableViewCellSelectionStyleNone;
-        _line = [ADUtil label:nil size:10.5 color:[UIColor colorWithWhite:1 alpha:0.78]];
-        _line.font = [UIFont monospacedSystemFontOfSize:10.5 weight:UIFontWeightRegular];
-        _line.numberOfLines = 0;
-        [self.contentView addSubview:_line];
-    }
-    return self;
-}
-- (void)layoutSubviews {
-    [super layoutSubviews];
-    self.line.frame = CGRectMake(14, 3, self.contentView.bounds.size.width - 28, self.contentView.bounds.size.height - 6);
-}
-@end
-
-@interface ADLogController () <UITableViewDataSource, UITableViewDelegate>
-@property (nonatomic, strong) UITableView *table;
-@property (nonatomic, strong) NSArray<NSString *> *lines;
-@property (nonatomic, strong) UIButton *share;
-@property (nonatomic, strong) NSTimer *ticker;
-@property (nonatomic, assign) BOOL autoScroll;
-@end
-
-@implementation ADLogController
-
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    [ADLiquid canvas:self.view];
-    self.title = @"运行日志";
-    self.autoScroll = YES;
-
-    self.table = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
-    self.table.backgroundColor = UIColor.clearColor;
-    self.table.separatorStyle = UITableViewCellSeparatorStyleNone;
-    self.table.dataSource = self; self.table.delegate = self;
-    self.table.contentInset = UIEdgeInsetsMake(8, 0, 120, 0);
-    [self.view addSubview:self.table];
-
-    self.share = [UIButton buttonWithType:UIButtonTypeSystem];
-    [self.share setTitle:@"分享" forState:UIControlStateNormal];
-    self.share.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
-    self.share.tintColor = UIColor.whiteColor;
-    self.share.backgroundColor = [[ADUtil brand] colorWithAlphaComponent:0.9];
-    self.share.layer.cornerRadius = 18;
-    [self.share addTarget:self action:@selector(doShare) forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:self.share];
-
-    UIButton *clear = [UIButton buttonWithType:UIButtonTypeSystem];
-    [clear setTitle:@"清空" forState:UIControlStateNormal];
-    clear.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
-    clear.tintColor = [UIColor colorWithWhite:1 alpha:0.7];
-    [clear addTarget:self action:@selector(doClear) forControlEvents:UIControlEventTouchUpInside];
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithCustomView:clear];
-
-    [self reload];
-    // 日志是活的:每 1.5 秒刷一次,停在底部时自动跟随
-    __weak typeof(self) w = self;
-    self.ticker = [NSTimer scheduledTimerWithTimeInterval:1.5 repeats:YES block:^(NSTimer *t) {
-        __strong typeof(w) self = w; if (!self) return;
-        if (!self.autoScroll) return;
-        [self reload];
-    }];
-}
-
-- (void)viewWillDisappear:(BOOL)animated {
-    [super viewWillDisappear:animated];
-    [self.ticker invalidate]; self.ticker = nil;
-}
-
-- (void)viewDidLayoutSubviews {
-    [super viewDidLayoutSubviews];
-    CGFloat W = self.view.bounds.size.width, H = self.view.bounds.size.height, top = MAX(self.view.safeAreaInsets.top, 20);
-    self.table.frame = CGRectMake(0, top + 44, W, H - top - 44);
-    self.share.frame = CGRectMake(20, H - MAX(self.view.safeAreaInsets.bottom, 16) - 52, W - 40, 40);
-}
-
-- (void)reload {
-    self.lines = [ADLogTail(600) componentsSeparatedByString:@"\n"];
-    [self.table reloadData];
-    NSInteger n = (NSInteger)self.lines.count;
-    if (n > 0) [self.table scrollToRowAtIndexPath:[NSIndexPath indexPathForRow:n - 1 inSection:0] atScrollPosition:UITableViewScrollPositionBottom animated:NO];
-}
-
-- (void)doShare {
-    NSString *path = ADLogFilePath();
-    NSURL *u = [NSURL fileURLWithPath:path];
-    UIActivityViewController *vc = [[UIActivityViewController alloc] initWithActivityItems:@[u] applicationActivities:nil];
-    vc.popoverPresentationController.sourceView = self.share;
-    vc.popoverPresentationController.sourceRect = self.share.bounds;
-    [self presentViewController:vc animated:YES completion:nil];
-}
-
-- (void)doClear {
-    [ADHaptic warning];
-    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"清空日志" message:@"只会删除本机的运行日志，不影响其它数据。" preferredStyle:UIAlertControllerStyleActionSheet];
-    [a addAction:[UIAlertAction actionWithTitle:@"清空" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) {
-        ADLogClear();
-        [self reload];
-    }]];
-    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    a.popoverPresentationController.sourceView = self.view;
-    [self presentViewController:a animated:YES completion:nil];
-}
-
-- (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { return self.lines.count; }
-- (CGFloat)tableView:(UITableView *)t heightForRowAtIndexPath:(NSIndexPath *)ip {
-    NSString *s = self.lines[ip.row];
-    CGFloat W = t.bounds.size.width - 28;
-    NSDictionary *attrs = @{NSFontAttributeName: [UIFont monospacedSystemFontOfSize:10.5 weight:UIFontWeightRegular]};
-    CGFloat h = [s boundingRectWithSize:CGSizeMake(W, 400) options:NSStringDrawingUsesLineFragmentOrigin attributes:attrs context:nil].size.height;
-    return MAX(18, h + 6);
-}
-- (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {
-    ADLogCell *c = [t dequeueReusableCellWithIdentifier:@"log"];
-    if (!c) c = [[ADLogCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"log"];
-    NSString *s = self.lines[ip.row];
-    c.line.text = s;
-    // 错误行标红一点,一眼能找到
-    BOOL bad = [s containsString:@"✗"] || [s containsString:@"FAIL"] || [s containsString:@"失败"];
-    c.line.textColor = bad ? [UIColor colorWithRed:1 green:0.45 blue:0.42 alpha:1] : [UIColor colorWithWhite:1 alpha:0.78];
-    return c;
-}
-- (void)scrollViewWillBeginDragging:(UIScrollView *)s {
-    // 用户手动往回翻的时候别再自动跳到底部
-    self.autoScroll = NO;
-    __weak typeof(self) w = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        __strong typeof(w) self = w; if (!self) return;
-        self.autoScroll = YES;
-    });
-}
-@end

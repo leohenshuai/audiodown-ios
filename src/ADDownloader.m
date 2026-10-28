@@ -384,6 +384,8 @@
     NSString *dst = [self pathFor:tid ext:ext];
     [fm copyItemAtPath:location.path toPath:dst error:nil];
     NSDictionary *attr = [fm attributesOfItemAtPath:dst error:nil];
+    if ([attr fileSize] < 8000) ADLogError(@"DL", @"✗ 下载落盘过小 trackId=%@ %lluB(多半是服务端返回了错误页)", tid, [attr fileSize]);
+    else ADLogTag(@"DL", @"下载完成 trackId=%@ %.1fMB .%@", tid, [attr fileSize] / 1048576.0, ext);
     // 文件没写成 / 太小（多半是服务端返回的错误页）就别当成功，交回重试
     if (!attr || [attr fileSize] < 8000) {
         [fm removeItemAtPath:dst error:nil];
@@ -427,6 +429,7 @@
 
 - (void)URLSession:(NSURLSession *)s task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
     if (!error || error.code == NSURLErrorCancelled) return;   // 暂停/删除时主动取消，不算失败
+    ADLogError(@"DL", @"✗ 下载出错 trackId=%@ %@ (code %ld)", task.taskDescription, error.localizedDescription, (long)error.code);
     __weak typeof(self) w = self;
     dispatch_async(dispatch_get_main_queue(), ^{
         __strong typeof(w) self = w; if (!self) return;

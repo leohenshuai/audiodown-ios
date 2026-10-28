@@ -178,7 +178,7 @@
         [[ADStore shared] setLastTrack:trackId album:album.albumId];
         if (play) { [[ADStore shared] touchHistory:album]; [self playAt:0]; }
         [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
-        ADLog(@"快起播 %@ 第%ld集(目录后台补)", album.title ?: @"", (long)(index + 1));
+        ADLogTag(@"PLAY", @"快起播 %@ 第%ld集(目录后台补)", album.title ?: @"", (long)(index + 1));
         [self loadCatalogAround:album around:index];
         return;
     }
@@ -246,7 +246,7 @@
     self.resolving = YES; self.resolveT = CACurrentMediaTime();
     _index = index;
     self.retriedItem = NO;
-    ADLog(@"playAt 第%ld集 %@ 队列%lu 偏移%ld", (long)(index + self.episodeBase + 1), _tracks[index].title ?: @"", (unsigned long)_tracks.count, (long)self.episodeBase);
+    ADLogTag(@"PLAY", @"playAt 第%ld集 %@ 队列%lu 偏移%ld", (long)(index + self.episodeBase + 1), _tracks[index].title ?: @"", (unsigned long)_tracks.count, (long)self.episodeBase);
     ADTrack *t = _tracks[index];
     NSURL *local = [[ADDownloader shared] localURL:t.trackId];
     if (!local) {
@@ -362,7 +362,7 @@
     [[ADApi shared] playURLOf:t done:^(NSString *url, NSDictionary *headers, NSString *err) {
         __strong typeof(w) self = w; if (!self) return;
         if (seq != self.resolveSeq) return;          // 已被后来的请求取代
-        ADLog(@"取地址%@ %@ %@", url ? @"成功" : @"失败", t.title ?: @"", url ? @"" : (err ?: @""));
+        ADLogTag(@"PLAY", @"取地址%@ %@ %@", url ? @"成功" : @"失败", t.title ?: @"", url ? @"" : (err ?: @""));
         if (!url) {
             // 取地址失败（超时 / 服务端 5xx）先自己重试一次，别直接甩错误
             if (attempt < 1) {
@@ -401,7 +401,7 @@
 }
 
 - (void)startWithURL:(NSString *)url headers:(NSDictionary *)headers track:(ADTrack *)t {
-    ADLog(@"起播 第%ld集 %@", (long)(self.index + self.episodeBase + 1), t.title ?: @"");
+    ADLogTag(@"PLAY", @"起播 第%ld集 %@", (long)(self.index + self.episodeBase + 1), t.title ?: @"");
     self.resolving = NO;                       // 地址已经拿到，空窗结束
     self.skipTailFired = NO;                   // 新的一集：片尾跳过重新武装
     [self prefetchAhead];
@@ -479,14 +479,18 @@
 - (void)failed:(NSNotification *)n {
     if (n.object && n.object != _player.currentItem) return;   // 旧集迟到的失败通知,忽略
     // 音频地址有时效，过期后会 403。先按原集重新取一次地址再报错
+    NSError *ferr = n.userInfo[AVPlayerItemFailedToPlayToEndTimeErrorKey];
+    ADLogError(@"PLAY", @"✗ 播放失败 第%ld集 %@ (code %ld)", (long)(self.index + self.episodeBase + 1), ferr.localizedDescription ?: @"", (long)ferr.code);
     if (!self.retriedItem && self.index >= 0 && self.index < (NSInteger)_tracks.count) {
         self.retriedItem = YES;
+        ADLogWarn(@"PLAY", @"音频地址可能过期,重新获取一次");
         ADTrack *t = _tracks[self.index];
         self.statusText = @"音频地址失效，正在重新获取…";
         [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
         [self resolveAndPlay:t attempt:0];
         return;
     }
+    ADLogError(@"PLAY", @"✗ 重试后仍失败,放弃");
     self.statusText = @"加载失败，检查 token 或换一集";
     [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
 }
@@ -499,7 +503,7 @@
 // 一集播完之后的统一处理：自然播完（AVPlayerItemDidPlayToEndTime）和片尾跳过都走这里。
 - (void)trackFinished {
     ADTrack *cur = self.current;
-    ADLog(@"本集结束 第%ld集", (long)(self.index + self.episodeBase + 1));
+    ADLogTag(@"PLAY", @"本集结束 第%ld集", (long)(self.index + self.episodeBase + 1));
     if (cur.trackId) {
         BOOL last = (_index + 1 >= (NSInteger)_tracks.count) && self.episodeBase == 0;
         [[ADStore shared] markDone:cur.trackId album:_album.albumId wholeBook:last];
@@ -583,7 +587,7 @@
                     self.index = pos;
                     self.episodeBase = 0;
                     self.trackPageSize = size;
-                    ADLog(@"目录补齐 %ld 集(到第%ld集)", (long)uniq.count, (long)(pos + 1));
+                    ADLogTag(@"PLAY", @"目录补齐 %ld 集(到第%ld集)", (long)uniq.count, (long)(pos + 1));
                     [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
                     [self appendRestOfCatalog:album fromPage:lastPage + 1 size:size];
                 });
@@ -634,13 +638,19 @@
     // 地址还在取：此时 currentItem 还是旧书的音频，不能拿它来暂停/恢复
     if (self.resolving) {
         // 兜底:取地址空窗超过 20 秒仍没复位,说明链路断了,直接重开这一集
-        if (CACurrentMediaTime() - self.resolveT > 20 && _tracks.count) [self playAt:_index];
+        double waited = CACurrentMediaTime() - self.resolveT;
+        ADLogWarn(@"PLAY", @"点播放时还在取地址(已等 %.0f 秒)%@", waited, waited > 20 ? @",重开这一集" : @"");
+        if (waited > 20 && _tracks.count) [self playAt:_index];
         return;
     }
     if (_player.rate > 0) [self pause];
-    else { [_player play]; _player.rate = _rate; [self nowPlaying]; if (_album) [[ADStore shared] touchHistory:_album]; }
+    else {
+        ADLogTag(@"PLAY", @"继续播放 第%ld集", (long)(self.index + self.episodeBase + 1));
+        [_player play]; _player.rate = _rate; [self nowPlaying]; if (_album) [[ADStore shared] touchHistory:_album];
+    }
 }
 - (void)pause {
+    ADLogTag(@"PLAY", @"暂停 第%ld集%@", (long)(self.index + self.episodeBase + 1), self.resolving ? @"(取消了还在取的地址)" : @"");
     if (self.resolving) {
         // 取消在飞的取地址，别等它回来又把声音放出来
         self.resolveSeq += 1;
