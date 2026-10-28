@@ -1840,7 +1840,7 @@ void ADEditSkip(UIViewController *host, ADAlbum *album) {
     toolPill.frame = CGRectMake(W / 2 - 156, y - 4, 312, 46);
     UIButton *rate = (UIButton *)[self.view viewWithTag:301];
     rate.frame = CGRectMake(W / 2 - 150, y + 2, 58, 36);
-    [self.view viewWithTag:302].frame = CGRectMake(W / 2 - 62, y + 2, 44, 36);
+    [self.view viewWithTag:302].frame = CGRectMake(W / 2 - 69, y + 2, 58, 36);
     self.routeView.frame = CGRectMake(W / 2 + 18, y + 2, 44, 36);
     self.queueDim.frame = self.view.bounds;
     [self.view viewWithTag:304].frame = CGRectMake(W / 2 + 106, y + 2, 44, 36);
@@ -1941,8 +1941,13 @@ void ADEditSkip(UIViewController *host, ADAlbum *album) {
         double left = p.sleepDeadline - [NSDate date].timeIntervalSince1970;
         // 开了定时就把按钮直接换成剩余时间（和听见有声一致）
         [sleepBtn setImage:nil forState:UIControlStateNormal];
-        [sleepBtn setTitle:[ADUtil time:MAX(0, left)] forState:UIControlStateNormal];
+        NSInteger t = MAX(0, (NSInteger)lround(left));
+        NSString *txt = t >= 3600 ? [NSString stringWithFormat:@"%ld:%02ld", (long)(t / 3600), (long)(t % 3600 / 60)]
+                                  : [NSString stringWithFormat:@"%ld:%02ld", (long)(t / 60), (long)(t % 60)];
+        [sleepBtn setTitle:txt forState:UIControlStateNormal];
         sleepBtn.titleLabel.font = [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightMedium];
+        sleepBtn.titleLabel.adjustsFontSizeToFitWidth = YES;     // 再长也不截断成 "1:…"
+        sleepBtn.titleLabel.minimumScaleFactor = 0.8;
         [sleepBtn setTitleColor:[ADUtil brand] forState:UIControlStateNormal];
         sleepBtn.tintColor = [ADUtil brand];
         self.mid.text = mid ?: @"在线播放";
