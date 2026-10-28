@@ -109,6 +109,7 @@ static void ADTRDistribute(NSString *text, double s, double e, NSMutableArray<AD
 @property (nonatomic, assign) BOOL qwen;                       // 阿里百炼 qwen3-asr:30 秒一段 wav,走 chat/completions
 @property (nonatomic, strong) NSMutableArray *pending;         // 等待批量校对的段(每段一个 {start,end,text})
 @property (nonatomic, assign) NSInteger groupStart;            // pending 对应的第一行在 lines 里的位置
+@property (nonatomic, copy) NSString *lastText;                // 上一段识别结果,作为下一段的上下文
 @end
 @implementation ADTJob @end
 
@@ -440,16 +441,18 @@ static NSData *ADTRWav(NSURL *file, double off, double len) {
     return w;
 }
 
-- (void)asrQwen:(NSData *)wav album:(ADAlbum *)a context:(BOOL)ctx done:(void (^)(NSString *, NSString *))cb {
+- (void)asrQwen:(NSData *)wav album:(ADAlbum *)a prev:(NSString *)prev done:(void (^)(NSString *, NSString *))cb {
+    [self asrQwen:wav album:a prev:prev attempt:0 done:cb];
+}
+// prev = 上一段的识别结果,按文档"上下文增强"的要求作为对话历史(assistant 消息)传进去
+- (void)asrQwen:(NSData *)wav album:(ADAlbum *)a prev:(NSString *)prev attempt:(NSInteger)attempt done:(void (^)(NSString *, NSString *))cb {
     NSURL *url = ADTREndpoint(ADTRDef(@"ad_asr_base"), @"/chat/completions");
     if (!url) { cb(nil, @"识别接口地址不对"); return; }
     NSString *key = ADTRKeyGet(@"asr");
     NSMutableArray *msgs = [NSMutableArray array];
-    if (ctx) {
-        NSArray *names = [self namesOf:a.albumId];
-        NSString *c = [NSString stringWithFormat:@"有声书《%@》的朗读。%@", a.title ?: @"", names.count ? [NSString stringWithFormat:@"人物:%@。", [names componentsJoinedByString:@"、"]] : @""];
-        if (c.length > 300) c = [c substringToIndex:300];
-        [msgs addObject:@{@"role": @"system", @"content": c}];
+    if (prev.length) {
+        NSString *c = prev.length > 300 ? [prev substringFromIndex:prev.length - 300] : prev;
+        [msgs addObject:@{@"role": @"assistant", @"content": c}];
     }
     NSString *dataURL = [@"data:audio/wav;base64," stringByAppendingString:[wav base64EncodedStringWithOptions:0]];
     [msgs addObject:@{@"role": @"user", @"content": @[@{@"type": @"input_audio", @"input_audio": @{@"data": dataURL}}]}];
@@ -457,21 +460,55 @@ static NSData *ADTRWav(NSURL *file, double off, double len) {
     NSString *lang = ADTRDef(@"ad_asr_lang");
     if (lang.length) opts[@"language"] = lang;
     NSDictionary *payload = @{@"model": ADTRDef(@"ad_asr_model"), @"messages": msgs, @"stream": @NO, @"asr_options": opts};
+    NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
+    NSURL *tmp = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"trq-%08X.json", arc4random()]]];
+    if (![body writeToURL:tmp atomically:NO]) { cb(nil, @"写临时文件失败"); return; }
     NSMutableURLRequest *r = [NSMutableURLRequest requestWithURL:url];
     r.HTTPMethod = @"POST";
-    r.timeoutInterval = 90;
+    r.timeoutInterval = 240;                    // 上传慢的网络上,一段音频要几十秒
     [r setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
     if (key.length) [r setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
-    r.HTTPBody = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
+    CFTimeInterval t0 = CACurrentMediaTime();
+    ADLogTag(@"AI", @"→ 阿里识别 第%ld次 %.0fKB", (long)attempt + 1, body.length / 1024.0);
     __weak typeof(self) w = self;
-    [[NSURLSession.sharedSession dataTaskWithRequest:r completionHandler:^(NSData *data, NSURLResponse *resp, NSError *e) {
+    // 后台会话:切到别的 App、锁屏都不会把在传的请求掐断
+    static NSURLSession *bg;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSURLSessionConfiguration *c = [NSURLSessionConfiguration backgroundSessionConfigurationWithIdentifier:@"ad.transcript.asr"];
+        c.timeoutIntervalForRequest = 240;
+        c.timeoutIntervalForResource = 600;
+        bg = [NSURLSession sessionWithConfiguration:c];
+    });
+    [[bg uploadTaskWithRequest:r fromFile:tmp completionHandler:^(NSData *data, NSURLResponse *resp, NSError *e) {
         __strong typeof(w) self = w; if (!self) return;
+        [NSFileManager.defaultManager removeItemAtURL:tmp error:nil];
         NSInteger code = [(NSHTTPURLResponse *)resp statusCode];
-        if (e) { cb(nil, e.localizedDescription); return; }
+        long ms = (long)((CACurrentMediaTime() - t0) * 1000);
+        if (e) {
+            BOOL retryable = (e.code == NSURLErrorNetworkConnectionLost || e.code == NSURLErrorTimedOut ||
+                              e.code == NSURLErrorNotConnectedToInternet || e.code == NSURLErrorCannotConnectToHost);
+            ADLogWarn(@"AI", @"✗ 阿里识别 %@ (code %ld) %ldms%@", e.localizedDescription, (long)e.code, ms,
+                      retryable && attempt < 3 ? @",重试" : @"");
+            if (retryable && attempt < 3) {
+                double wait = attempt == 0 ? 1.5 : (attempt == 1 ? 5 : 12);
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(wait * NSEC_PER_SEC)), dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                    [self asrQwen:wav album:a prev:prev attempt:attempt + 1 done:cb];
+                });
+                return;
+            }
+            cb(nil, e.localizedDescription);
+            return;
+        }
+        ADLogTag(@"AI", @"← 阿里识别 %ld %ldms %.1fKB", (long)code, ms, data.length / 1024.0);
         id j = data.length ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
         if (code < 200 || code >= 300) {
-            // 带 system 上下文被拒:去掉上下文再试一次(不确定这个模型是否接受 system 消息)
-            if (ctx && code == 400) { ADLogWarn(@"AI", @"接口不接受上下文提示,去掉后重试"); [self asrQwen:wav album:a context:NO done:cb]; return; }
+            // 带上下文被拒:去掉上下文再试一次(只试一次)
+            if (code == 400 && prev.length && attempt < 1) {
+                ADLogWarn(@"AI", @"接口不接受对话上下文,去掉后重试");
+                [self asrQwen:wav album:a prev:@"" attempt:1 done:cb];
+                return;
+            }
             NSString *msg = nil;
             if ([j isKindOfClass:NSDictionary.class]) {
                 id er = j[@"error"];
@@ -510,7 +547,8 @@ static NSData *ADTRWav(NSURL *file, double off, double len) {
             ADLogWarn(@"AI", @"第 %ld 段音频转码为空,跳过", (long)k + 1);
             j.next = k + 1; [self chunkQ:j]; return;
         }
-        [self asrQwen:wav album:j.album context:YES done:^(NSString *text, NSString *err) {
+        NSString *prev = j.lastText ?: @"";
+        [self asrQwen:wav album:j.album prev:prev done:^(NSString *text, NSString *err) {
             if (!text) { [self fail:j msg:err ?: @"识别失败"]; return; }
             NSString *tx = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
             BOOL llm = [NSUserDefaults.standardUserDefaults boolForKey:@"ad_llm_on"] && ADTRDef(@"ad_llm_model").length;
@@ -522,6 +560,7 @@ static NSData *ADTRWav(NSURL *file, double off, double len) {
                 }
                 ADTRDistribute(tx, off, off + len, j.lines);
             }
+            if (tx.length) j.lastText = tx;
             j.next = k + 1;
             [self save:j];
             if (j.pending.count >= 6) [self correctGroup:j done:^{ [self chunkQ:j]; }];
