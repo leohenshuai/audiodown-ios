@@ -2013,7 +2013,7 @@ void ADEditSkip(UIViewController *host, ADAlbum *album) {
             @"albumId": p.album.albumId ?: @"", @"albumTitle": p.album.title ?: @"",
             @"cover": p.album.cover ?: @"", @"provider": p.album.provider ?: @"", @"anchor": p.album.anchor ?: @"",
             @"trackId": t.trackId ?: @"", @"trackTitle": t.title ?: @"",
-            @"index": @(p.index), @"seconds": @(sec),
+            @"index": @(p.index + p.episodeBase), @"seconds": @(sec),
             @"note": [a.textFields.firstObject.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] ?: @"",
             @"ts": @([NSDate date].timeIntervalSince1970)}];
         [ADHaptic success];

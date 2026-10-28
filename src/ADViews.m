@@ -1147,7 +1147,7 @@
             if (isnan(ps)) ps = 0;
             if (isnan(pd)) pd = 0;
             if (pd > 0) { sec = ps; dur = pd; }
-            idx = p.index;
+            idx = p.index + p.episodeBase;
         }
         UIView *track = h[@"track"], *fill = h[@"fill"];
         CGFloat r = dur > 0 ? MIN(1, sec / dur) : 0;

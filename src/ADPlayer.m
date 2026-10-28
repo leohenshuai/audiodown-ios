@@ -27,6 +27,8 @@
 // 片尾跳过是否已经触发过：每集起播（startWithURL）时复位，手动拖回片尾区之前也会复位，
 // 免得同一个 tick 反复进 trackFinished 把后面几集一起跳过。
 @property (nonatomic, assign) BOOL skipTailFired;
+@property (nonatomic, assign) NSInteger trackPageSize;   // 队列是按多少集一页拼的(50 或 200)
+@property (nonatomic, assign) BOOL catalogFilling, catalogLoading;
 - (void)ensureFullQueue;
 - (void)loadPagesOf:(NSString *)albumId upTo:(NSInteger)lastPage page:(NSInteger)page acc:(NSMutableArray *)acc tries:(NSInteger)tries done:(void (^)(NSArray *list))done;
 - (void)fillQueuePage:(NSInteger)page tries:(NSInteger)tries forAlbum:(NSString *)albumId;
@@ -158,6 +160,28 @@
     // 用户连点 A 又点 C：给这次载入发个号，回来时不是最新的就丢掉
     self.openSeq += 1;
     NSInteger myOpen = self.openSeq;
+    // ── 快路：已知是哪一集就直接起播，目录在后台补 ──
+    // 第 1490 集以前要先把 30 页(每页 5 秒)顺序拉完才出声，用户看到的就是"点了没反应"。
+    if (trackId.length && album.albumId.length) {
+        NSDictionary *info = [[ADStore shared] lastInfoOf:album.albumId];
+        ADTrack *t = [ADTrack new];
+        t.trackId = trackId;
+        t.albumId = album.albumId;
+        t.provider = album.provider;
+        t.title = info[@"title"] ?: @"";
+        self.album = album;
+        self.tracks = @[t];
+        self.index = 0;
+        self.episodeBase = MAX(0, index);
+        self.statusText = nil;
+        if (sec > 0) [[ADStore shared] setPosition:sec for:trackId];
+        [[ADStore shared] setLastTrack:trackId album:album.albumId];
+        if (play) { [[ADStore shared] touchHistory:album]; [self playAt:0]; }
+        [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
+        [self loadCatalogAround:album around:index];
+        return;
+    }
+
     NSInteger lastPage = MAX(0, index) / 50 + 1;
     self.statusText = play ? @"正在载入书签位置…" : nil;
     if (play) [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
@@ -174,6 +198,8 @@
         self.album = album;
         self.tracks = uniq;
         self.index = pos;
+        self.episodeBase = 0;
+        self.trackPageSize = 50;
         self.statusText = nil;
         if (trackId.length && sec > 0) {
             double tl = [[ADStore shared] skipTailOf:album.albumId];
@@ -201,6 +227,8 @@
 
 - (void)ensureFullQueue {
     if (self.filling) return;
+    if (self.episodeBase > 0 || self.trackPageSize == 200) return;   // 单集快起播 / 200 一页的目录,由 loadCatalogAround 自己补
+
     if (!self.album || !self.tracks.count) return;
     if ((NSInteger)self.tracks.count % 50 != 0) return;   // 不是被截断的样子，不用补
     self.filling = YES;
@@ -419,7 +447,7 @@
             [[ADStore shared] setPosition:sec for:self.current.trackId];
             [[ADStore shared] setLastTrack:self.current.trackId album:self.album.albumId];
             [[ADStore shared] setLastInfo:@{@"trackId": self.current.trackId ?: @"",
-                                            @"index": @(self.index),
+                                            @"index": @(self.index + self.episodeBase),
                                             @"title": self.current.title ?: @"",
                                             @"seconds": @(sec),
                                             @"duration": @(isnan(d) ? 0 : d)} album:self.album.albumId];
@@ -468,7 +496,7 @@
 - (void)trackFinished {
     ADTrack *cur = self.current;
     if (cur.trackId) {
-        BOOL last = (_index + 1 >= (NSInteger)_tracks.count);
+        BOOL last = (_index + 1 >= (NSInteger)_tracks.count) && self.episodeBase == 0;
         [[ADStore shared] markDone:cur.trackId album:_album.albumId wholeBook:last];
     }
     if (self.stopAfterChapter) {
@@ -490,6 +518,95 @@
     if (_index + 1 < (NSInteger)_tracks.count) [self next];
     else if (mode == 2 && _tracks.count) [self playAt:0];
     else { [_player pause]; [self nowPlaying]; }
+}
+
+// 后台并行补目录：按 200 集一页，最多 4 张并发；到齐后整队替换，播放不中断
+- (void)loadCatalogAround:(ADAlbum *)album around:(NSInteger)index {
+    NSString *albumId = album.albumId;
+    if (!albumId.length) return;
+    NSInteger size = 200;
+    NSInteger lastPage = MAX(0, index) / size + 1;
+    NSInteger total = lastPage;
+    NSMutableArray *slots = [NSMutableArray array];
+    for (NSInteger i = 0; i < total; i++) [slots addObject:[NSNull null]];
+    __block NSInteger left = total;
+    __block BOOL anyOK = NO;
+    if (self.catalogLoading) return;               // 已经在补了,别叠着发
+    self.catalogLoading = YES;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(4);
+    __weak typeof(self) w = self;
+    for (NSInteger pg = 1; pg <= total; pg++) {
+        __block BOOL got = NO;
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+            dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+            [[ADApi shared] tracksOf:albumId page:pg pageSize:size done:^(NSArray<ADTrack *> *list, NSInteger total2, BOOL cached, NSString *err) {
+                BOOL ok = [list isKindOfClass:NSArray.class] && list.count > 0;
+                if (got) return;                       // 这一页已经采纳过一次
+                if (!ok && cached) return;             // 先到的空缓存:等网络那条
+                got = YES;
+                if (ok) { @synchronized (slots) { slots[pg - 1] = list; anyOK = YES; } }
+                dispatch_semaphore_signal(sem);
+                NSInteger remain;
+                @synchronized (slots) { remain = --left; }
+                if (remain > 0) return;
+                __strong typeof(w) self = w; if (!self) return;
+                if (!self.album.albumId || ![self.album.albumId isEqualToString:albumId]) { self.catalogLoading = NO; return; }   // 已经不是这本书了
+                if (self.album.albumId && ![self.album.albumId isEqualToString:albumId]) return;
+                NSMutableArray *uniq = [NSMutableArray array];
+                NSMutableSet *seen = [NSMutableSet set];
+                @synchronized (slots) {
+                    for (id bag in slots) {
+                        if (![bag isKindOfClass:NSArray.class]) continue;
+                        for (ADTrack *t2 in (NSArray *)bag) {
+                            if (!t2.trackId.length || [seen containsObject:t2.trackId]) continue;
+                            [seen addObject:t2.trackId]; [uniq addObject:t2];
+                        }
+                    }
+                }
+                if (!uniq.count) { self.catalogLoading = NO; return; }
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    __strong typeof(w) self = w; if (!self) return;
+                    self.catalogLoading = NO;
+                    if (!self.album.albumId || ![self.album.albumId isEqualToString:albumId]) return;
+                    NSString *curId = self.current.trackId;
+                    NSInteger pos = -1;
+                    for (NSInteger i = 0; i < (NSInteger)uniq.count; i++) {
+                        if ([[uniq[i] trackId] isEqualToString:curId]) { pos = i; break; }
+                    }
+                    if (pos < 0) return;                   // 当前集不在这一批里,保持原样
+                    self.tracks = uniq;
+                    self.index = pos;
+                    self.episodeBase = 0;
+                    self.trackPageSize = size;
+                    [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
+                    [self appendRestOfCatalog:album fromPage:lastPage + 1 size:size];
+                });
+            }];
+        });
+    }
+}
+
+// 剩下的页继续往后补,补到某页不满为止
+- (void)appendRestOfCatalog:(ADAlbum *)album fromPage:(NSInteger)page size:(NSInteger)size {
+    if (self.catalogFilling) return;
+    NSString *albumId = album.albumId;
+    if (!albumId.length) return;
+    self.catalogFilling = YES;
+    __weak typeof(self) w = self;
+    [[ADApi shared] tracksOf:albumId page:page pageSize:size done:^(NSArray<ADTrack *> *list, NSInteger total, BOOL cached, NSString *err) {
+        __strong typeof(w) self = w; if (!self) return;
+        if (!list.count) { if (cached) return; self.catalogFilling = NO; return; }
+        if (!self.album || ![self.album.albumId isEqualToString:albumId]) { self.catalogFilling = NO; return; }
+        NSMutableArray *merged = [self.tracks mutableCopy] ?: [NSMutableArray array];
+        NSMutableSet *have = [NSMutableSet set];
+        for (ADTrack *t in merged) if (t.trackId.length) [have addObject:t.trackId];
+        NSInteger added = 0;
+        for (ADTrack *t in list) { if (!t.trackId.length || [have containsObject:t.trackId]) continue; [merged addObject:t]; [have addObject:t.trackId]; added++; }
+        if (added) { self.tracks = merged; [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil]; }
+        if (added == 0 || (NSInteger)list.count < size || page > 60) { self.catalogFilling = NO; return; }
+        self.catalogFilling = NO;
+        [self appendRestOfCatalog:album fromPage:page + 1 size:size];
+    }];
 }
 
 // ── 跳过片头片尾（给界面用的便捷方法）────────────
@@ -529,8 +646,12 @@
     [_player pause];
     [self nowPlaying];
 }
-- (void)next { if (_index + 1 < (NSInteger)_tracks.count) [self playAt:_index + 1]; }
+- (void)next {
+    if (self.episodeBase > 0) { [self loadCatalogAround:self.album around:self.episodeBase + 1]; return; }   // 目录还在后台补,先催一下
+    if (_index + 1 < (NSInteger)_tracks.count) [self playAt:_index + 1];
+}
 - (void)prev {
+    if (self.episodeBase > 0) { [self loadCatalogAround:self.album around:MAX(0, self.episodeBase - 1)]; return; }
     double sec = _player ? CMTimeGetSeconds(_player.currentTime) : 0;
     if (sec > 5) { [self seekTo:0]; return; }
     if (_index > 0) [self playAt:_index - 1];

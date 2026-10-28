@@ -191,6 +191,7 @@ typedef NS_ENUM(NSInteger, ADTaskState) {
 @property (nonatomic, assign) float rate;
 @property (nonatomic, assign) double sleepDeadline;
 @property (nonatomic, strong) NSMutableSet *prefetching;
+@property (nonatomic, assign) NSInteger episodeBase;   // 队列只载入了后半段时,_tracks[0] 对应的真实集号偏移
 + (BOOL)isWiFi;
 - (void)prefetchAhead;
 - (void)cleanPrefetch;
