@@ -22,6 +22,7 @@
 @property (nonatomic, assign) BOOL queueDesc, queueSelecting;
 @property (nonatomic, strong) NSMutableSet *queueSel;
 @property (nonatomic, strong) UIView *queueBar;
+@property (nonatomic, assign) NSInteger queueSeenCount;
 @property (nonatomic, strong) UIButton *sortBtn, *pickBtn, *selBtn, *dlBtn;
 @end
 
@@ -376,10 +377,10 @@
     [self.starBtn setImage:[UIImage systemImageNamed:(fav ? @"star.fill" : @"star") withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
     self.starBtn.tintColor = fav ? [ADUtil brand] : UIColor.whiteColor;
     if (self.showQueue) {
-        NSInteger before = [self.queue numberOfRowsInSection:0];
         [self.queue reloadData];
         // 队列条数变了(后台补齐目录/整队替换):当前集的位置也变了,重新定位一次
-        if (before != [self.queue numberOfRowsInSection:0]) [self scrollQueueToCurrent:NO];
+        NSInteger now = (NSInteger)ADPlayer.shared.tracks.count;
+        if (now != self.queueSeenCount) { self.queueSeenCount = now; [self scrollQueueToCurrent:NO]; }
         else [self clampQueueOffset];
     }
 }
@@ -730,8 +731,8 @@
     }];
     [self.queue reloadData];
     if (self.showQueue) {
+        self.queueSeenCount = (NSInteger)ADPlayer.shared.tracks.count;
         [ADPlayer.shared ensureFullQueue];      // 打开队列时顺手把后面的目录补齐
-        [self scrollQueueToCurrent:NO];
     }
 }
 
