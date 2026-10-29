@@ -72,7 +72,7 @@
             BOOL hot = [tags[i][1] boolValue];
             l.text = tags[i][0]; l.hidden = NO;
             l.backgroundColor = hot ? [ADUtil brand] : [UIColor colorWithWhite:1 alpha:0.12];
-            l.textColor = hot ? UIColor.whiteColor : [UIColor colorWithWhite:1 alpha:0.78];
+            l.textColor = hot ? [ADUtil onBrand] : [UIColor colorWithWhite:1 alpha:0.78];
         } else l.hidden = YES;
     }
     [self setNeedsLayout];
@@ -168,7 +168,7 @@
         self.seg.selectedSegmentTintColor = [ADUtil brand];
         self.seg.backgroundColor = [UIColor colorWithWhite:1 alpha:0.1];
     }
-    [self.seg setTitleTextAttributes:@{NSForegroundColorAttributeName: UIColor.whiteColor} forState:UIControlStateSelected];
+    [self.seg setTitleTextAttributes:@{NSForegroundColorAttributeName: [ADUtil onBrand]} forState:UIControlStateSelected];
     [self.seg setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor colorWithWhite:1 alpha:0.7]} forState:UIControlStateNormal];
     [self.seg addTarget:self action:@selector(switchMode) forControlEvents:UIControlEventValueChanged];
     [self.view addSubview:self.seg];
@@ -321,7 +321,7 @@
         UIButton *b = (UIButton *)[self.cats viewWithTag:100 + i];
         BOOL on = (i == self.catIndex);
         b.backgroundColor = on ? [ADUtil brand] : [UIColor colorWithWhite:1 alpha:0.1];
-        [b setTitleColor:(on ? UIColor.whiteColor : [UIColor colorWithWhite:1 alpha:0.72]) forState:UIControlStateNormal];
+        [b setTitleColor:(on ? [ADUtil onBrand] : [UIColor colorWithWhite:1 alpha:0.72]) forState:UIControlStateNormal];
     }
 }
 

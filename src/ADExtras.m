@@ -300,7 +300,7 @@ static UIView *ADSectionFooter(NSString *t, CGFloat W) {
         done(YES);
         [self editNote:d];
     }];
-    edit.backgroundColor = [ADUtil brand];
+    edit.backgroundColor = [ADUtil swipe];
     edit.image = ADS(@"square.and.pencil", 15, UIImageSymbolWeightSemibold);
     return [UISwipeActionsConfiguration configurationWithActions:@[del, edit]];
 }

@@ -305,7 +305,7 @@ static void ADAlbumProgress(ADAlbum *a, NSInteger *listened, NSInteger *total, d
         BOOL on = (i == self.filter);
         b.backgroundColor = on ? [ADUtil brand] : [UIColor colorWithWhite:1 alpha:0.08];
         b.layer.borderColor = (on ? UIColor.clearColor : [UIColor colorWithWhite:1 alpha:0.12]).CGColor;
-        [b setTitleColor:(on ? UIColor.whiteColor : [UIColor colorWithWhite:1 alpha:0.75]) forState:UIControlStateNormal];
+        [b setTitleColor:(on ? [ADUtil onBrand] : [UIColor colorWithWhite:1 alpha:0.75]) forState:UIControlStateNormal];
     }
 }
 

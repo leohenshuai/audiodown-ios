@@ -559,7 +559,7 @@ static UIColor *ADStateColor(ADTask *t) {
         done(YES);
         [self reload];
     }];
-    redo.backgroundColor = [ADUtil brand];
+    redo.backgroundColor = [ADUtil swipe];
     return [UISwipeActionsConfiguration configurationWithActions:@[del, redo]];
 }
 

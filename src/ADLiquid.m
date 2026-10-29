@@ -309,7 +309,7 @@ static NSInteger const kLiteTag  = 9825;
 
 + (void)canvas:(UIView *)v {
     if (!v) return;
-    v.backgroundColor = [UIColor colorWithRed:0.024 green:0.024 blue:0.031 alpha:1];
+    v.backgroundColor = [UIColor colorWithWhite:0.02 alpha:1];
     if ([v viewWithTag:kMarkTag]) return;
     UIView *mark = [UIView new];
     mark.tag = kMarkTag;
@@ -320,8 +320,8 @@ static NSInteger const kLiteTag  = 9825;
     // 主渐变：深蓝黑 → 近黑
     ADGradientView *base = [[ADGradientView alloc] initWithFrame:v.bounds];
     base.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    base.grad.colors = @[(id)[UIColor colorWithRed:0.078 green:0.078 blue:0.106 alpha:1].CGColor,
-                         (id)[UIColor colorWithRed:0.024 green:0.024 blue:0.031 alpha:1].CGColor];
+    base.grad.colors = @[(id)[UIColor colorWithWhite:0.135 alpha:1].CGColor,
+                         (id)[UIColor colorWithWhite:0.02 alpha:1].CGColor];
     base.grad.startPoint = CGPointMake(0.05, 0);
     base.grad.endPoint = CGPointMake(0.95, 1);
     base.userInteractionEnabled = NO;
@@ -331,8 +331,8 @@ static NSInteger const kLiteTag  = 9825;
     ADGradientView *warm = [[ADGradientView alloc] initWithFrame:CGRectMake(-v.bounds.size.width * 0.35, -v.bounds.size.height * 0.12,
                                                                            v.bounds.size.width * 1.1, v.bounds.size.height * 0.62)];
     warm.grad.type = kCAGradientLayerRadial;
-    warm.grad.colors = @[(id)[UIColor colorWithRed:1.0 green:0.46 blue:0.20 alpha:0.22].CGColor,
-                         (id)[UIColor colorWithRed:1.0 green:0.46 blue:0.20 alpha:0.0].CGColor];
+    warm.grad.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.075].CGColor,
+                         (id)[UIColor colorWithWhite:1 alpha:0.0].CGColor];
     warm.grad.startPoint = CGPointMake(0.42, 0.38);
     warm.grad.endPoint = CGPointMake(1, 1);
     warm.userInteractionEnabled = NO;
@@ -342,8 +342,8 @@ static NSInteger const kLiteTag  = 9825;
     ADGradientView *cool = [[ADGradientView alloc] initWithFrame:CGRectMake(v.bounds.size.width * 0.42, v.bounds.size.height * 0.05,
                                                                            v.bounds.size.width * 0.9, v.bounds.size.height * 0.55)];
     cool.grad.type = kCAGradientLayerRadial;
-    cool.grad.colors = @[(id)[UIColor colorWithRed:0.24 green:0.42 blue:1.0 alpha:0.13].CGColor,
-                         (id)[UIColor colorWithRed:0.24 green:0.42 blue:1.0 alpha:0.0].CGColor];
+    cool.grad.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.035].CGColor,
+                         (id)[UIColor colorWithWhite:1 alpha:0.0].CGColor];
     cool.grad.startPoint = CGPointMake(0.5, 0.35);
     cool.grad.endPoint = CGPointMake(1, 1);
     cool.userInteractionEnabled = NO;

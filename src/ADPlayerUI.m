@@ -375,7 +375,13 @@
     BOOL fav = [[ADStore shared] isFavorite:p.album.albumId];
     [self.starBtn setImage:[UIImage systemImageNamed:(fav ? @"star.fill" : @"star") withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
     self.starBtn.tintColor = fav ? [ADUtil brand] : UIColor.whiteColor;
-    if (self.showQueue) [self.queue reloadData];
+    if (self.showQueue) {
+        NSInteger before = [self.queue numberOfRowsInSection:0];
+        [self.queue reloadData];
+        // 队列条数变了(后台补齐目录/整队替换):当前集的位置也变了,重新定位一次
+        if (before != [self.queue numberOfRowsInSection:0]) [self scrollQueueToCurrent:NO];
+        else [self clampQueueOffset];
+    }
 }
 
 - (void)toggleFav {
@@ -718,14 +724,37 @@
         CGRect qf = self.showQueue ? CGRectMake(16, H - 320, W - 32, 300) : CGRectMake(16, H, W - 32, 300);
         self.queue.frame = qf;
         self.queueBar.frame = CGRectMake(16, qf.origin.y - 44, W - 32, 40);
+    } completion:^(BOOL f) {
+        // 面板到位、布局稳定后再定位。以前在动画开始时就滚动,表格高度还没定,滚过头会空出一大块
+        if (self.showQueue) [self scrollQueueToCurrent:NO];
     }];
     [self.queue reloadData];
     if (self.showQueue) {
         [ADPlayer.shared ensureFullQueue];      // 打开队列时顺手把后面的目录补齐
-        NSIndexPath *ip = [NSIndexPath indexPathForRow:[self queueRowForIndex:ADPlayer.shared.index] inSection:0];
-        if (ip.row < (NSInteger)ADPlayer.shared.tracks.count)
-            [self.queue scrollToRowAtIndexPath:ip atScrollPosition:UITableViewScrollPositionMiddle animated:YES];
+        [self scrollQueueToCurrent:NO];
     }
+}
+
+// 把当前播放的那一集滚到队列正中;条数不够铺满时回到顶部,绝不留空白
+- (void)scrollQueueToCurrent:(BOOL)animated {
+    NSInteger n = [self.queue numberOfRowsInSection:0];
+    if (n <= 0) return;
+    [self.queue layoutIfNeeded];
+    NSInteger row = [self queueRowForIndex:ADPlayer.shared.index];
+    if (row < 0 || row >= n) row = 0;
+    [self.queue scrollToRowAtIndexPath:[NSIndexPath indexPathForRow:row inSection:0] atScrollPosition:UITableViewScrollPositionMiddle animated:animated];
+    [self clampQueueOffset];
+}
+
+// 内容比面板矮,或偏移超出范围时拉回合法区间,上方不会出现空白
+- (void)clampQueueOffset {
+    UIScrollView *q = self.queue;
+    CGFloat minY = -q.adjustedContentInset.top;
+    CGFloat maxY = MAX(minY, q.contentSize.height - q.bounds.size.height + q.adjustedContentInset.bottom);
+    CGFloat y = q.contentOffset.y;
+    if (y < minY) y = minY;
+    if (y > maxY) y = maxY;
+    if (fabs(y - q.contentOffset.y) > 0.5) q.contentOffset = CGPointMake(0, y);
 }
 
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { return ADPlayer.shared.tracks.count; }

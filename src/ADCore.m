@@ -360,8 +360,10 @@ static double ADSkipSanitize(double v) {          // 负数（<-1 那种误传�
 
 // ───────────────── 工具 ─────────────────
 @implementation ADUtil
-+ (UIColor *)brand { return [UIColor colorWithRed:0.973 green:0.392 blue:0.26 alpha:1]; }
-+ (UIColor *)bg { return [UIColor colorWithRed:0.067 green:0.047 blue:0.035 alpha:1]; }
++ (UIColor *)brand { return UIColor.whiteColor; }                    // 整套界面改成黑白灰:强调色就是白
++ (UIColor *)swipe { return [UIColor colorWithWhite:0.32 alpha:1]; }     // 滑动操作按钮底色(系统固定白字,不能用白底)
++ (UIColor *)onBrand { return [UIColor colorWithWhite:0.07 alpha:1]; }   // 白底上的文字/图标
++ (UIColor *)bg { return [UIColor colorWithRed:0.03 green:0.03 blue:0.035 alpha:1]; }
 + (UIColor *)card { return [UIColor colorWithWhite:1 alpha:0.07]; }
 + (UIColor *)dim { return [UIColor colorWithWhite:1 alpha:0.55]; }
 + (UILabel *)label:(NSString *)font size:(CGFloat)size color:(UIColor *)c {

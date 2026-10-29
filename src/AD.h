@@ -247,6 +247,8 @@ typedef NS_ENUM(NSInteger, ADTaskState) {
 // ───────────────── 工具 ─────────────────
 @interface ADUtil : NSObject
 + (UIColor *)brand;
++ (UIColor *)onBrand;      // 画在 brand(白)上的文字/图标颜色
++ (UIColor *)swipe;        // 滑动按钮底色(系统固定白字)
 + (UIColor *)bg;
 + (UIColor *)card;
 + (UIColor *)dim;

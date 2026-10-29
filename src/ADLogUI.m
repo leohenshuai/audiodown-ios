@@ -193,7 +193,7 @@ static NSArray *kTags(void) { return @[@"全部", @"NET", @"PLAY", @"DL", @"SYS"
     self.share = [UIButton buttonWithType:UIButtonTypeSystem];
     [self.share setTitle:@"导出并分享" forState:UIControlStateNormal];
     self.share.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
-    self.share.tintColor = UIColor.whiteColor;
+    self.share.tintColor = [ADUtil onBrand];
     self.share.backgroundColor = [ADUtil brand];
     self.share.layer.cornerRadius = 20;
     [self.share addTarget:self action:@selector(doShare) forControlEvents:UIControlEventTouchUpInside];

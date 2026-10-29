@@ -231,7 +231,7 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
     UISwitch *sw = [UISwitch new];
     NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
     sw.on = [ud objectForKey:key] ? [ud boolForKey:key] : def;
-    sw.onTintColor = [ADUtil brand];
+    sw.onTintColor = [UIColor colorWithRed:0.2 green:0.78 blue:0.35 alpha:1];
     [sw addTarget:self action:a forControlEvents:UIControlEventValueChanged];
     return sw;
 }
@@ -279,7 +279,7 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
     c.detailTextLabel.font = [UIFont systemFontOfSize:12];
     c.selectionStyle = UITableViewCellSelectionStyleNone;
     NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
-    UIColor *orange = [ADUtil brand], *blue = [UIColor systemBlueColor], *green = [UIColor systemGreenColor],
+    UIColor *orange = [UIColor colorWithWhite:0.38 alpha:1], *blue = [UIColor systemBlueColor], *green = [UIColor systemGreenColor],
             *purple = [UIColor systemPurpleColor], *gray = [UIColor systemGrayColor], *teal = [UIColor systemTealColor],
             *pink = [UIColor systemPinkColor], *indigo = [UIColor systemIndigoColor];
     NSString *icon = nil; UIColor *ic = gray;
@@ -324,7 +324,7 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
         } else {
             icon = @"bolt.horizontal.circle"; ic = green;
             c.textLabel.text = @"保存并测试连接";
-            c.textLabel.textColor = orange;
+            c.textLabel.textColor = UIColor.whiteColor;
             c.selectionStyle = UITableViewCellSelectionStyleDefault;
         }
         break;
@@ -345,7 +345,7 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
             c.detailTextLabel.text = [NSString stringWithFormat:@"后面 %ld 集", (long)n];
             UIStepper *st = [UIStepper new];
             st.minimumValue = 1; st.maximumValue = 5; st.stepValue = 1; st.value = n;
-            st.tintColor = orange;
+            st.tintColor = UIColor.whiteColor;
             [st addTarget:self action:@selector(prefetchStepper:) forControlEvents:UIControlEventValueChanged];
             c.accessoryView = st;
         } else if (ip.row == 3) {
@@ -383,7 +383,7 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
             for (ADTask *x in tasks) if (x.state == ADTaskStateRunning || x.state == ADTaskStateQueued) anyRunning = YES;
             icon = anyRunning ? @"pause.circle.fill" : @"play.circle.fill"; ic = anyRunning ? gray : orange;
             c.textLabel.text = anyRunning ? @"全部暂停" : @"全部继续";
-            c.textLabel.textColor = tasks.count ? orange : [UIColor colorWithWhite:1 alpha:0.35];
+            c.textLabel.textColor = tasks.count ? UIColor.whiteColor : [UIColor colorWithWhite:1 alpha:0.35];
         }
         c.selectionStyle = UITableViewCellSelectionStyleDefault;
         break;
@@ -421,7 +421,7 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
             c.textLabel.text = self.checking ? @"正在检查…" : @"检查更新";
             c.detailTextLabel.text = self.latestTag.length ? [NSString stringWithFormat:@"GitHub 最新：%@", self.latestTag] : @"从 GitHub Release 获取最新版本";
             if (self.hasUpdate) {
-                UILabel *b = [ADUtil label:nil size:11 color:UIColor.whiteColor];
+                UILabel *b = [ADUtil label:nil size:11 color:[ADUtil onBrand]];
                 b.text = @"有新版本"; b.textAlignment = NSTextAlignmentCenter; b.numberOfLines = 1;
                 b.font = [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold];
                 b.backgroundColor = orange; b.layer.cornerRadius = 10; b.clipsToBounds = YES;

@@ -202,15 +202,15 @@
     self.playBtn = [UIButton buttonWithType:UIButtonTypeCustom];
     self.playBtn.backgroundColor = [ADUtil brand];
     self.playBtn.layer.cornerRadius = 26;
-    self.playBtn.layer.shadowColor = [ADUtil brand].CGColor;
-    self.playBtn.layer.shadowOpacity = 0.4; self.playBtn.layer.shadowRadius = 14; self.playBtn.layer.shadowOffset = CGSizeMake(0, 6);
+    self.playBtn.layer.shadowColor = UIColor.blackColor.CGColor;
+    self.playBtn.layer.shadowOpacity = 0.35; self.playBtn.layer.shadowRadius = 14; self.playBtn.layer.shadowOffset = CGSizeMake(0, 6);
     [self.playBtn addTarget:self action:@selector(tapPrimary) forControlEvents:UIControlEventTouchUpInside];
     UIImageView *pi = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"play.fill" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightBold]]];
-    pi.tintColor = UIColor.whiteColor; pi.tag = 11; pi.contentMode = UIViewContentModeCenter;
-    self.playTitle = [ADUtil label:nil size:16 color:UIColor.whiteColor];
+    pi.tintColor = [ADUtil onBrand]; pi.tag = 11; pi.contentMode = UIViewContentModeCenter;
+    self.playTitle = [ADUtil label:nil size:16 color:[ADUtil onBrand]];
     self.playTitle.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
     self.playTitle.numberOfLines = 1; self.playTitle.userInteractionEnabled = NO;
-    self.playSub = [ADUtil label:nil size:11.5 color:[UIColor colorWithWhite:1 alpha:0.82]];
+    self.playSub = [ADUtil label:nil size:11.5 color:[UIColor colorWithWhite:0.07 alpha:0.62]];
     self.playSub.numberOfLines = 1; self.playSub.userInteractionEnabled = NO;
     pi.userInteractionEnabled = NO;
     [self.playBtn addSubview:pi]; [self.playBtn addSubview:self.playTitle]; [self.playBtn addSubview:self.playSub];
@@ -320,7 +320,7 @@
     UILabel *l = [ADUtil label:nil size:11.5 color:hot ? [ADUtil brand] : [UIColor colorWithWhite:1 alpha:0.78]];
     l.font = [UIFont systemFontOfSize:11.5 weight:UIFontWeightSemibold];
     l.text = t; l.numberOfLines = 1; l.textAlignment = NSTextAlignmentCenter;
-    l.backgroundColor = hot ? [[ADUtil brand] colorWithAlphaComponent:0.16] : [UIColor colorWithWhite:1 alpha:0.1];
+    l.backgroundColor = hot ? [UIColor colorWithWhite:1 alpha:0.2] : [UIColor colorWithWhite:1 alpha:0.1];
     l.layer.cornerRadius = 11; l.clipsToBounds = YES;
     [l sizeToFit];
     l.frame = CGRectMake(0, 0, l.bounds.size.width + 18, 22);
@@ -1007,7 +1007,7 @@
     go.layer.cornerRadius = 18;
     go.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
     [go setTitle:@"缓存所选" forState:UIControlStateNormal];
-    [go setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    [go setTitleColor:[ADUtil onBrand] forState:UIControlStateNormal];
     [go addTarget:self action:@selector(downloadSelected) forControlEvents:UIControlEventTouchUpInside];
     [self.actionBar addSubview:go];
     [self.view addSubview:self.actionBar];
@@ -1503,7 +1503,7 @@
         [t reloadRowsAtIndexPaths:@[ip] withRowAnimation:UITableViewRowAnimationNone];
         done(YES);
     }];
-    act.backgroundColor = local ? [UIColor systemRedColor] : [ADUtil brand];
+    act.backgroundColor = local ? [UIColor systemRedColor] : [ADUtil swipe];
     return [UISwipeActionsConfiguration configurationWithActions:@[act]];
 }
 @end

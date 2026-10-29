@@ -173,7 +173,7 @@
     UIContextualAction *fv = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal title:fav ? @"取消收藏" : @"收藏" handler:^(UIContextualAction *x, UIView *v, void (^done)(BOOL)) {
         [ADHaptic success]; [[ADStore shared] toggleFavorite:a]; done(YES);
     }];
-    fv.backgroundColor = [ADUtil brand];
+    fv.backgroundColor = [ADUtil swipe];
     return [UISwipeActionsConfiguration configurationWithActions:@[del, fv]];
 }
 @end
