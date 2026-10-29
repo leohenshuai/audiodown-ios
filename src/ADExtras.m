@@ -410,7 +410,7 @@ static UIView *ADSectionFooter(NSString *t, CGFloat W) {
         NSArray *n = @[@"清空预缓存", @"清空封面缓存", @"重试所有失败的下载"];
         NSArray *s = @[@"不影响已下载的音频", @"下次浏览时会重新下载", @"暂停中的也会继续"];
         NSArray *ic = @[@"bolt.slash.fill", @"photo.on.rectangle", @"arrow.clockwise"];
-        NSArray *col = @[[ADUtil brand], [UIColor systemIndigoColor], [UIColor systemGreenColor]];
+        NSArray *col = @[[UIColor colorWithWhite:0.38 alpha:1], [UIColor systemIndigoColor], [UIColor systemGreenColor]];
         [c iconNamed:ic[ip.row] color:col[ip.row]];
         c.title.text = n[ip.row]; c.sub.text = s[ip.row];
         c.right.text = ip.row == 0 ? ADSize(self.pre) : (ip.row == 1 ? ADSize(self.cov) : nil);
@@ -594,7 +594,7 @@ static NSString *const kSkipPrefix = @"ad_skip";
         NSArray *n = @[@"立即备份", @"备份并分享", @"从文件导入"];
         NSArray *s = @[@"保存到本机 backups 文件夹", @"生成后发到 AirDrop、iCloud 等", @"选择一份 .adbak 文件恢复"];
         NSArray *ic = @[@"arrow.down.doc.fill", @"square.and.arrow.up.fill", @"tray.and.arrow.down.fill"];
-        NSArray *col = @[[UIColor systemBlueColor], [ADUtil brand], [UIColor systemGreenColor]];
+        NSArray *col = @[[UIColor systemBlueColor], [UIColor colorWithWhite:0.38 alpha:1], [UIColor systemGreenColor]];
         [c iconNamed:ic[ip.row] color:col[ip.row]];
         c.title.text = n[ip.row]; c.sub.text = s[ip.row];
         return c;
