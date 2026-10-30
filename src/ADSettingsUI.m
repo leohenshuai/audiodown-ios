@@ -279,7 +279,7 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
     c.detailTextLabel.font = [UIFont systemFontOfSize:12];
     c.selectionStyle = UITableViewCellSelectionStyleNone;
     NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
-    UIColor *orange = [UIColor colorWithWhite:0.38 alpha:1], *blue = [UIColor systemBlueColor], *green = [UIColor systemGreenColor],
+    UIColor *orange = [UIColor systemOrangeColor], *blue = [UIColor systemBlueColor], *green = [UIColor systemGreenColor],
             *purple = [UIColor systemPurpleColor], *gray = [UIColor systemGrayColor], *teal = [UIColor systemTealColor],
             *pink = [UIColor systemPinkColor], *indigo = [UIColor systemIndigoColor];
     NSString *icon = nil; UIColor *ic = gray;
@@ -315,7 +315,7 @@ typedef NS_ENUM(NSInteger, ADSetSec) { ADSecServer, ADSecPlay, ADSecStorage, ADS
             c.accessoryView = acc;
             c.selectionStyle = UITableViewCellSelectionStyleDefault;
         } else if (ip.row == 2) {
-            icon = @"person.crop.circle"; ic = gray;
+            icon = @"person.crop.circle"; ic = teal;
             ADConfig *cfg = [ADConfig shared];
             c.textLabel.text = @"网页账号（可选）";
             c.detailTextLabel.text = cfg.username.length ? cfg.username : @"一般用不到，目录已不依赖登录";
