@@ -18,6 +18,8 @@
 @property (nonatomic, assign) NSInteger openSeq;
 @property (nonatomic, assign) CFTimeInterval resolveT;   // 进入 resolving 的时刻,兜底用
 @property (nonatomic, assign) BOOL retriedItem;
+// 被打断前是否在播:打断一来必须 pause,状态会丢;结束时要靠它决定是否恢复
+@property (nonatomic, assign) BOOL playedBeforeInterruption;
 // 播放队列补全：专辑页只加载了前几十集时，播放器自己把后面的目录补齐，
 // 否则队列的「倒序」「快速选集」「缓存整本」都只能看到前 50 集。
 @property (nonatomic, assign) BOOL filling;
@@ -811,10 +813,37 @@
     }];
 }
 
+- (void)resumeAfterInterruption {
+    if (self.isPlaying || self.resolving) return;
+    if (!_player || _player.currentItem == nil) { if (_tracks.count) [self playAt:_index]; return; }   // 音频项已被清掉:重开这一集
+    ADLogTag(@"PLAY", @"打断结束,自动继续 第%ld集", (long)(self.index + self.episodeBase + 1));
+    [_player play]; _player.rate = _rate; [self nowPlaying];
+    if (_album) [[ADStore shared] touchHistory:_album];
+    [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
+}
+
 - (void)interrupted:(NSNotification *)n {
     NSUInteger type = [n.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue];
-    if (type == AVAudioSessionInterruptionTypeEnded) [[AVAudioSession sharedInstance] setActive:YES error:nil];
-    else [self pause];
+    if (type == AVAudioSessionInterruptionTypeBegan) {
+        BOOL was = self.isPlaying || self.resolving;
+        self.playedBeforeInterruption = was;
+        ADLogTag(@"PLAY", @"音频被打断%@", was ? @",结束后自动继续" : @"");
+        [self pause];
+        return;
+    }
+    NSUInteger opt = [n.userInfo[AVAudioSessionInterruptionOptionKey] unsignedIntegerValue];
+    BOOL was = self.playedBeforeInterruption;
+    self.playedBeforeInterruption = NO;
+    NSError *err = nil;
+    [[AVAudioSession sharedInstance] setActive:YES error:&err];
+    BOOL suggest = (opt & AVAudioSessionInterruptionOptionShouldResume) != 0;
+    ADLogTag(@"PLAY", @"音频打断结束(%@) 打断前在播=%@%@", suggest ? @"系统建议恢复" : @"系统未建议", was ? @"是" : @"否",
+             err ? [@",会话激活失败: " stringByAppendingString:err.localizedDescription] : @"");
+    if (!was) return;
+    if (err) return;                                            // 还在通话/别的 App 占着音频:不硬抢
+    if (!suggest) ADLogWarn(@"PLAY", @"系统未建议恢复,按打断前状态继续");
+    __weak typeof(self) w = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [w resumeAfterInterruption]; });
 }
 
 - (void)routeChanged:(NSNotification *)n {
