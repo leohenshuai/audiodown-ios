@@ -843,8 +843,19 @@
 }
 
 // 回到前台立刻补判一次:后台那段时间系统可能把定时器冻住了
+// 关键:抖音这类 App 退回后台后仍攥着音频会话,系统一直说"别的音频在放",
+// 于是只能等它主动释放(实测等了 30 秒)。用户已经回到阅听了,就该由我们收回音频。
 - (void)appBecameActive {
-    if (self.playedBeforeInterruption) { ADLogTag(@"PLAY", @"回到前台,补判一次打断状态"); [self eagerTick]; }
+    if (!self.playedBeforeInterruption) return;
+    ADLogTag(@"PLAY", @"回到前台,主动收回音频并继续,空窗 %.2f 秒", CFAbsoluteTimeGetCurrent() - self.interruptionAt);
+    NSError *err = nil;
+    if (![[AVAudioSession sharedInstance] setActive:YES error:&err]) {
+        ADLogWarn(@"PLAY", @"回前台收回音频失败(%@),继续盯梢", err.localizedDescription ?: @"未知");
+        [self eagerTick];
+        return;
+    }
+    [self stopEager];
+    [self tryResumeAfterInterruption:0];
 }
 
 - (void)stopEager {
