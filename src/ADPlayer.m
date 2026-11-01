@@ -18,6 +18,9 @@
 @property (nonatomic, assign) NSInteger openSeq;
 @property (nonatomic, assign) CFTimeInterval resolveT;   // 进入 resolving 的时刻,兜底用
 @property (nonatomic, assign) BOOL retriedItem;
+// 被别的 App 抢走音频后,系统可能拖几秒才发"打断结束"。这里自己盯着:
+// 每 0.25 秒看一次还有没有别的音频在放,没有了就立刻接上,不等那条通知。
+@property (nonatomic, strong) NSTimer *eagerTimer;
 // 被打断前是否在播:打断一来必须 pause,状态会丢;结束时要靠它决定是否恢复
 @property (nonatomic, assign) BOOL playedBeforeInterruption;
 @property (nonatomic, assign) CFAbsoluteTime interruptionAt;   // 打断开始的时刻,用来算空窗时长
@@ -664,6 +667,9 @@
     }
     [_player pause];
     [self nowPlaying];
+    // 用户自己按了暂停(或拔耳机等),就别再"打断结束后自动继续"了
+    self.playedBeforeInterruption = NO;
+    [self stopEager];
 }
 - (void)next {
     if (self.episodeBase > 0) { [self loadCatalogAround:self.album around:self.episodeBase + 1]; return; }   // 目录还在后台补,先催一下
@@ -814,6 +820,20 @@
     }];
 }
 
+// 打断期间盯着"别的音频还在不在":没了就立刻恢复,不等系统那条"打断结束"通知
+- (void)eagerTick {
+    if (!self.playedBeforeInterruption) { [self stopEager]; return; }
+    AVAudioSession *s = AVAudioSession.sharedInstance;
+    if (s.otherAudioPlaying) return;                       // 别的 App 还在放:别抢
+    NSError *err = nil;
+    if (![s setActive:YES error:&err]) return;             // 还占着音频:下一拍再看
+    ADLogTag(@"PLAY", @"别的音频已停(未等系统通知),提前恢复,空窗 %.2f 秒", CFAbsoluteTimeGetCurrent() - self.interruptionAt);
+    [self stopEager];
+    [self tryResumeAfterInterruption:0];
+}
+
+- (void)stopEager { [self.eagerTimer invalidate]; self.eagerTimer = nil; }
+
 // 打断恢复:每 0.15 秒「激活会话 + play」一次,直到真的出声(最长 4 秒)
 // 注意不能用 isPlaying 判断:调用 play 后 rate 立刻变正,但可能还在等音频会话或缓冲。
 - (void)tryResumeAfterInterruption:(NSInteger)n {
@@ -841,12 +861,19 @@
     NSUInteger type = [n.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue];
     if (type == AVAudioSessionInterruptionTypeBegan) {
         BOOL was = self.isPlaying || self.resolving;
-        self.playedBeforeInterruption = was;
         self.interruptionAt = CFAbsoluteTimeGetCurrent();
         ADLogTag(@"PLAY", @"音频被打断%@", was ? @",结束后自动继续" : @"");
-        [self pause];
+        [self pause];                       // pause 会清掉"自动继续"意图,所以状态要在它之后写
+        self.playedBeforeInterruption = was;
+        if (was) {
+            [self stopEager];
+            self.eagerTimer = [NSTimer scheduledTimerWithTimeInterval:0.25 target:self selector:@selector(eagerTick) userInfo:nil repeats:YES];
+            [NSRunLoop.mainRunLoop addTimer:self.eagerTimer forMode:NSRunLoopCommonModes];   // 拖动/滚动时也别停
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self stopEager]; });   // 兜底:最多盯 20 秒
+        }
         return;
     }
+    [self stopEager];
     NSUInteger opt = [n.userInfo[AVAudioSessionInterruptionOptionKey] unsignedIntegerValue];
     BOOL was = self.playedBeforeInterruption;
     self.playedBeforeInterruption = NO;
@@ -856,6 +883,10 @@
     ADLogTag(@"PLAY", @"音频打断结束(%@) 打断前在播=%@ 被打断了 %.2f 秒%@", suggest ? @"系统建议恢复" : @"系统未建议", was ? @"是" : @"否", gap,
              was ? @",立刻尝试恢复" : @"");
     if (!was) return;
+    if (_player.timeControlStatus == AVPlayerTimeControlStatusPlaying) {
+        ADLogTag(@"PLAY", @"打断结束通知来晚了,已经在 %.2f 秒时提前恢复", gap);
+        return;
+    }
     if (!suggest) ADLogWarn(@"PLAY", @"系统未建议恢复,按打断前状态继续");
     [[AVAudioSession sharedInstance] setActive:YES error:nil];
     [self tryResumeAfterInterruption:0];     // 不等延迟,立刻进轮询
