@@ -21,6 +21,8 @@
 // 被别的 App 抢走音频后,系统可能拖几秒才发"打断结束"。这里自己盯着:
 // 每 0.25 秒看一次还有没有别的音频在放,没有了就立刻接上,不等那条通知。
 @property (nonatomic, strong) NSTimer *eagerTimer;
+@property (nonatomic, assign) NSInteger eagerTicks;            // 心跳计数,用来每 2 秒记一次状态
+@property (nonatomic, assign) UIBackgroundTaskIdentifier bgTask;   // 盯梢期间申请后台时间,别被系统冻住
 // 被打断前是否在播:打断一来必须 pause,状态会丢;结束时要靠它决定是否恢复
 @property (nonatomic, assign) BOOL playedBeforeInterruption;
 @property (nonatomic, assign) CFAbsoluteTime interruptionAt;   // 打断开始的时刻,用来算空窗时长
@@ -57,6 +59,7 @@
     [s setActive:YES error:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(interrupted:) name:AVAudioSessionInterruptionNotification object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(routeChanged:) name:AVAudioSessionRouteChangeNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(appBecameActive) name:UIApplicationDidBecomeActiveNotification object:nil];
     [self remoteCommands];
     [NSTimer scheduledTimerWithTimeInterval:1 target:self selector:@selector(tickSleep) userInfo:nil repeats:YES];
 }
@@ -824,15 +827,33 @@
 - (void)eagerTick {
     if (!self.playedBeforeInterruption) { [self stopEager]; return; }
     AVAudioSession *s = AVAudioSession.sharedInstance;
+    NSTimeInterval waited = CFAbsoluteTimeGetCurrent() - self.interruptionAt;
+    // 每 2 秒记一次状态:用来分辨"别的 App 真在放"和"系统通知迟到"
+    if (self.eagerTicks++ % 8 == 0) {
+        ADLogTag(@"PLAY", @"打断中 %.0f 秒 别的音频在放=%@ 播放器状态=%ld 本App在前台=%@", waited,
+                 s.otherAudioPlaying ? @"是" : @"否", (long)(_player ? _player.timeControlStatus : -1),
+                 UIApplication.sharedApplication.applicationState == UIApplicationStateActive ? @"是" : @"否");
+    }
     if (s.otherAudioPlaying) return;                       // 别的 App 还在放:别抢
     NSError *err = nil;
     if (![s setActive:YES error:&err]) return;             // 还占着音频:下一拍再看
-    ADLogTag(@"PLAY", @"别的音频已停(未等系统通知),提前恢复,空窗 %.2f 秒", CFAbsoluteTimeGetCurrent() - self.interruptionAt);
+    ADLogTag(@"PLAY", @"别的音频已停(未等系统通知),提前恢复,空窗 %.2f 秒", waited);
     [self stopEager];
     [self tryResumeAfterInterruption:0];
 }
 
-- (void)stopEager { [self.eagerTimer invalidate]; self.eagerTimer = nil; }
+// 回到前台立刻补判一次:后台那段时间系统可能把定时器冻住了
+- (void)appBecameActive {
+    if (self.playedBeforeInterruption) { ADLogTag(@"PLAY", @"回到前台,补判一次打断状态"); [self eagerTick]; }
+}
+
+- (void)stopEager {
+    [self.eagerTimer invalidate]; self.eagerTimer = nil;
+    if (self.bgTask != 0 && self.bgTask != UIBackgroundTaskInvalid) {
+        [UIApplication.sharedApplication endBackgroundTask:self.bgTask];
+        self.bgTask = UIBackgroundTaskInvalid;
+    }
+}
 
 // 打断恢复:每 0.15 秒「激活会话 + play」一次,直到真的出声(最长 4 秒)
 // 注意不能用 isPlaying 判断:调用 play 后 rate 立刻变正,但可能还在等音频会话或缓冲。
@@ -867,9 +888,12 @@
         self.playedBeforeInterruption = was;
         if (was) {
             [self stopEager];
+            self.eagerTicks = 0;
+            // 暂停后 App 会被系统挂起,定时器跟着冻住。申请一段后台时间,盯梢才在后台也跑得动。
+            self.bgTask = [UIApplication.sharedApplication beginBackgroundTaskWithName:@"interruptWatch" expirationHandler:^{ }];
             self.eagerTimer = [NSTimer scheduledTimerWithTimeInterval:0.25 target:self selector:@selector(eagerTick) userInfo:nil repeats:YES];
             [NSRunLoop.mainRunLoop addTimer:self.eagerTimer forMode:NSRunLoopCommonModes];   // 拖动/滚动时也别停
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self stopEager]; });   // 兜底:最多盯 20 秒
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self stopEager]; });   // 兜底:最多盯 25 秒
         }
         return;
     }
