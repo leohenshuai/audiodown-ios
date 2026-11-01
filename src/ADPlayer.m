@@ -814,26 +814,27 @@
     }];
 }
 
-- (void)retryResume:(NSInteger)n {
-    if (self.isPlaying || self.resolving || !_player.currentItem) return;
-    if (n >= 5) { ADLogWarn(@"PLAY", @"自动继续没起来(重试 %ld 次),留待手动点播放", (long)n); return; }
-    ADLogWarn(@"PLAY", @"恢复未出声(timeControlStatus=%ld),第%ld次重试", (long)_player.timeControlStatus, (long)(n + 1));
-    _player.automaticallyWaitsToMinimizeStalling = NO;
-    [_player play]; _player.rate = _rate;
+// 打断恢复:每 0.15 秒「激活会话 + play」一次,直到真的出声(最长 4 秒)
+// 注意不能用 isPlaying 判断:调用 play 后 rate 立刻变正,但可能还在等音频会话或缓冲。
+- (void)tryResumeAfterInterruption:(NSInteger)n {
+    AVPlayer *p = _player;
+    if (!p || !p.currentItem) { if (n == 0 && _tracks.count) [self playAt:_index]; return; }
+    if (p.timeControlStatus == AVPlayerTimeControlStatusPlaying) {
+        ADLogTag(@"PLAY", @"恢复出声,空窗共 %.2f 秒(重试 %ld 次)", CFAbsoluteTimeGetCurrent() - self.interruptionAt, (long)n);
+        [p setRate:_rate];
+        [self nowPlaying];
+        if (_album) [[ADStore shared] touchHistory:_album];
+        [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
+        return;
+    }
+    if (n >= 26) { ADLogWarn(@"PLAY", @"4 秒内没能恢复出声(timeControlStatus=%ld),留给手动", (long)p.timeControlStatus); return; }
+    NSError *err = nil;
+    BOOL ok = [[AVAudioSession sharedInstance] setActive:YES error:&err];
+    if (!ok && (n == 0 || n % 5 == 0)) ADLogWarn(@"PLAY", @"音频会话还没激活(%@),继续重试", err.localizedDescription ?: @"未知");
+    p.automaticallyWaitsToMinimizeStalling = NO;   // 别等"攒够缓冲再出声"
+    [p play]; p.rate = _rate;
     __weak typeof(self) w = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [w retryResume:n + 1]; });
-}
-
-- (void)resumeAfterInterruption {
-    if (self.isPlaying || self.resolving) return;
-    if (!_player || _player.currentItem == nil) { if (_tracks.count) [self playAt:_index]; return; }   // 音频项已被清掉:重开这一集
-    // 关键:默认会自动等"攒够缓冲再出声",打断后这段等待就是"过一会才恢复"。这里直接出声。
-    _player.automaticallyWaitsToMinimizeStalling = NO;
-    ADLogTag(@"PLAY", @"打断结束,自动继续 第%ld集", (long)(self.index + self.episodeBase + 1));
-    [_player play]; _player.rate = _rate; [self nowPlaying];
-    if (_album) [[ADStore shared] touchHistory:_album];
-    [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
-    [self retryResume:0];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [w tryResumeAfterInterruption:n + 1]; });
 }
 
 - (void)interrupted:(NSNotification *)n {
@@ -849,16 +850,15 @@
     NSUInteger opt = [n.userInfo[AVAudioSessionInterruptionOptionKey] unsignedIntegerValue];
     BOOL was = self.playedBeforeInterruption;
     self.playedBeforeInterruption = NO;
-    double gap = self.interruptionAt > 0 ? CFAbsoluteTimeGetCurrent() - self.interruptionAt : 0;
-    NSError *err = nil;
-    [[AVAudioSession sharedInstance] setActive:YES error:&err];
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    double gap = self.interruptionAt > 0 ? now - self.interruptionAt : 0;
     BOOL suggest = (opt & AVAudioSessionInterruptionOptionShouldResume) != 0;
-    ADLogTag(@"PLAY", @"音频打断结束(%@) 打断前在播=%@ 被打断了 %.1f 秒%@", suggest ? @"系统建议恢复" : @"系统未建议", was ? @"是" : @"否", gap,
-             err ? [@",会话激活失败: " stringByAppendingString:err.localizedDescription] : @"");
+    ADLogTag(@"PLAY", @"音频打断结束(%@) 打断前在播=%@ 被打断了 %.2f 秒%@", suggest ? @"系统建议恢复" : @"系统未建议", was ? @"是" : @"否", gap,
+             was ? @",立刻尝试恢复" : @"");
     if (!was) return;
-    if (err) return;                                            // 还在通话/别的 App 占着音频:不硬抢
     if (!suggest) ADLogWarn(@"PLAY", @"系统未建议恢复,按打断前状态继续");
-    [self resumeAfterInterruption];                             // 不再等 0.2 秒:立刻接上
+    [[AVAudioSession sharedInstance] setActive:YES error:nil];
+    [self tryResumeAfterInterruption:0];     // 不等延迟,立刻进轮询
 }
 
 - (void)routeChanged:(NSNotification *)n {
