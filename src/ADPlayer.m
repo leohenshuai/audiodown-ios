@@ -652,6 +652,23 @@
         if (waited > 20 && _tracks.count) [self playAt:_index];
         return;
     }
+    // 已经停在结尾（单曲播完 / 拖到最末）：再点播放要从头（片头之后）重新开始，而不是原地不动
+    double curT = CMTimeGetSeconds(_player.currentTime), durT = CMTimeGetSeconds(_player.currentItem.duration);
+    if (_player.rate == 0 && durT > 0 && !isnan(durT) && curT >= durT - 1.0) {
+        ADLogTag(@"PLAY", @"停在结尾,点播放从头重来 第%ld集", (long)(self.index + self.episodeBase + 1));
+        double head = [[ADStore shared] skipHeadOf:self.album.albumId];
+        self.skipTailFired = NO;
+        __weak typeof(self) wr = self;
+        [_player seekToTime:CMTimeMakeWithSeconds(head > 0 ? head : 0, 600) toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero completionHandler:^(BOOL f) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                __strong typeof(wr) s = wr; if (!s) return;
+                [s->_player play]; s->_player.rate = s->_rate; [s nowPlaying];
+                if (s->_album) [[ADStore shared] touchHistory:s->_album];
+                [NSNotificationCenter.defaultCenter postNotificationName:@"ADPlayerChanged" object:nil];
+            });
+        }];
+        return;
+    }
     if (_player.rate > 0) [self pause];
     else {
         ADLogTag(@"PLAY", @"继续播放 第%ld集", (long)(self.index + self.episodeBase + 1));
